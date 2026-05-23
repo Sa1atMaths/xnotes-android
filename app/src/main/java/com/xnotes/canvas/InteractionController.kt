@@ -51,6 +51,7 @@ class InteractionController(
     private val onContentChanged: () -> Unit = {},
     private val onViewChanged: () -> Unit = {},
     private val onSelectionChanged: (Boolean) -> Unit = {},
+    private val onToolChanged: (Tool) -> Unit = {},
 ) {
     val document: Document get() = state.document
 
@@ -123,6 +124,7 @@ class InteractionController(
         clearSelection()
         eraserCursor = null
         tool = t
+        onToolChanged(t)
         requestRender()
     }
 
@@ -589,6 +591,7 @@ class InteractionController(
         lassoPoints.clear()
         longPressPrevTool = tool
         tool = Tool.SELECT
+        onToolChanged(tool)
         setSelection(listOf(candidate))
         beginMove(state.viewportToContent(longPressStart))
         requestRender()
@@ -613,6 +616,7 @@ class InteractionController(
         longPressPrevTool?.let {
             tool = it
             longPressPrevTool = null
+            onToolChanged(tool)
         }
         if (selection.isEmpty() && lassoPolygon == null) return
         val affected = selection.map { it.pageIndex }.toSet()
