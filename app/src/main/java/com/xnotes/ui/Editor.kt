@@ -20,9 +20,14 @@ import com.xnotes.core.model.Rgba
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
+import com.xnotes.format.DocumentCodec
+import com.xnotes.format.XNoteFormatException
+import com.xnotes.platform.AndroidImageCodec
 import com.xnotes.platform.AndroidSurfaceFactory
 import com.xnotes.platform.AndroidTextMeasurer
 import com.xnotes.ui.theme.Palette
+import java.io.InputStream
+import java.io.OutputStream
 import kotlin.math.roundToInt
 
 /**
@@ -37,6 +42,7 @@ class Editor(context: Context, initialPalette: Palette) {
     val history = History()
     val view = CanvasView(context).also { it.state = state }
     private val textMeasurer = AndroidTextMeasurer()
+    private val codec = DocumentCodec(AndroidImageCodec(), textMeasurer)
 
     var tool by mutableStateOf(Tool.DEFAULT)
         private set
@@ -66,6 +72,13 @@ class Editor(context: Context, initialPalette: Palette) {
     var message by mutableStateOf<String?>(null)
     var editingField by mutableStateOf<EditingField?>(null)
         private set
+    var title by mutableStateOf(state.document.title)
+        private set
+    var dirty by mutableStateOf(false)
+        private set
+
+    /** The current document's storage location (a SAF content URI string), or null. */
+    val currentUri: String? get() = state.document.path
 
     val controller = InteractionController(
         state,
@@ -105,7 +118,51 @@ class Editor(context: Context, initialPalette: Palette) {
         canUndo = history.canUndo
         canRedo = history.canRedo
         pageCount = state.document.pages.size
+        dirty = state.document.dirty
+        title = state.document.title
         refreshView()
+    }
+
+    // --- file operations (SAF streams provided by the activity) ---
+
+    fun open(input: InputStream, uri: String) {
+        try {
+            val doc = codec.read(input)
+            doc.path = uri
+            doc.dirty = false
+            replaceDocument(doc)
+        } catch (e: XNoteFormatException) {
+            message = e.message ?: "Not an xnotes document."
+        } catch (e: Exception) {
+            message = "Could not open the note."
+        }
+    }
+
+    fun save(output: OutputStream, uri: String) {
+        try {
+            codec.write(state.document, output)
+            state.document.path = uri
+            state.document.dirty = false
+            refreshContent()
+        } catch (e: Exception) {
+            message = "Could not save the note."
+        }
+    }
+
+    private fun replaceDocument(doc: Document) {
+        controller.commitTextEdit()
+        controller.clearSelection()
+        state.document = doc
+        history.clear()
+        state.invalidateAllCaches()
+        state.didInitialFit = false
+        state.relayout()
+        if (state.viewportW > 0) {
+            state.fitWidth()
+            state.didInitialFit = true
+        }
+        refreshContent()
+        view.requestRender()
     }
 
     // --- tools & colour ---

@@ -1,8 +1,12 @@
 package com.xnotes
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +60,35 @@ private fun EditorScreen(palette: Palette, onToggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     val editor = remember { Editor(context, palette) }
     val snackbar = remember { SnackbarHostState() }
+    val resolver = context.contentResolver
+    val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+
+    val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
+            runCatching { resolver.openInputStream(it)?.use { s -> editor.open(s, it.toString()) } }
+                .onFailure { editor.message = "Could not open the note." }
+        }
+    }
+    val createLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        uri?.let {
+            runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
+            runCatching { resolver.openOutputStream(it)?.use { o -> editor.save(o, it.toString()) } }
+                .onFailure { editor.message = "Could not save the note." }
+        }
+    }
+
+    fun saveOrPrompt() {
+        val uri = editor.currentUri
+        if (uri != null) {
+            runCatching { resolver.openOutputStream(Uri.parse(uri), "wt")?.use { o -> editor.save(o, uri) } }
+                .onFailure { createLauncher.launch("${editor.title}.xnote") }
+        } else {
+            createLauncher.launch("${editor.title}.xnote")
+        }
+    }
 
     LaunchedEffect(editor.message) {
         editor.message?.let {
@@ -66,7 +99,13 @@ private fun EditorScreen(palette: Palette, onToggleFullscreen: () -> Unit) {
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { inner ->
         Column(modifier = Modifier.fillMaxSize().padding(inner)) {
-            Toolbar(editor, onToggleFullscreen = onToggleFullscreen)
+            Toolbar(
+                editor,
+                onToggleFullscreen = onToggleFullscreen,
+                onOpen = { openLauncher.launch(arrayOf("*/*")) },
+                onSave = { saveOrPrompt() },
+                onSaveAs = { createLauncher.launch("${editor.title}.xnote") },
+            )
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 AndroidView(factory = { editor.view }, modifier = Modifier.fillMaxSize())
                 editor.editingField?.let { field ->

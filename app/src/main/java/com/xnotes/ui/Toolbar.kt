@@ -52,6 +52,9 @@ private val toolIcons: List<Pair<Tool, ImageVector>> = listOf(
 fun Toolbar(
     editor: Editor,
     onToggleFullscreen: () -> Unit,
+    onOpen: () -> Unit,
+    onSave: () -> Unit,
+    onSaveAs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalPalette.current
@@ -64,8 +67,9 @@ fun Toolbar(
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileMenu(editor)
+        FileMenu(editor, onOpen, onSave, onSaveAs)
         EditMenu(editor)
+        Label(editor.title + if (editor.dirty) " *" else "")
         Separator()
 
         ToolbarIcon(XnotesIcons.sidebar, "Side panel", active = editor.sidebarVisible) { editor.toggleSidebar() }
@@ -169,12 +173,15 @@ private fun Separator() {
 }
 
 @Composable
-private fun FileMenu(editor: Editor) {
+private fun FileMenu(editor: Editor, onOpen: () -> Unit, onSave: () -> Unit, onSaveAs: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         ToolbarIcon(XnotesIcons.file, "File") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("New note") }, onClick = { editor.newNote(); expanded = false })
+            DropdownMenuItem(text = { Text("Open…") }, onClick = { onOpen(); expanded = false })
+            DropdownMenuItem(text = { Text("Save") }, onClick = { onSave(); expanded = false })
+            DropdownMenuItem(text = { Text("Save as…") }, onClick = { onSaveAs(); expanded = false })
         }
     }
 }
