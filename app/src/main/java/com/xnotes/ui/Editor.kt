@@ -111,7 +111,7 @@ class Editor(context: Context) {
         state,
         history,
         textMeasurer,
-        requestRender = { view.requestRender() },
+        requestRender = { onRender() },
         onContentChanged = { refreshContent() },
         onViewChanged = { refreshView() },
         onSelectionChanged = { selected -> hasSelection = selected },
@@ -119,6 +119,25 @@ class Editor(context: Context) {
         onTextEditStart = { field -> editingField = field },
         onTextEditEnd = { editingField = null },
     )
+
+    val presentation = com.xnotes.presentation.PresentationController(
+        state,
+        imageCodec,
+        liveStroke = { controller.activeLiveStrokePage?.let { pi -> controller.activeLiveStroke?.let { pi to it } } },
+        onStateChanged = { refreshPresentation() },
+    )
+
+    var presentationRunning by mutableStateOf(false)
+        private set
+    var presentationClients by mutableStateOf(0)
+        private set
+    var presentationUrl by mutableStateOf("")
+        private set
+
+    private fun onRender() {
+        view.requestRender()
+        presentation.notifyChanged()
+    }
 
     init {
         view.input = { controller.onTouch(it) }
@@ -482,6 +501,38 @@ class Editor(context: Context) {
 
     fun toggleSidebar() {
         sidebarVisible = !sidebarVisible
+    }
+
+    // --- presentation ---
+
+    val presentationDefaults get() = settings.presentation
+
+    fun startPresentation(port: Int, scope: String, mode: String): String? {
+        val d = settings.presentation
+        val error = presentation.start(port, scope == "lan", mode, d.quality, d.maxFps)
+        refreshPresentation()
+        if (error == null) {
+            settings = settings.copy(presentation = d.copy(port = port, scope = scope, mode = mode))
+            settingsRepo.save(settings)
+        }
+        return error
+    }
+
+    fun stopPresentation() {
+        presentation.stop()
+        refreshPresentation()
+    }
+
+    fun setPresentationMode(mode: String) {
+        presentation.setMode(mode)
+        settings = settings.copy(presentation = settings.presentation.copy(mode = mode))
+        refreshPresentation()
+    }
+
+    private fun refreshPresentation() {
+        presentationRunning = presentation.running
+        presentationClients = presentation.clientCount
+        presentationUrl = presentation.url()
     }
 
     fun newNote() {

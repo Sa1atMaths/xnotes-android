@@ -59,6 +59,7 @@ fun Toolbar(
     onExportPdf: () -> Unit,
     onInsertImage: () -> Unit,
     onPreferences: () -> Unit,
+    onPresent: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalPalette.current
@@ -140,7 +141,7 @@ fun Toolbar(
 
         RenderMenu(editor)
         ToolbarIcon(XnotesIcons.fullscreen, "Full screen") { onToggleFullscreen() }
-        ToolbarIcon(XnotesIcons.present, "Present") { editor.message = "Presentation arrives in a later build." }
+        ToolbarIcon(XnotesIcons.present, "Present", active = editor.presentationRunning) { onPresent() }
     }
 }
 

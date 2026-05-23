@@ -53,6 +53,11 @@ class MainActivity : ComponentActivity() {
         editor?.persist()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        editor?.stopPresentation()
+    }
+
     private fun toggleFullscreen() {
         fullscreen = !fullscreen
         val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -71,6 +76,7 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var showPreferences by remember { mutableStateOf(false) }
+    var showPresentation by remember { mutableStateOf(false) }
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
@@ -142,6 +148,7 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                 onExportPdf = { exportPdfLauncher.launch("${editor.title}.pdf") },
                 onInsertImage = { insertImageLauncher.launch(arrayOf("image/*")) },
                 onPreferences = { showPreferences = true },
+                onPresent = { showPresentation = true },
             )
             Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (editor.sidebarVisible) {
@@ -163,5 +170,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             onDismiss = { showPreferences = false },
             onSave = { editor.applyPreferences(it); showPreferences = false },
         )
+    }
+    if (showPresentation) {
+        com.xnotes.ui.PresentationDialog(editor = editor, onDismiss = { showPresentation = false })
     }
 }
