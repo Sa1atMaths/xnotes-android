@@ -13,13 +13,18 @@ class Document(
     val pages: MutableList<Page> = mutableListOf(),
     var dpi: Int = PageSize.DEFAULT_DPI,
     var path: String? = null,
+    /** Real file name from the storage provider, when known (overrides [path]-derived title). */
+    var displayName: String? = null,
     var dirty: Boolean = false,
     /** Embedded source PDF (for PDF-imported notes), so the note stays self-contained. */
     var pdfBytes: ByteArray? = null,
     val bookmarks: MutableList<Bookmark> = mutableListOf(),
 ) {
-    /** Derived: the file base name without extension, or "Untitled". */
-    val title: String get() = path?.let { Paths.stem(it) } ?: "Untitled"
+    /** Derived: the storage display name (or path) base name without extension, or "Untitled". */
+    val title: String
+        get() = displayName?.let { Paths.stem(it) }
+            ?: path?.let { Paths.stem(it) }
+            ?: "Untitled"
 
     val hasPdf: Boolean get() = pdfBytes != null
 

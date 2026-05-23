@@ -403,10 +403,11 @@ class Editor(context: Context) {
 
     // --- file operations (SAF streams provided by the activity) ---
 
-    fun open(input: InputStream, uri: String) {
+    fun open(input: InputStream, uri: String, name: String? = null) {
         try {
             val doc = codec.read(input)
             doc.path = uri
+            doc.displayName = name
             doc.dirty = false
             replaceDocument(doc)
         } catch (e: XNoteFormatException) {
@@ -416,10 +417,11 @@ class Editor(context: Context) {
         }
     }
 
-    fun save(output: OutputStream, uri: String) {
+    fun save(output: OutputStream, uri: String, name: String? = null) {
         try {
             codec.write(state.document, output)
             state.document.path = uri
+            if (name != null) state.document.displayName = name
             state.document.dirty = false
             refreshContent()
         } catch (e: Exception) {

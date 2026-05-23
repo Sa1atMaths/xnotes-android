@@ -48,6 +48,7 @@ class PresentationController(
     init {
         server.onClientCountChanged = { handler.post { onStateChanged() } }
         server.statusJson = { statusJson() }
+        server.onQualityRequest = { q -> handler.post { setQuality(q) } }
     }
 
     /** Start the server; returns an error message on failure, or null on success. */
@@ -74,6 +75,14 @@ class PresentationController(
 
     fun setMode(mode: String) {
         this.mode = mode
+        if (running) notifyChanged()
+        onStateChanged()
+    }
+
+    /** Change stream quality ("low" | "medium" | "high"); takes effect on the next frame. */
+    fun setQuality(quality: String) {
+        if (quality == this.quality) return
+        this.quality = quality
         if (running) notifyChanged()
         onStateChanged()
     }

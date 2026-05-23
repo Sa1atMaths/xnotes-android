@@ -103,7 +103,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
             runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
-            runCatching { resolver.openInputStream(it)?.use { s -> editor.open(s, it.toString()) } }
+            val name = displayNameOf(resolver, it)
+            runCatching { resolver.openInputStream(it)?.use { s -> editor.open(s, it.toString(), name) } }
                 .onFailure { editor.message = "Could not open the note." }
         }
     }
@@ -112,7 +113,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     ) { uri ->
         uri?.let {
             runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
-            runCatching { resolver.openOutputStream(it)?.use { o -> editor.save(o, it.toString()) } }
+            val name = displayNameOf(resolver, it)
+            runCatching { resolver.openOutputStream(it)?.use { o -> editor.save(o, it.toString(), name) } }
                 .onSuccess { val p = pendingAfterSave; pendingAfterSave = null; p?.invoke() }
                 .onFailure { editor.message = "Could not save the note."; pendingAfterSave = null }
         }
@@ -261,3 +263,13 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         )
     }
 }
+
+/** Queries the storage provider for a document's user-visible file name, if available. */
+private fun displayNameOf(resolver: android.content.ContentResolver, uri: Uri): String? = runCatching {
+    resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+        if (c.moveToFirst()) {
+            val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (i >= 0) c.getString(i) else null
+        } else null
+    }
+}.getOrNull()
