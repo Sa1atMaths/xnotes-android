@@ -56,6 +56,20 @@ class Stroke(
     override fun paint(r: Renderer) {
         val g = geometry()
         val color = renderColor
+        if (color.a >= 255) {
+            // Opaque ink: draw ribbon + caps directly.
+            paintFills(r, g, color)
+        } else {
+            // Translucent ink (highlighter): accumulate the whole stroke opaquely in
+            // a layer, then composite once at the ink's alpha, so the cap/ribbon and
+            // self-overlaps don't compound into darker patches.
+            r.saveLayerAlpha(bounds().outset(2.0), color.a / 255.0)
+            paintFills(r, g, color.withAlpha(255))
+            r.restore()
+        }
+    }
+
+    private fun paintFills(r: Renderer, g: StrokeGeometry, color: Rgba) {
         if (g.outline.size >= 3) r.fillPolygon(g.outline, color, FillRule.NONZERO)
         for (cap in g.caps) if (cap.radius > 0.0) r.fillCircle(cap.center, cap.radius, color)
     }

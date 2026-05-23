@@ -52,6 +52,15 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         }
     }
 
+    override fun saveLayerAlpha(bounds: Rect, alpha: Double) {
+        canvas.saveLayerAlpha(
+            bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat(),
+            (alpha.coerceIn(0.0, 1.0) * 255).toInt(),
+        )
+        scaleStack.addLast(scaleX)
+        scaleStack.addLast(scaleY)
+    }
+
     override fun translate(dx: Double, dy: Double) {
         canvas.translate(dx.toFloat(), dy.toFloat())
     }

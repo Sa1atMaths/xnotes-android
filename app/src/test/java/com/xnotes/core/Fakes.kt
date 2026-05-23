@@ -19,6 +19,7 @@ class FakeRenderer : Renderer {
 
     override fun save() { ops += "save" }
     override fun restore() { ops += "restore" }
+    override fun saveLayerAlpha(bounds: Rect, alpha: Double) { ops += "saveLayerAlpha" }
     override fun translate(dx: Double, dy: Double) { ops += "translate" }
     override fun scale(sx: Double, sy: Double) { ops += "scale" }
     override fun clipRect(rect: Rect) { ops += "clipRect" }

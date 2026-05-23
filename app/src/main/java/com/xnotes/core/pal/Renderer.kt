@@ -32,6 +32,14 @@ interface Renderer {
     // --- transform / clip stack ---
     fun save()
     fun restore()
+
+    /**
+     * Begin an offscreen layer over [bounds] that is composited at [alpha] when
+     * the matching [restore] runs. Content drawn into the layer is accumulated
+     * opaquely first, so overlapping fills don't compound — used to render a
+     * translucent stroke (e.g. the highlighter) uniformly. Pair with [restore].
+     */
+    fun saveLayerAlpha(bounds: Rect, alpha: Double)
     fun translate(dx: Double, dy: Double)
     fun scale(sx: Double, sy: Double)
 
