@@ -57,12 +57,17 @@ class CanvasState(
     var paintPageBackground: ((page: Page, renderer: com.xnotes.core.pal.Renderer, res: Double) -> Unit)? = null
 
     /**
-     * Per-page ink caches. Surfaces are intentionally **not** recycled on eviction:
-     * the presentation thread reads a page's cache surface off the main thread, so a
-     * surface must stay valid after it leaves this map — GC reclaims it once nothing
-     * holds it. The map itself is touched only on the main thread.
+     * Per-page caches, split into two layers so an ink edit never re-rasterizes the
+     * (costly) page background: [caches] holds the transparent **ink** layer (the
+     * strokes/shapes/text), [bgCaches] holds the rendered **background** layer
+     * (PDF/template) and stays empty when there is none. Both are blitted — background
+     * then ink — over the paper fill. Surfaces are intentionally **not** recycled on
+     * eviction: the presentation thread reads them off the main thread, so they must
+     * stay valid after leaving the map; GC reclaims them once nothing holds them. Both
+     * maps are touched only on the main thread.
      */
     private val caches = HashMap<Page, CacheEntry>()
+    private val bgCaches = HashMap<Page, CacheEntry>()
 
     var pageRects: List<Rect> = emptyList()
         private set
@@ -232,8 +237,32 @@ class CanvasState(
         surface.fill(TRANSPARENT)
         val r = surface.renderer()
         r.scale(res, res)
-        paintPageBackground?.invoke(page, r, res)
         for (item in page.items) if (!isLiftedItem(item)) item.paint(r)
+        return CacheEntry(surface, res)
+    }
+
+    /**
+     * The page's rendered background layer (PDF/template) at the current resolution,
+     * or null when the document has no page background. Built once and reused across
+     * ink edits — rebuilt only when the resolution changes — so erasing/repairing ink
+     * never re-rasterizes the (expensive) background.
+     */
+    fun backgroundFor(page: Page): CacheEntry? {
+        if (paintPageBackground == null) return null
+        val res = clampedRes(page)
+        val existing = bgCaches[page]
+        if (existing != null && (zoomingInProgress || abs(existing.res - res) < 1e-6)) return existing
+        return buildBackground(page, res).also { bgCaches[page] = it }
+    }
+
+    private fun buildBackground(page: Page, res: Double): CacheEntry {
+        val w = ceil(page.width * res).toInt().coerceAtLeast(1)
+        val h = ceil(page.height * res).toInt().coerceAtLeast(1)
+        val surface = surfaceFactory.create(w, h, 1.0)
+        surface.fill(TRANSPARENT)
+        val r = surface.renderer()
+        r.scale(res, res)
+        paintPageBackground?.invoke(page, r, res)
         return CacheEntry(surface, res)
     }
 
@@ -251,18 +280,17 @@ class CanvasState(
     }
 
     /**
-     * Repair just [dirtyRect] (page-local content space) of [page]'s cache in
+     * Repair just [dirtyRect] (page-local content space) of [page]'s ink layer in
      * place, instead of rebuilding the whole page — used after the eraser removes
      * strokes from a small area. Clears the region and repaints only the surviving
-     * items overlapping it, so the cost scales with the dirty area, not the page.
+     * items overlapping it, so the cost scales with the dirty area, not the page. The
+     * separate background layer is untouched, so this works for PDF pages too.
      *
-     * Returns false when it can't safely repair (no live cache, or a baked page
-     * background that would be costly to re-rasterize); the caller should then
+     * Returns false when there is no live cache to repair; the caller should then
      * [invalidatePage] for a full rebuild.
      */
     fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
         val entry = caches[page] ?: return false
-        if (paintPageBackground != null) return false
         val r = entry.surface.renderer()
         r.save()
         r.scale(entry.res, entry.res)
@@ -281,14 +309,12 @@ class CanvasState(
 
     fun invalidateAllCaches() {
         caches.clear()
+        bgCaches.clear()
     }
 
     fun dropCachesExcept(visible: Set<Page>) {
-        val it = caches.iterator()
-        while (it.hasNext()) {
-            val (page, _) = it.next()
-            if (page !in visible) it.remove()
-        }
+        caches.keys.retainAll(visible)
+        bgCaches.keys.retainAll(visible)
     }
 
     companion object {

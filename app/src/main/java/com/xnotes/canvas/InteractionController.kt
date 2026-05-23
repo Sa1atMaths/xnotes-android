@@ -407,7 +407,7 @@ class InteractionController(
                     dirty = dirty?.union(b) ?: b
                 }
                 // Repaint only the erased area in place; fall back to a full
-                // rebuild when that isn't possible (e.g. a PDF page background).
+                // rebuild only when the page has no live cache yet.
                 val rect = dirty?.outset(REPAIR_PAD)
                 if (rect == null || !state.repairRegion(page, rect)) state.invalidatePage(page)
                 changed = true

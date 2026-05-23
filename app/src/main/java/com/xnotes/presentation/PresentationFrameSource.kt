@@ -36,6 +36,7 @@ class PresentationFrameSource(
         val width: Double,
         val height: Double,
         val paper: Rgba,
+        val background: RasterSurface?,
         val cache: RasterSurface,
         val live: Stroke?,
     )
@@ -62,7 +63,7 @@ class PresentationFrameSource(
         val h = ceil(page.height * scale).toInt().coerceAtLeast(1)
         val draw = PageDraw(
             0.0, 0.0, page.width, page.height, state.paperColor(page),
-            state.cacheFor(page).surface, liveSnapshotFor(index),
+            state.backgroundFor(page)?.surface, state.cacheFor(page).surface, liveSnapshotFor(index),
         )
         return FramePlan(w, h, state.paperColor(page), follow = false, outerScale = scale, 0.0, 0.0, 1.0, listOf(draw))
     }
@@ -85,7 +86,7 @@ class PresentationFrameSource(
             draws.add(
                 PageDraw(
                     pr.left, pr.top, page.width, page.height, state.paperColor(page),
-                    state.cacheFor(page).surface, liveSnapshotFor(i),
+                    state.backgroundFor(page)?.surface, state.cacheFor(page).surface, liveSnapshotFor(i),
                 ),
             )
         }
@@ -106,6 +107,7 @@ class PresentationFrameSource(
             r.withSave {
                 r.translate(d.left, d.top)
                 if (plan.follow) r.fillRect(Rect(0.0, 0.0, d.width, d.height), d.paper)
+                d.background?.let { r.drawRaster(it, Rect(0.0, 0.0, d.width, d.height)) }
                 r.drawRaster(d.cache, Rect(0.0, 0.0, d.width, d.height))
                 d.live?.paint(r)
             }

@@ -14,8 +14,8 @@ import com.xnotes.platform.AndroidRenderer
 /**
  * The on-screen canvas. Draws the document in immediate mode each frame
  * (spec 05 §6): window background, then visible pages (paper + hairline border +
- * cached ink + page label). Selection overlay, the live stroke and the eraser
- * cursor are layered on top by later interaction code.
+ * cached background layer + cached ink + page label). Selection overlay, the live
+ * stroke and the eraser cursor are layered on top by later interaction code.
  */
 class CanvasView @JvmOverloads constructor(
     context: Context,
@@ -89,6 +89,7 @@ class CanvasView @JvmOverloads constructor(
 
             r.fillRect(pr, st.paperColor(page))
             r.strokeRect(pr, border)
+            st.backgroundFor(page)?.let { r.drawRaster(it.surface, pr) }
             r.drawRaster(st.cacheFor(page).surface, pr)
             drawPageLabel(r, st, i, pr)
         }
