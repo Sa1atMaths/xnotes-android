@@ -34,6 +34,9 @@ class CanvasView @JvmOverloads constructor(
     /** Pointer handler installed by the interaction layer. */
     var input: ((MotionEvent) -> Boolean)? = null
 
+    /** Hover handler (stylus/mouse hover) for the eraser cursor. */
+    var hover: ((MotionEvent) -> Boolean)? = null
+
     init {
         isFocusableInTouchMode = true
         setWillNotDraw(false)
@@ -42,6 +45,9 @@ class CanvasView @JvmOverloads constructor(
     @Suppress("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean =
         input?.invoke(event) ?: super.onTouchEvent(event)
+
+    override fun onHoverEvent(event: MotionEvent): Boolean =
+        hover?.invoke(event) ?: super.onHoverEvent(event)
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)

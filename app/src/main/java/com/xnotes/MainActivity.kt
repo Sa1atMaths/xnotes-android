@@ -36,6 +36,7 @@ private fun CanvasScreen() {
         view.state = state
         InteractionController(state, History(), requestRender = { view.requestRender() }).also { controller ->
             view.input = { event -> controller.onTouch(event) }
+            view.hover = { event -> controller.onHover(event) }
             view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         }
     }
