@@ -55,6 +55,7 @@ fun Toolbar(
     onOpen: () -> Unit,
     onSave: () -> Unit,
     onSaveAs: () -> Unit,
+    onPreferences: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalPalette.current
@@ -68,7 +69,7 @@ fun Toolbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         FileMenu(editor, onOpen, onSave, onSaveAs)
-        EditMenu(editor)
+        EditMenu(editor, onPreferences)
         Label(editor.title + if (editor.dirty) " *" else "")
         Separator()
 
@@ -187,7 +188,7 @@ private fun FileMenu(editor: Editor, onOpen: () -> Unit, onSave: () -> Unit, onS
 }
 
 @Composable
-private fun EditMenu(editor: Editor) {
+private fun EditMenu(editor: Editor, onPreferences: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         ToolbarIcon(XnotesIcons.edit, "Edit") { expanded = true }
@@ -197,6 +198,7 @@ private fun EditMenu(editor: Editor) {
             DropdownMenuItem(text = { Text("Delete selection") }, enabled = editor.hasSelection, onClick = { editor.deleteSelection(); expanded = false })
             DropdownMenuItem(text = { Text("Bring to front") }, enabled = editor.hasSelection, onClick = { editor.bringToFront(); expanded = false })
             DropdownMenuItem(text = { Text("Select all") }, onClick = { editor.selectAll(); expanded = false })
+            DropdownMenuItem(text = { Text("Preferences…") }, onClick = { onPreferences(); expanded = false })
         }
     }
 }

@@ -17,7 +17,10 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -65,6 +68,7 @@ class MainActivity : ComponentActivity() {
 private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
+    var showPreferences by remember { mutableStateOf(false) }
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
@@ -110,6 +114,7 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                 onOpen = { openLauncher.launch(arrayOf("*/*")) },
                 onSave = { saveOrPrompt() },
                 onSaveAs = { createLauncher.launch("${editor.title}.xnote") },
+                onPreferences = { showPreferences = true },
             )
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 AndroidView(factory = { editor.view }, modifier = Modifier.fillMaxSize())
@@ -118,5 +123,13 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (showPreferences) {
+        com.xnotes.ui.PreferencesDialog(
+            initial = editor.preferences,
+            onDismiss = { showPreferences = false },
+            onSave = { editor.applyPreferences(it); showPreferences = false },
+        )
     }
 }
