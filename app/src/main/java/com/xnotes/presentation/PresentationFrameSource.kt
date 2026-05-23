@@ -2,16 +2,20 @@ package com.xnotes.presentation
 
 import com.xnotes.canvas.CanvasState
 import com.xnotes.core.geometry.Rect
+import com.xnotes.core.model.Page
 import com.xnotes.core.model.Stroke
+import com.xnotes.core.pal.Renderer
 import com.xnotes.platform.AndroidRasterSurface
 import kotlin.math.ceil
 import kotlin.math.max
 
 /**
- * Renders a presentation frame using the same renderer/painting as the on-screen
- * canvas (spec 12 §3). Excludes presenter-only chrome (eraser cursor, selection
- * handles, page labels). Page mode frames a whole page; follow mode mirrors the
- * presenter's viewport. Includes the live in-progress stroke.
+ * Renders a presentation frame by compositing the on-screen page cache (the same
+ * background + committed-ink bitmap the canvas blits, kept current incrementally)
+ * with the live in-progress stroke and any lifted items — so a frame costs a
+ * downscale-blit, not a full repaint of every stroke (spec 12 §3). Excludes
+ * presenter-only chrome (eraser cursor, selection handles, page labels). Page mode
+ * frames a whole page; follow mode mirrors the presenter's viewport.
  */
 class PresentationFrameSource(
     private val state: CanvasState,
@@ -29,8 +33,7 @@ class PresentationFrameSource(
         surface.fill(state.paperColor(page))
         val r = surface.renderer()
         r.scale(scale, scale)
-        state.paintPageBackground?.invoke(page, r, scale)
-        for (item in page.items) item.paint(r)
+        paintPageContent(r, page, scale)
         liveStroke()?.let { (pi, stroke) -> if (pi == index) stroke.paint(r) }
         return surface
     }
@@ -61,11 +64,29 @@ class PresentationFrameSource(
             r.withSave {
                 r.translate(pr.left, pr.top)
                 r.fillRect(Rect(0.0, 0.0, page.width, page.height), state.paperColor(page))
-                state.paintPageBackground?.invoke(page, r, state.zoom * s)
-                for (item in page.items) item.paint(r)
+                paintPageContent(r, page, state.zoom * s)
                 if (live != null && live.first == i) live.second.paint(r)
             }
         }
         return surface
+    }
+
+    /**
+     * Paint [page]'s background + committed ink into [r] (already scaled
+     * content→frame by [targetScale]). Blits the on-screen page cache when it is at
+     * least as detailed as the frame — the common case while presenting at
+     * normal/high zoom — so a frame costs a downscale-blit rather than repainting
+     * every stroke. Falls back to painting items directly when the presenter is
+     * zoomed out far enough that the cache would upscale and blur.
+     */
+    private fun paintPageContent(r: Renderer, page: Page, targetScale: Double) {
+        val cache = state.cacheFor(page)
+        if (cache.res >= targetScale) {
+            r.drawRaster(cache.surface, Rect(0.0, 0.0, page.width, page.height))
+            for (item in page.items) if (state.isLiftedItem(item)) item.paint(r)
+        } else {
+            state.paintPageBackground?.invoke(page, r, targetScale)
+            for (item in page.items) item.paint(r)
+        }
     }
 }
