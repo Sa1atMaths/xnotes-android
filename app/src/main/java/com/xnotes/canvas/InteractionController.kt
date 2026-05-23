@@ -9,6 +9,7 @@ import com.xnotes.core.geometry.Rect
 import com.xnotes.core.history.AddItem
 import com.xnotes.core.history.EraseItems
 import com.xnotes.core.history.History
+import com.xnotes.core.history.EditText
 import com.xnotes.core.history.MoveItems
 import com.xnotes.core.history.ReorderItems
 import com.xnotes.core.history.ResizeItem
@@ -27,6 +28,7 @@ import com.xnotes.core.model.TextHandle
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.Renderer
+import com.xnotes.core.pal.TextMeasurer
 import com.xnotes.core.stroke.Sample
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
@@ -39,6 +41,16 @@ import kotlin.math.abs
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode { IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHAPE, MOVE, RESIZE, PAN, PINCH }
 
+/** On-screen geometry of the live text editor field (viewport pixels). */
+data class EditingField(
+    val x: Double,
+    val y: Double,
+    val width: Double,
+    val fontPx: Double,
+    val rgba: Rgba,
+    val text: String,
+)
+
 /**
  * Drives editing from pointer input (spec 06): drawing, the object eraser,
  * rubber-band and lasso selection, moving a selection, plus pan/zoom. Resize,
@@ -47,11 +59,14 @@ enum class PointerMode { IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHAPE, MOVE, RESIZ
 class InteractionController(
     private val state: CanvasState,
     val history: History,
+    private val textMeasurer: TextMeasurer,
     private val requestRender: () -> Unit,
     private val onContentChanged: () -> Unit = {},
     private val onViewChanged: () -> Unit = {},
     private val onSelectionChanged: (Boolean) -> Unit = {},
     private val onToolChanged: (Tool) -> Unit = {},
+    private val onTextEditStart: (EditingField?) -> Unit = {},
+    private val onTextEditEnd: () -> Unit = {},
 ) {
     val document: Document get() = state.document
 
@@ -108,8 +123,16 @@ class InteractionController(
     private var longPressCandidate: Selected? = null
     private var longPressPrevTool: Tool? = null
 
+    // TEXT EDITING
+    private var editingText: TextItem? = null
+    private var editingIsNew = false
+    private var editingOldText = ""
+    private var editingPageIndex = -1
+    val editingItem: TextItem? get() = editingText
+    val editingPage: Int get() = editingPageIndex
+
     init {
-        state.isLiftedItem = { item -> selection.any { it.item === item } }
+        state.isLiftedItem = { item -> item === editingText || selection.any { it.item === item } }
     }
 
     val hasSelection: Boolean get() = selection.isNotEmpty()
@@ -120,6 +143,7 @@ class InteractionController(
         if (t == tool) {
             return
         }
+        commitTextEdit()
         abortGesture()
         clearSelection()
         eraserCursor = null
@@ -165,6 +189,9 @@ class InteractionController(
         drawingPointerId = e.getPointerId(0)
         drawingIsStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS
 
+        // A press elsewhere commits an open text edit (the field's focus-out also fires).
+        if (tool != Tool.TEXT) commitTextEdit()
+
         // Stylus eraser end erases over any armed tool (spec 06 §2.1).
         if (toolType == MotionEvent.TOOL_TYPE_ERASER) {
             clearSelection()
@@ -178,7 +205,7 @@ class InteractionController(
             tool == Tool.SELECT -> beginSelect(content)
             tool == Tool.LASSO -> beginLasso(content)
             tool == Tool.SHAPE -> beginShape(content)
-            // text arrives in a later commit
+            tool == Tool.TEXT -> beginText(content)
             else -> Unit
         }
         armLongPress(Pt(vx, vy), content)
@@ -551,6 +578,79 @@ class InteractionController(
         requestRender()
     }
 
+    // --- TEXT ---
+
+    private fun beginText(content: Pt) {
+        commitTextEdit()
+        val pi = state.pageIndexAtContent(content) ?: return
+        val pr = state.pageRects[pi]
+        val local = Pt(content.x - pr.left, content.y - pr.top)
+        val page = state.document.pages[pi]
+        val existing = page.items.lastOrNull { it is TextItem && it.contains(local) } as? TextItem
+        if (existing != null) {
+            editingText = existing
+            editingIsNew = false
+            editingOldText = existing.text
+            editingPageIndex = pi
+            state.invalidatePage(page)
+        } else {
+            val width = (page.width - local.x - 14.0).coerceIn(80.0, 300.0)
+            editingText = TextItem(local, width, "", measurer = textMeasurer)
+            editingIsNew = true
+            editingOldText = ""
+            editingPageIndex = pi
+        }
+        onTextEditStart(editingField())
+        requestRender()
+    }
+
+    /** Keep the model in sync with the live editor field (for auto-resize/commit). */
+    fun updateEditingText(text: String) {
+        editingText?.text = text
+    }
+
+    /** Current on-screen geometry of the editor field, or null when not editing. */
+    fun editingField(): EditingField? {
+        val item = editingText ?: return null
+        val pr = state.pageRects.getOrNull(editingPageIndex) ?: return null
+        val topLeft = state.contentToViewport(Pt(pr.left + item.pos.x, pr.top + item.pos.y))
+        return EditingField(
+            x = topLeft.x,
+            y = topLeft.y,
+            width = item.width * state.zoom,
+            fontPx = item.pointSize * com.xnotes.platform.AndroidText.POINTS_TO_PX * state.zoom,
+            rgba = item.rgba,
+            text = item.text,
+        )
+    }
+
+    /** Commit (Escape / done / focus-out / tool switch). Uses the model's current text. */
+    fun commitTextEdit(finalText: String? = null) {
+        val item = editingText ?: return
+        finalText?.let { item.text = it }
+        val pi = editingPageIndex
+        if (editingIsNew) {
+            if (item.text.trim().isNotEmpty()) {
+                val page = state.document.pages[pi]
+                page.items.add(item)
+                history.push(AddItem(page, item))
+                state.document.dirty = true
+                onContentChanged()
+            }
+        } else if (item.text != editingOldText) {
+            history.push(EditText(item, editingOldText, item.text))
+            state.document.dirty = true
+            onContentChanged()
+        }
+        editingText = null
+        editingIsNew = false
+        editingPageIndex = -1
+        editingOldText = ""
+        state.document.pages.getOrNull(pi)?.let(state::invalidatePage)
+        onTextEditEnd()
+        requestRender()
+    }
+
     // --- LONG-PRESS GRAB ---
 
     private fun armLongPress(viewport: Pt, content: Pt) {
@@ -582,7 +682,8 @@ class InteractionController(
         val candidate = longPressCandidate ?: return
         longPressRunnable = null
         longPressCandidate = null
-        // Abort the in-progress gesture (keep eraser removals; commit text later).
+        // Abort the in-progress gesture (keep eraser removals); commit any text edit.
+        commitTextEdit()
         liveStroke = null
         strokePageIndex = null
         pendingShape = null
@@ -685,6 +786,7 @@ class InteractionController(
     }
 
     fun escape() {
+        commitTextEdit()
         clearSelection()
         requestRender()
     }

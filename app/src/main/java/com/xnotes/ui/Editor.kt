@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.xnotes.canvas.CanvasState
 import com.xnotes.canvas.CanvasView
+import com.xnotes.canvas.EditingField
 import com.xnotes.canvas.InteractionController
 import com.xnotes.core.history.AddPage
 import com.xnotes.core.history.DeletePage
@@ -20,6 +21,7 @@ import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
 import com.xnotes.platform.AndroidSurfaceFactory
+import com.xnotes.platform.AndroidTextMeasurer
 import com.xnotes.ui.theme.Palette
 import kotlin.math.roundToInt
 
@@ -34,6 +36,7 @@ class Editor(context: Context, initialPalette: Palette) {
     val state = CanvasState(Document.blank(), AndroidSurfaceFactory(), initialPalette)
     val history = History()
     val view = CanvasView(context).also { it.state = state }
+    private val textMeasurer = AndroidTextMeasurer()
 
     var tool by mutableStateOf(Tool.DEFAULT)
         private set
@@ -61,15 +64,20 @@ class Editor(context: Context, initialPalette: Palette) {
     var shapeConfig by mutableStateOf(ShapeConfig())
         private set
     var message by mutableStateOf<String?>(null)
+    var editingField by mutableStateOf<EditingField?>(null)
+        private set
 
     val controller = InteractionController(
         state,
         history,
+        textMeasurer,
         requestRender = { view.requestRender() },
         onContentChanged = { refreshContent() },
         onViewChanged = { refreshView() },
         onSelectionChanged = { selected -> hasSelection = selected },
         onToolChanged = { t -> tool = t },
+        onTextEditStart = { field -> editingField = field },
+        onTextEditEnd = { editingField = null },
     )
 
     init {
@@ -82,6 +90,15 @@ class Editor(context: Context, initialPalette: Palette) {
     private fun refreshView() {
         zoomPercent = (state.zoom * 100).roundToInt()
         pageIndex = state.currentPageIndex()
+        if (controller.editingItem != null) editingField = controller.editingField()
+    }
+
+    fun updateEditingText(text: String) {
+        controller.updateEditingText(text)
+    }
+
+    fun commitText(text: String? = null) {
+        controller.commitTextEdit(text)
     }
 
     private fun refreshContent() {

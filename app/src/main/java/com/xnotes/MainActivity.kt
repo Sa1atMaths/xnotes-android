@@ -69,6 +69,9 @@ private fun EditorScreen(palette: Palette, onToggleFullscreen: () -> Unit) {
             Toolbar(editor, onToggleFullscreen = onToggleFullscreen)
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 AndroidView(factory = { editor.view }, modifier = Modifier.fillMaxSize())
+                editor.editingField?.let { field ->
+                    com.xnotes.ui.TextEditorOverlay(editor, field)
+                }
             }
         }
     }
