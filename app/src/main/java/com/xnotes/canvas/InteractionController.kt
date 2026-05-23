@@ -1,6 +1,9 @@
 package com.xnotes.canvas
 
+import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
+import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.history.AddItem
@@ -8,17 +11,26 @@ import com.xnotes.core.history.EraseItems
 import com.xnotes.core.history.History
 import com.xnotes.core.history.MoveItems
 import com.xnotes.core.history.ReorderItems
+import com.xnotes.core.history.ResizeItem
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
+import com.xnotes.core.model.GeoHandle
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.RectHandle
+import com.xnotes.core.model.Resizable
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.model.ShapeHandle
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
+import com.xnotes.core.model.TextHandle
+import com.xnotes.core.model.TextItem
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.stroke.Sample
 import com.xnotes.core.tools.InkPalette
+import com.xnotes.core.tools.ShapeConfig
+import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConfig
 import com.xnotes.core.tools.ToolDefaults
@@ -76,6 +88,24 @@ class InteractionController(
     // ERASE
     private val eraseRemovals = mutableListOf<Pair<Page, CanvasItem>>()
     private var eraserCursor: Pt? = null // viewport pixels
+
+    // SHAPE
+    var shapeConfig: ShapeConfig = ShapeConfig()
+    private var pendingShape: ShapeItem? = null
+    private var shapePageIndex: Int? = null
+
+    // RESIZE
+    private var resizeItem: CanvasItem? = null
+    private var resizeHandle: HandleId? = null
+    private var resizeOldGeom: GeoHandle? = null
+    private var resizePageIndex: Int = -1
+
+    // LONG-PRESS GRAB
+    private val handler = Handler(Looper.getMainLooper())
+    private var longPressRunnable: Runnable? = null
+    private var longPressStart = Pt.ZERO
+    private var longPressCandidate: Selected? = null
+    private var longPressPrevTool: Tool? = null
 
     init {
         state.isLiftedItem = { item -> selection.any { it.item === item } }
@@ -145,11 +175,15 @@ class InteractionController(
             tool == Tool.ERASER -> beginErase(vx, vy)
             tool == Tool.SELECT -> beginSelect(content)
             tool == Tool.LASSO -> beginLasso(content)
-            else -> Unit // shape / text in later commits
+            tool == Tool.SHAPE -> beginShape(content)
+            // text arrives in a later commit
+            else -> Unit
         }
+        armLongPress(Pt(vx, vy), content)
     }
 
     private fun handlePointerDown(e: MotionEvent) {
+        cancelLongPress()
         if (mode == PointerMode.DRAW && drawingIsStylus) return
         if (mode == PointerMode.ERASE) return
         if (e.pointerCount >= 2) beginPinch(e)
@@ -157,15 +191,20 @@ class InteractionController(
 
     private fun handleMove(e: MotionEvent) {
         val idx = e.findPointerIndex(drawingPointerId).coerceAtLeast(0)
-        val content = state.viewportToContent(Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble()))
+        val vx = e.getX(idx).toDouble()
+        val vy = e.getY(idx).toDouble()
+        val content = state.viewportToContent(Pt(vx, vy))
+        maybeCancelLongPress(Pt(vx, vy))
         when (mode) {
             PointerMode.DRAW -> extendDraw(e)
-            PointerMode.PAN -> extendPan(e.getX(idx).toDouble(), e.getY(idx).toDouble())
+            PointerMode.PAN -> extendPan(vx, vy)
             PointerMode.PINCH -> updatePinch(e)
-            PointerMode.ERASE -> eraseAt(e.getX(idx).toDouble(), e.getY(idx).toDouble())
+            PointerMode.ERASE -> eraseAt(vx, vy)
             PointerMode.BAND -> extendBand(content)
             PointerMode.LASSO_DRAW -> extendLasso(content)
             PointerMode.MOVE -> extendMove(content)
+            PointerMode.RESIZE -> extendResize(content)
+            PointerMode.SHAPE -> extendShape(content)
             else -> Unit
         }
     }
@@ -175,6 +214,7 @@ class InteractionController(
     }
 
     private fun handleUp(e: MotionEvent) {
+        cancelLongPress()
         val idx = e.findPointerIndex(drawingPointerId).coerceAtLeast(0)
         val content = state.viewportToContent(Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble()))
         when (mode) {
@@ -185,6 +225,8 @@ class InteractionController(
             PointerMode.BAND -> endBand()
             PointerMode.LASSO_DRAW -> endLasso()
             PointerMode.MOVE -> endMove(content)
+            PointerMode.RESIZE -> endResize()
+            PointerMode.SHAPE -> endShape()
             else -> Unit
         }
     }
@@ -305,7 +347,20 @@ class InteractionController(
     // --- SELECT / BAND ---
 
     private fun beginSelect(content: Pt) {
-        // (resize-handle hit-test is added with the resize commit)
+        // 1. Resize handle under the point (single resizable item selected)?
+        if (selection.size == 1 && selection[0].item is Resizable) {
+            val sel = selection[0]
+            val pr = state.pageRects.getOrNull(sel.pageIndex)
+            if (pr != null) {
+                val handles = ResizeMath.handles(sel.item, pr.topLeft)
+                val tol = HANDLE_HIT / state.zoom
+                val id = ResizeMath.hitHandle(handles, content, tol)
+                if (id != null) {
+                    beginResize(sel, id)
+                    return
+                }
+            }
+        }
         val pageIndex = state.pageIndexAtContent(content)
         if (pageIndex != null) {
             val pr = state.pageRects[pageIndex]
@@ -404,6 +459,141 @@ class InteractionController(
         requestRender()
     }
 
+    // --- RESIZE ---
+
+    private fun beginResize(sel: Selected, handle: HandleId) {
+        resizeItem = sel.item
+        resizeHandle = handle
+        resizePageIndex = sel.pageIndex
+        resizeOldGeom = (sel.item as Resizable).geometry()
+        mode = PointerMode.RESIZE
+    }
+
+    private fun extendResize(content: Pt) {
+        val item = resizeItem ?: return
+        val handle = resizeHandle ?: return
+        val pr = state.pageRects.getOrNull(resizePageIndex) ?: return
+        val local = Pt(content.x - pr.left, content.y - pr.top)
+        when (item) {
+            is ImageItem -> item.setGeometry(RectHandle(ResizeMath.resizeImage(item.rect, handle, local)))
+            is TextItem -> {
+                val (pos, w) = ResizeMath.resizeText(item.pos, item.width, handle, local.x)
+                item.setGeometry(TextHandle(pos, w))
+            }
+            is ShapeItem -> {
+                val (s, en) = if (item.shape.isClosed) {
+                    ResizeMath.resizeClosedShape(item.start, item.end, handle, local)
+                } else {
+                    ResizeMath.resizeOpenShape(item.start, item.end, handle, local)
+                }
+                item.setGeometry(ShapeHandle(s, en))
+            }
+        }
+        requestRender()
+    }
+
+    private fun endResize() {
+        val item = resizeItem as? Resizable
+        val old = resizeOldGeom
+        if (item != null && old != null) {
+            val new = item.geometry()
+            if (new != old) {
+                history.push(ResizeItem(item, old, new))
+                state.document.dirty = true
+                state.document.pages.getOrNull(resizePageIndex)?.let(state::invalidatePage)
+                onContentChanged()
+            }
+        }
+        resizeItem = null
+        resizeHandle = null
+        resizeOldGeom = null
+        mode = PointerMode.IDLE
+        requestRender()
+    }
+
+    // --- SHAPE ---
+
+    private fun beginShape(content: Pt) {
+        val pageIndex = state.pageIndexAtContent(content) ?: return
+        val pr = state.pageRects[pageIndex]
+        val startLocal = Pt(content.x - pr.left, content.y - pr.top)
+        val kind = shapeConfig.shape
+        val fill = if (shapeConfig.fill && kind.isClosed) inkColor.scaleAlpha(ShapeConfig.FILL_ALPHA) else null
+        pendingShape = ShapeItem(kind, startLocal, startLocal, inkColor, shapeConfig.strokeWidth, fill)
+        shapePageIndex = pageIndex
+        mode = PointerMode.SHAPE
+        requestRender()
+    }
+
+    private fun extendShape(content: Pt) {
+        val shape = pendingShape ?: return
+        val pr = state.pageRects.getOrNull(shapePageIndex ?: -1) ?: return
+        shape.end = Pt(content.x - pr.left, content.y - pr.top)
+        requestRender()
+    }
+
+    private fun endShape() {
+        val shape = pendingShape
+        val pi = shapePageIndex
+        if (shape != null && pi != null && shape.start.distanceTo(shape.end) > SHAPE_MIN_DRAG) {
+            val page = state.document.pages[pi]
+            page.items.add(shape)
+            state.appendToCache(page, shape)
+            history.push(AddItem(page, shape))
+            state.document.dirty = true
+            onContentChanged()
+        }
+        pendingShape = null
+        shapePageIndex = null
+        mode = PointerMode.IDLE
+        requestRender()
+    }
+
+    // --- LONG-PRESS GRAB ---
+
+    private fun armLongPress(viewport: Pt, content: Pt) {
+        cancelLongPress()
+        val eligible = tool.isStroke || tool == Tool.PAN || tool == Tool.LASSO || tool == Tool.SHAPE || tool == Tool.TEXT
+        if (!eligible) return
+        val pageIndex = state.pageIndexAtContent(content) ?: return
+        val pr = state.pageRects[pageIndex]
+        val local = Pt(content.x - pr.left, content.y - pr.top)
+        val hit = state.document.pages[pageIndex].items.lastOrNull { it.contains(local) } ?: return
+        longPressStart = viewport
+        longPressCandidate = Selected(pageIndex, hit)
+        val r = Runnable { triggerLongPress() }
+        longPressRunnable = r
+        handler.postDelayed(r, LONG_PRESS_MS)
+    }
+
+    private fun maybeCancelLongPress(viewport: Pt) {
+        if (longPressRunnable != null && viewport.distanceTo(longPressStart) > LONG_PRESS_SLOP) cancelLongPress()
+    }
+
+    private fun cancelLongPress() {
+        longPressRunnable?.let { handler.removeCallbacks(it) }
+        longPressRunnable = null
+        longPressCandidate = null
+    }
+
+    private fun triggerLongPress() {
+        val candidate = longPressCandidate ?: return
+        longPressRunnable = null
+        longPressCandidate = null
+        // Abort the in-progress gesture (keep eraser removals; commit text later).
+        liveStroke = null
+        strokePageIndex = null
+        pendingShape = null
+        shapePageIndex = null
+        bandRect = null
+        lassoPoints.clear()
+        longPressPrevTool = tool
+        tool = Tool.SELECT
+        setSelection(listOf(candidate))
+        beginMove(state.viewportToContent(longPressStart))
+        requestRender()
+    }
+
     // --- selection management ---
 
     private fun setSelection(items: List<Selected>) {
@@ -419,6 +609,11 @@ class InteractionController(
     }
 
     fun clearSelection() {
+        // Restore the tool a long-press grab temporarily switched away from.
+        longPressPrevTool?.let {
+            tool = it
+            longPressPrevTool = null
+        }
         if (selection.isEmpty() && lassoPolygon == null) return
         val affected = selection.map { it.pageIndex }.toSet()
         selection.clear()
@@ -545,8 +740,11 @@ class InteractionController(
     }
 
     private fun abortGesture() {
+        cancelLongPress()
         liveStroke = null
         strokePageIndex = null
+        pendingShape = null
+        shapePageIndex = null
         bandRect = null
         lassoPoints.clear()
         if (mode == PointerMode.PINCH) {
@@ -576,17 +774,9 @@ class InteractionController(
                 }
             }
 
-            // Live in-progress stroke, clipped to its page.
-            liveStroke?.let { stroke ->
-                val pr = state.pageRects.getOrNull(strokePageIndex ?: -1)
-                if (pr != null) {
-                    r.withSave {
-                        r.clipRect(pr)
-                        r.translate(pr.left, pr.top)
-                        stroke.paint(r)
-                    }
-                }
-            }
+            // Live in-progress stroke / shape preview, clipped to its page.
+            liveStroke?.let { stroke -> paintClippedToPage(r, strokePageIndex) { stroke.paint(r) } }
+            pendingShape?.let { shape -> paintClippedToPage(r, shapePageIndex) { shape.paint(r) } }
 
             // Selection chrome.
             val accent = Pen(state.palette.accent, 1.3, cosmetic = true, dashed = true)
@@ -599,6 +789,21 @@ class InteractionController(
                 selection.isNotEmpty() ->
                     selectionBoundsContent()?.translate(moveOffset.x, moveOffset.y)?.let { r.strokeRect(it, accent) }
             }
+
+            // Resize handles for a single resizable selection.
+            if (selection.size == 1 && selection[0].item is Resizable &&
+                mode != PointerMode.BAND && mode != PointerMode.LASSO_DRAW
+            ) {
+                val sel = selection[0]
+                val pr = state.pageRects.getOrNull(sel.pageIndex)
+                if (pr != null) {
+                    val side = HANDLE_HIT / state.zoom
+                    for (h in ResizeMath.handles(sel.item, pr.topLeft)) {
+                        val c = Pt(h.content.x + moveOffset.x, h.content.y + moveOffset.y)
+                        r.fillRect(Rect(c.x - side / 2, c.y - side / 2, side, side), state.palette.accent)
+                    }
+                }
+            }
         }
 
         // Eraser cursor (viewport space, after the transform is restored).
@@ -608,8 +813,21 @@ class InteractionController(
         }
     }
 
+    private inline fun paintClippedToPage(r: Renderer, pageIndex: Int?, crossinline paint: () -> Unit) {
+        val pr = state.pageRects.getOrNull(pageIndex ?: -1) ?: return
+        r.withSave {
+            r.clipRect(pr)
+            r.translate(pr.left, pr.top)
+            paint()
+        }
+    }
+
     companion object {
         const val MIN_SAMPLE_DIST = 1.0
         const val MOVE_EPS = 0.01
+        const val HANDLE_HIT = 9.0
+        const val SHAPE_MIN_DRAG = 3.0
+        const val LONG_PRESS_MS = 450L
+        const val LONG_PRESS_SLOP = 6.0
     }
 }
