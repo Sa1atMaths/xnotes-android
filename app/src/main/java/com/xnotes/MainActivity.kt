@@ -83,6 +83,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var showPreferences by remember { mutableStateOf(false) }
     var showPresentation by remember { mutableStateOf(false) }
+    var guardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingAfterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
@@ -99,7 +101,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         uri?.let {
             runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
             runCatching { resolver.openOutputStream(it)?.use { o -> editor.save(o, it.toString()) } }
-                .onFailure { editor.message = "Could not save the note." }
+                .onSuccess { val p = pendingAfterSave; pendingAfterSave = null; p?.invoke() }
+                .onFailure { editor.message = "Could not save the note."; pendingAfterSave = null }
         }
     }
 
@@ -135,12 +138,16 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         }
     }
 
+    fun guarded(action: () -> Unit) {
+        if (editor.dirty) guardAction = action else action()
+    }
+
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     editor.keyActions = remember {
         Editor.KeyActions(
-            newNote = { editor.newNote() },
-            open = { openLauncher.launch(arrayOf("*/*")) },
+            newNote = { guarded { editor.newNote() } },
+            open = { guarded { openLauncher.launch(arrayOf("*/*")) } },
             save = { saveOrPrompt() },
             saveAs = { createLauncher.launch("${editor.title}.xnote") },
             exportPdf = { exportPdfLauncher.launch("${editor.title}.pdf") },
@@ -170,7 +177,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             Toolbar(
                 editor,
                 onToggleFullscreen = onToggleFullscreen,
-                onOpen = { openLauncher.launch(arrayOf("*/*")) },
+                onNew = { guarded { editor.newNote() } },
+                onOpen = { guarded { openLauncher.launch(arrayOf("*/*")) } },
                 onSave = { saveOrPrompt() },
                 onSaveAs = { createLauncher.launch("${editor.title}.xnote") },
                 onImportPdf = { importPdfLauncher.launch(arrayOf("application/pdf")) },
@@ -202,5 +210,35 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     }
     if (showPresentation) {
         com.xnotes.ui.PresentationDialog(editor = editor, onDismiss = { showPresentation = false })
+    }
+    guardAction?.let { action ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { guardAction = null },
+            title = { androidx.compose.material3.Text("Unsaved changes") },
+            text = { androidx.compose.material3.Text("Save changes to “${editor.title}” before continuing?") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    guardAction = null
+                    val uri = editor.currentUri
+                    if (uri != null) {
+                        runCatching { resolver.openOutputStream(Uri.parse(uri), "wt")?.use { o -> editor.save(o, uri) } }
+                        action()
+                    } else {
+                        pendingAfterSave = action
+                        createLauncher.launch("${editor.title}.xnote")
+                    }
+                }) { androidx.compose.material3.Text("Save") }
+            },
+            dismissButton = {
+                androidx.compose.foundation.layout.Row {
+                    androidx.compose.material3.TextButton(onClick = { guardAction = null; action() }) {
+                        androidx.compose.material3.Text("Discard")
+                    }
+                    androidx.compose.material3.TextButton(onClick = { guardAction = null }) {
+                        androidx.compose.material3.Text("Cancel")
+                    }
+                }
+            },
+        )
     }
 }

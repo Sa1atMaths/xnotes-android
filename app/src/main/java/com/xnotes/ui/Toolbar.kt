@@ -52,6 +52,7 @@ private val toolIcons: List<Pair<Tool, ImageVector>> = listOf(
 fun Toolbar(
     editor: Editor,
     onToggleFullscreen: () -> Unit,
+    onNew: () -> Unit,
     onOpen: () -> Unit,
     onSave: () -> Unit,
     onSaveAs: () -> Unit,
@@ -74,7 +75,7 @@ fun Toolbar(
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileMenu(editor, onOpen, onSave, onSaveAs, onImportPdf, onExportPdf)
+        FileMenu(onNew, onOpen, onSave, onSaveAs, onImportPdf, onExportPdf)
         EditMenu(editor, onPreferences)
         Label(editor.title + if (editor.dirty) " *" else "")
         Separator()
@@ -203,7 +204,7 @@ private fun Separator() {
 
 @Composable
 private fun FileMenu(
-    editor: Editor,
+    onNew: () -> Unit,
     onOpen: () -> Unit,
     onSave: () -> Unit,
     onSaveAs: () -> Unit,
@@ -214,7 +215,7 @@ private fun FileMenu(
     Box {
         ToolbarIcon(XnotesIcons.file, "File") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("New note") }, onClick = { editor.newNote(); expanded = false })
+            DropdownMenuItem(text = { Text("New note") }, onClick = { onNew(); expanded = false })
             DropdownMenuItem(text = { Text("Open…") }, onClick = { onOpen(); expanded = false })
             DropdownMenuItem(text = { Text("Save") }, onClick = { onSave(); expanded = false })
             DropdownMenuItem(text = { Text("Save as…") }, onClick = { onSaveAs(); expanded = false })
