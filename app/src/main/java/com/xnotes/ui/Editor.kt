@@ -65,6 +65,7 @@ class Editor(context: Context) {
     private val codec = DocumentCodec(imageCodec, textMeasurer)
     private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec)
     private var lastSessionContentVersion = -1
+    private var sessionLoaded = false
 
     var tool by mutableStateOf(Tool.DEFAULT)
         private set
@@ -163,7 +164,7 @@ class Editor(context: Context) {
         view.afterLayout = { refreshView() }
         controller.clipboardHasImage = { clipboardImageUri() != null }
         applySettings()
-        if (!restoreSession()) rebuildPdfSource()
+        rebuildPdfSource()
     }
 
     // --- selection menu / clipboard ---
@@ -350,39 +351,42 @@ class Editor(context: Context) {
     /** Persist the working session (open document + zoom/scroll) so the next launch
      *  reopens this note where the user left off, unsaved edits included. */
     private fun saveSession() {
+        if (!sessionLoaded) return // don't overwrite the saved note before restore has applied
         val contentChanged = contentVersion != lastSessionContentVersion
         session.save(state.document, state.zoom, state.scrollX, state.scrollY, zoomLocked, writeDocument = contentChanged)
         lastSessionContentVersion = contentVersion
     }
 
-    /** Reopen the last session (document + view state) on launch, or false if none. */
-    private fun restoreSession(): Boolean {
-        val snap = session.load() ?: return false
-        state.document = snap.document
-        rebuildPdfSource()
-        history.clear()
-        state.invalidateAllCaches()
-        if (snap.zoom > 0.0) {
-            state.zoom = snap.zoom.coerceIn(CanvasState.MIN_ZOOM, CanvasState.MAX_ZOOM)
-            state.scrollX = snap.scrollX
-            state.scrollY = snap.scrollY
-            state.didInitialFit = true // keep the restored zoom/scroll instead of fitting width
-        } else {
-            state.didInitialFit = false
-        }
-        zoomLocked = snap.zoomLocked
-        state.zoomLocked = snap.zoomLocked
-        state.relayout()
-        if (state.viewportW > 0) {
-            if (!state.didInitialFit) {
-                state.fitWidth()
-                state.didInitialFit = true
+    /** Reopen the last session (document + view state). The heavy load runs off the
+     *  main thread; the apply runs on the caller's (main) dispatcher. A no-op when
+     *  there is no saved session. Drives the launch loader, so it's safe to await. */
+    suspend fun restoreSession() {
+        val snap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { session.load() }
+        if (snap != null) {
+            state.document = snap.document
+            rebuildPdfSource()
+            history.clear()
+            state.invalidateAllCaches()
+            if (snap.zoom > 0.0) {
+                state.zoom = snap.zoom.coerceIn(CanvasState.MIN_ZOOM, CanvasState.MAX_ZOOM)
+                state.scrollX = snap.scrollX
+                state.scrollY = snap.scrollY
+                state.didInitialFit = true // keep the restored zoom/scroll instead of fitting width
             }
-            state.clampScroll()
+            zoomLocked = snap.zoomLocked
+            state.zoomLocked = snap.zoomLocked
+            state.relayout()
+            if (state.viewportW > 0) {
+                if (!state.didInitialFit) {
+                    state.fitWidth()
+                    state.didInitialFit = true
+                }
+                state.clampScroll()
+            }
+            refreshContent()
+            view.requestRender()
         }
-        refreshContent()
-        view.requestRender()
-        return true
+        sessionLoaded = true
     }
 
     private fun refreshView() {

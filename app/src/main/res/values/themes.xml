@@ -6,4 +6,10 @@
         <item name="android:navigationBarColor">@color/window_bg</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <!-- Launch theme: dark stage matching the loader so there's no logo/white flash
+         before the animation appears. Swapped for Theme.Xnotes in MainActivity.onCreate. -->
+    <style name="Theme.Xnotes.Splash" parent="Theme.Xnotes">
+        <item name="android:windowBackground">@color/loader_bg</item>
+    </style>
 </resources>

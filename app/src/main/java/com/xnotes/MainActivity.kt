@@ -39,6 +39,10 @@ import com.xnotes.ui.Editor
 import com.xnotes.ui.Toolbar
 import com.xnotes.ui.theme.XnotesTheme
 
+/** Minimum time the launch loader stays up, so its animation is briefly seen even
+ *  when the session restores instantly. */
+private const val MIN_LOADER_MS = 600L
+
 class MainActivity : ComponentActivity() {
 
     private var fullscreen = true // open in full screen by default
@@ -46,12 +50,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setTheme(com.xnotes.R.style.Theme_Xnotes) // leave the dark launch/splash theme behind
         applyFullscreen()
         setContent {
             val context = LocalContext.current
             val ed = remember { Editor(context).also { editor = it } }
+            var ready by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                val start = android.os.SystemClock.uptimeMillis()
+                ed.restoreSession() // heavy load off-thread; loader animates meanwhile
+                val elapsed = android.os.SystemClock.uptimeMillis() - start
+                if (elapsed < MIN_LOADER_MS) kotlinx.coroutines.delay(MIN_LOADER_MS - elapsed)
+                ready = true
+            }
             XnotesTheme(ed.palette) {
-                EditorScreen(ed, onToggleFullscreen = ::toggleFullscreen)
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (ready) EditorScreen(ed, onToggleFullscreen = ::toggleFullscreen)
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !ready,
+                        enter = androidx.compose.animation.EnterTransition.None,
+                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(280)),
+                    ) {
+                        com.xnotes.ui.XnotesLoader()
+                    }
+                }
             }
         }
     }
