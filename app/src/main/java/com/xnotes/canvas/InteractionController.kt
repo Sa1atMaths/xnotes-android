@@ -139,6 +139,10 @@ class InteractionController(
 
     fun configFor(t: Tool): ToolConfig = toolConfigs[t] ?: ToolDefaults.configFor(t)
 
+    fun setToolConfig(t: Tool, config: ToolConfig) {
+        toolConfigs[t] = config
+    }
+
     fun setTool(t: Tool) {
         if (t == tool) {
             return

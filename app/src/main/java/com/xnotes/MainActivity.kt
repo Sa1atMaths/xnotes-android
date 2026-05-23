@@ -25,21 +25,27 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.xnotes.ui.Editor
 import com.xnotes.ui.Toolbar
-import com.xnotes.ui.theme.Palette
 import com.xnotes.ui.theme.XnotesTheme
 
 class MainActivity : ComponentActivity() {
 
     private var fullscreen = false
+    private var editor: Editor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val palette = Palette.dark()
-            XnotesTheme(palette) {
-                EditorScreen(palette, onToggleFullscreen = ::toggleFullscreen)
+            val context = LocalContext.current
+            val ed = remember { Editor(context).also { editor = it } }
+            XnotesTheme(ed.palette) {
+                EditorScreen(ed, onToggleFullscreen = ::toggleFullscreen)
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        editor?.persist()
     }
 
     private fun toggleFullscreen() {
@@ -56,9 +62,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun EditorScreen(palette: Palette, onToggleFullscreen: () -> Unit) {
+private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val context = LocalContext.current
-    val editor = remember { Editor(context, palette) }
     val snackbar = remember { SnackbarHostState() }
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION

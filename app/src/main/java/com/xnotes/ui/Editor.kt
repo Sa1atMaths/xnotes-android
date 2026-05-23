@@ -20,11 +20,14 @@ import com.xnotes.core.model.Rgba
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
+import com.xnotes.core.tools.ToolDefaults
 import com.xnotes.format.DocumentCodec
 import com.xnotes.format.XNoteFormatException
 import com.xnotes.platform.AndroidImageCodec
 import com.xnotes.platform.AndroidSurfaceFactory
 import com.xnotes.platform.AndroidTextMeasurer
+import com.xnotes.settings.Preferences
+import com.xnotes.settings.SettingsRepository
 import com.xnotes.ui.theme.Palette
 import java.io.InputStream
 import java.io.OutputStream
@@ -36,9 +39,16 @@ import kotlin.math.roundToInt
  * observable state and the actions the toolbar/menus invoke.
  */
 @Stable
-class Editor(context: Context, initialPalette: Palette) {
+class Editor(context: Context) {
 
-    val state = CanvasState(Document.blank(), AndroidSurfaceFactory(), initialPalette)
+    private val settingsRepo = SettingsRepository(context)
+    private var settings = settingsRepo.load()
+
+    val state = CanvasState(
+        Document.blank(Document.DEFAULT_NEW_PAGES, settings.prefs.defaultPageSize, settings.prefs.defaultPageOrientation),
+        AndroidSurfaceFactory(),
+        Palette.forAppearance(settings.prefs.isDark, settings.prefs.accentColor),
+    )
     val history = History()
     val view = CanvasView(context).also { it.state = state }
     private val textMeasurer = AndroidTextMeasurer()
@@ -46,7 +56,7 @@ class Editor(context: Context, initialPalette: Palette) {
 
     var tool by mutableStateOf(Tool.DEFAULT)
         private set
-    var palette by mutableStateOf(initialPalette)
+    var palette by mutableStateOf(state.palette)
         private set
     var zoomPercent by mutableStateOf(100)
         private set
@@ -97,7 +107,52 @@ class Editor(context: Context, initialPalette: Palette) {
         view.input = { controller.onTouch(it) }
         view.hover = { controller.onHover(it) }
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
+        applySettings()
+    }
+
+    val preferences: Preferences get() = settings.prefs
+
+    private fun applySettings() {
+        toolbarColors = settings.toolbarColors
+        activeColorIndex = settings.activeColor.coerceIn(0, toolbarColors.lastIndex)
+        renderScale = settings.renderScale
+        state.renderScale = settings.renderScale
+        sidebarVisible = settings.sidebarVisible
+        shapeConfig = settings.shapeConfig
+        controller.shapeConfig = settings.shapeConfig
+        for (t in ToolDefaults.persistedTools) controller.setToolConfig(t, settings.configFor(t))
         controller.inkColor = toolbarColors[activeColorIndex]
+        applyPagePrefsToState(settings.prefs)
+    }
+
+    private fun applyPagePrefsToState(p: Preferences) {
+        palette = Palette.forAppearance(p.isDark, p.accentColor)
+        state.palette = palette
+        state.pageColorOverride = if (p.defaultTemplate == "color") p.pageColor else null
+    }
+
+    /** Apply edited preferences live and persist (used by the Preferences dialog). */
+    fun applyPreferences(p: Preferences) {
+        settings = settings.copy(prefs = p)
+        applyPagePrefsToState(p)
+        state.invalidateAllCaches()
+        settingsRepo.save(settings)
+        view.requestRender()
+    }
+
+    /** Snapshot live state into settings and save (call on pause/stop). */
+    fun persist() {
+        val tools = ToolDefaults.persistedTools.associateWith { controller.configFor(it) }
+        settings = settings.copy(
+            tools = tools,
+            shapeConfig = controller.shapeConfig,
+            toolbarColors = toolbarColors,
+            activeColor = activeColorIndex,
+            sidebarVisible = sidebarVisible,
+            renderScale = renderScale,
+        )
+        currentUri?.let { settings = settings.rememberFile(it) }
+        settingsRepo.save(settings)
     }
 
     private fun refreshView() {
@@ -179,6 +234,7 @@ class Editor(context: Context, initialPalette: Palette) {
 
     fun setSwatchColor(index: Int, color: Rgba) {
         toolbarColors = toolbarColors.toMutableList().also { it[index] = color }
+        settings = settings.rememberColor(color)
         pickColor(index)
     }
 
@@ -279,7 +335,11 @@ class Editor(context: Context, initialPalette: Palette) {
     }
 
     fun newNote() {
-        state.document = Document.blank()
+        state.document = Document.blank(
+            Document.DEFAULT_NEW_PAGES,
+            settings.prefs.defaultPageSize,
+            settings.prefs.defaultPageOrientation,
+        )
         history.clear()
         controller.clearSelection()
         state.invalidateAllCaches()
