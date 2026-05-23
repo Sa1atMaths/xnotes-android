@@ -63,6 +63,8 @@ class Editor(context: Context) {
     private val textMeasurer = AndroidTextMeasurer()
     private val imageCodec = AndroidImageCodec()
     private val codec = DocumentCodec(imageCodec, textMeasurer)
+    private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec)
+    private var lastSessionContentVersion = -1
 
     var tool by mutableStateOf(Tool.DEFAULT)
         private set
@@ -161,7 +163,7 @@ class Editor(context: Context) {
         view.afterLayout = { refreshView() }
         controller.clipboardHasImage = { clipboardImageUri() != null }
         applySettings()
-        rebuildPdfSource()
+        if (!restoreSession()) rebuildPdfSource()
     }
 
     // --- selection menu / clipboard ---
@@ -342,6 +344,43 @@ class Editor(context: Context) {
         )
         currentUri?.let { settings = settings.rememberFile(it) }
         settingsRepo.save(settings)
+        saveSession()
+    }
+
+    /** Persist the working session (open document + zoom/scroll) so the next launch
+     *  reopens this note where the user left off, unsaved edits included. */
+    private fun saveSession() {
+        val contentChanged = contentVersion != lastSessionContentVersion
+        session.save(state.document, state.zoom, state.scrollX, state.scrollY, writeDocument = contentChanged)
+        lastSessionContentVersion = contentVersion
+    }
+
+    /** Reopen the last session (document + view state) on launch, or false if none. */
+    private fun restoreSession(): Boolean {
+        val snap = session.load() ?: return false
+        state.document = snap.document
+        rebuildPdfSource()
+        history.clear()
+        state.invalidateAllCaches()
+        if (snap.zoom > 0.0) {
+            state.zoom = snap.zoom.coerceIn(CanvasState.MIN_ZOOM, CanvasState.MAX_ZOOM)
+            state.scrollX = snap.scrollX
+            state.scrollY = snap.scrollY
+            state.didInitialFit = true // keep the restored zoom/scroll instead of fitting width
+        } else {
+            state.didInitialFit = false
+        }
+        state.relayout()
+        if (state.viewportW > 0) {
+            if (!state.didInitialFit) {
+                state.fitWidth()
+                state.didInitialFit = true
+            }
+            state.clampScroll()
+        }
+        refreshContent()
+        view.requestRender()
+        return true
     }
 
     private fun refreshView() {
