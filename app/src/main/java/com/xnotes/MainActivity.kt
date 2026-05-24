@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 val elapsed = android.os.SystemClock.uptimeMillis() - start
                 if (elapsed < MIN_LOADER_MS) kotlinx.coroutines.delay(MIN_LOADER_MS - elapsed)
                 ready = true
+                ed.prewarmBackstage() // warm recents/explorer caches so the first backstage open is instant
             }
             XnotesTheme(ed.palette) {
                 Box(modifier = Modifier.fillMaxSize()) {

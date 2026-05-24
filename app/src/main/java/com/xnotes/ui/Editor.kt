@@ -93,6 +93,10 @@ class Editor(context: Context) {
     private val recentPages = java.util.concurrent.ConcurrentHashMap<String, Int>()
     /** On-disk thumbnail cache so the backstage opens instantly across launches. */
     private val thumbCache = com.xnotes.platform.RecentThumbnailCache(java.io.File(appContext.filesDir, "recent_thumbs"))
+    /** In-memory caches so reopening the backstage paints instantly (seed first, refresh after). */
+    private val recentInfoCache = java.util.concurrent.ConcurrentHashMap<String, RecentInfo>()
+    private val browseCache = java.util.concurrent.ConcurrentHashMap<String, List<BrowseEntry>>()
+    private val rootNameCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /** When non-null, the current note lives in the granted folder and autosaves to this URI. */
     var autosaveUri: String? = null
@@ -160,8 +164,9 @@ class Editor(context: Context) {
     /** The current document's storage location (a SAF content URI string), or null. */
     val currentUri: String? get() = state.document.path
 
-    /** Most-recent-first SAF URIs of recently opened/saved notes (capped at 10). */
-    val recentFiles: List<String> get() = settings.recentFiles
+    /** Most-recent-first SAF URIs of recently opened/saved notes (capped at 10); observable. */
+    var recentFiles by mutableStateOf(settings.recentFiles)
+        private set
 
     val bookmarks: List<Bookmark> get() = state.document.bookmarks.toList()
 
@@ -386,7 +391,7 @@ class Editor(context: Context) {
             renderScale = renderScale,
         )
         flushAutosave() // write the current note back to its folder file if it autosaves
-        currentUri?.let { settings = settings.rememberFile(it) }
+        currentUri?.let { settings = settings.rememberFile(it); recentFiles = settings.recentFiles }
         settingsRepo.save(settings)
         saveSession()
     }
@@ -528,6 +533,7 @@ class Editor(context: Context) {
 
     private fun rememberRecent(uri: String) {
         settings = settings.rememberFile(uri)
+        recentFiles = settings.recentFiles
         settingsRepo.save(settings)
         thumbCache.prune(settings.recentFiles.toSet()) // drop the file that fell off the capped list
     }
@@ -535,6 +541,7 @@ class Editor(context: Context) {
     /** Drop a recent entry (e.g., the file was moved or deleted) and its cached thumbnail. */
     fun removeRecentFile(uri: String) {
         settings = settings.copy(recentFiles = settings.recentFiles.filter { it != uri })
+        recentFiles = settings.recentFiles
         settingsRepo.save(settings)
         invalidateRecentThumb(uri)
     }
@@ -583,6 +590,7 @@ class Editor(context: Context) {
             val keep = settings.recentFiles.toSet()
             recentThumbs.keys.retainAll(keep)
             recentPages.keys.retainAll(keep)
+            recentInfoCache.keys.retainAll(keep)
         }
         val (size, modified) = recentStat(uri)
         return RecentInfo(
@@ -592,15 +600,19 @@ class Editor(context: Context) {
             location = recentLocation(uri),
             modified = modified,
             sizeBytes = size,
-        )
+        ).also { recentInfoCache[uri] = it }
     }
 
     /** Drop a recent note's cached thumbnail (memory + disk) so it re-renders with fresh content. */
     private fun invalidateRecentThumb(uri: String) {
         recentThumbs.remove(uri)
         recentPages.remove(uri)
+        recentInfoCache.remove(uri)
         thumbCache.remove(uri)
     }
+
+    /** Last-computed details for a recent URI, to seed the UI instantly before the refresh. */
+    fun cachedRecentInfo(uri: String): RecentInfo? = recentInfoCache[uri]
 
     /** Renders a loaded document's first page to a [widthPx]-wide thumbnail bitmap. */
     private fun renderDocThumbnail(doc: Document, widthPx: Int): android.graphics.Bitmap? {
@@ -656,9 +668,11 @@ class Editor(context: Context) {
     /** Empty the recent-notes list (and its caches). */
     fun clearRecentFiles() {
         settings = settings.copy(recentFiles = emptyList())
+        recentFiles = settings.recentFiles
         settingsRepo.save(settings)
         recentThumbs.clear()
         recentPages.clear()
+        recentInfoCache.clear()
         thumbCache.prune(emptySet())
     }
 
@@ -674,6 +688,8 @@ class Editor(context: Context) {
         browseRoot = treeUri
         settings = settings.copy(browseRoot = treeUri)
         settingsRepo.save(settings)
+        browseCache.clear()
+        rootNameCache.clear()
     }
 
     /** Forget the granted folder: release its SAF permission and clear the root. */
@@ -689,6 +705,8 @@ class Editor(context: Context) {
         browseRoot = null
         settings = settings.copy(browseRoot = null)
         settingsRepo.save(settings)
+        browseCache.clear()
+        rootNameCache.clear()
     }
 
     /** The granted root folder's display name (e.g. "Documents"), or null. */
@@ -697,8 +715,11 @@ class Editor(context: Context) {
         val root = android.provider.DocumentsContract.buildDocumentUriUsingTree(
             tree, android.provider.DocumentsContract.getTreeDocumentId(tree),
         )
-        return queryDisplayName(root)
+        return queryDisplayName(root)?.also { rootNameCache[treeUri] = it }
     }
+
+    /** Cached root-folder name, to seed the breadcrumb instantly before the refresh. */
+    fun cachedRootName(treeUri: String): String? = rootNameCache[treeUri]
 
     /** Creates a subfolder [name] under [parentDocId] in tree [treeUri]; IO, call off-thread. */
     fun createFolder(treeUri: String, parentDocId: String, name: String): Boolean = runCatching {
@@ -756,9 +777,9 @@ class Editor(context: Context) {
         }
         if (resultUri != docUri) {
             settings = settings.copy(recentFiles = settings.recentFiles.map { if (it == docUri) resultUri else it })
+            recentFiles = settings.recentFiles
             settingsRepo.save(settings)
-            recentThumbs.remove(docUri)
-            recentPages.remove(docUri)
+            invalidateRecentThumb(docUri)
         }
         return true
     }
@@ -867,7 +888,27 @@ class Editor(context: Context) {
                 }
             }
         }
-        return out.sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+        val result = out.sortedWith(compareBy({ !it.isDir }, { it.name.lowercase() }))
+        browseCache["$treeUri|$parentDocId"] = result
+        return result
+    }
+
+    /** Last-listed children for a folder, to seed the explorer instantly before the refresh. */
+    fun cachedChildren(treeUri: String, parentDocId: String): List<BrowseEntry>? = browseCache["$treeUri|$parentDocId"]
+
+    /** Warm the backstage caches off-thread (after launch) so its first open paints instantly. */
+    fun prewarmBackstage() {
+        autosaveScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    browseRoot?.let { root ->
+                        browseRootName(root)
+                        browseChildren(root, browseRootDocId(root))
+                    }
+                    settings.recentFiles.forEach { recentInfo(it, 300) }
+                }
+            }
+        }
     }
 
     // --- sharing (writes the current document for an ACTION_SEND intent) ---

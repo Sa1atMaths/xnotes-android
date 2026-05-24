@@ -223,7 +223,7 @@ private fun HomePane(
 /** Loads (off-thread, cached) a recent note's thumbnail + details. */
 @Composable
 private fun recentInfoState(editor: Editor, uri: String, widthPx: Int) =
-    produceState<RecentInfo?>(null, uri, editor.contentVersion) {
+    produceState(editor.cachedRecentInfo(uri), uri, editor.contentVersion) {
         value = withContext(Dispatchers.IO) { editor.recentInfo(uri, widthPx) }
     }
 
@@ -308,7 +308,7 @@ private fun ExplorerSection(
     var pendingDelete by remember(root) { mutableStateOf<BrowseEntry?>(null) }
     var opError by remember(root) { mutableStateOf<String?>(null) }
     var menuOpen by remember(root) { mutableStateOf(false) }
-    val rootName by produceState<String?>(null, root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
+    val rootName by produceState(editor.cachedRootName(root), root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
     val fieldFocus = remember { FocusRequester() }
     LaunchedEffect(createMode) {
         if (createMode != CreateMode.NONE) { fieldText = ""; fieldError = null; runCatching { fieldFocus.requestFocus() } }
@@ -405,7 +405,7 @@ private fun ExplorerSection(
             fieldError?.let { Text(it, color = Color(0xFFE5534B), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) }
         }
         // Listing.
-        val entries by produceState<List<BrowseEntry>?>(null, root, currentDocId, refreshKey) {
+        val entries by produceState(editor.cachedChildren(root, currentDocId), root, currentDocId, refreshKey) {
             value = withContext(Dispatchers.IO) { editor.browseChildren(root, currentDocId) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
