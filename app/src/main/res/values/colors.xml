@@ -2,6 +2,6 @@
 <resources>
     <color name="window_bg">#0A0A0A</color>
     <color name="accent">#00E676</color>
-    <color name="ic_launcher_background">#0A0A0A</color>
+    <color name="ic_launcher_background">#000000</color>
     <color name="loader_bg">#FF000000</color>
 </resources>
