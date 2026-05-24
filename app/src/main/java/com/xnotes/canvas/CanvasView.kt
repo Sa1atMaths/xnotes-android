@@ -2,9 +2,13 @@ package com.xnotes.canvas
 
 import android.content.Context
 import android.graphics.Canvas
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Page
 import com.xnotes.core.pal.FontSpec
@@ -25,8 +29,24 @@ class CanvasView @JvmOverloads constructor(
     var state: CanvasState? = null
         set(value) {
             field = value
+            value?.let { st ->
+                // Rasterize newly visible pages off the UI thread so scrolling never
+                // stalls while a page is built; publish the surface back on the main
+                // thread and ask for a repaint.
+                st.runAsync = { work ->
+                    val ex = cacheExecutor
+                    if (ex != null && !ex.isShutdown) ex.execute(work) else work()
+                }
+                st.postToMain = { work -> mainHandler.post(work) }
+                st.onCacheReady = { requestRender() }
+            }
             invalidate()
         }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Single background thread that builds page caches; lives while the view is attached. */
+    private var cacheExecutor: ExecutorService? = null
 
     /** Hook for overlay drawing (selection/live-stroke/eraser), set by the interaction layer. */
     var drawOverlay: ((renderer: AndroidRenderer, canvas: Canvas) -> Unit)? = null
@@ -51,6 +71,20 @@ class CanvasView @JvmOverloads constructor(
 
     override fun onHoverEvent(event: MotionEvent): Boolean =
         hover?.invoke(event) ?: super.onHoverEvent(event)
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (cacheExecutor?.isShutdown != false) {
+            cacheExecutor = Executors.newSingleThreadExecutor { r ->
+                Thread(r, "xnotes-cache").apply { isDaemon = true }
+            }
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        cacheExecutor?.shutdown()
+        super.onDetachedFromWindow()
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -89,8 +123,8 @@ class CanvasView @JvmOverloads constructor(
 
             r.fillRect(pr, st.paperColor(page))
             r.strokeRect(pr, border)
-            st.backgroundFor(page)?.let { r.drawRaster(it.surface, pr) }
-            r.drawRaster(st.cacheFor(page).surface, pr)
+            st.backgroundForOrSchedule(page)?.let { r.drawRaster(it.surface, pr) }
+            st.cacheForOrSchedule(page)?.let { r.drawRaster(it.surface, pr) }
             drawPageLabel(r, st, i, pr)
         }
         r.restore()

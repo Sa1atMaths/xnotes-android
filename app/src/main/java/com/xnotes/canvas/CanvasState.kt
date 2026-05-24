@@ -69,6 +69,30 @@ class CanvasState(
     private val caches = HashMap<Page, CacheEntry>()
     private val bgCaches = HashMap<Page, CacheEntry>()
 
+    /**
+     * Off-UI-thread plumbing for the *non-blocking* cache path ([cacheForOrSchedule] /
+     * [backgroundForOrSchedule]). The canvas calls those from `onDraw`; when a freshly
+     * scrolled-in page has no current-resolution cache yet, the heavy rasterization runs
+     * on [runAsync] (a background thread) and the finished surface is published back on
+     * [postToMain], which then asks for a repaint via [onCacheReady]. This keeps the
+     * scroll frame from stalling while a new page is rasterized — the page just appears a
+     * frame or two later. The defaults run inline so unit tests stay synchronous.
+     */
+    var runAsync: (work: () -> Unit) -> Unit = { it() }
+    var postToMain: (work: () -> Unit) -> Unit = { it() }
+    var onCacheReady: (() -> Unit)? = null
+
+    /** Pages with a build in flight, so we never queue the same page twice. */
+    private val pendingInk = HashSet<Page>()
+    private val pendingBg = HashSet<Page>()
+
+    /**
+     * Bumped by every cache invalidation. An in-flight async build captures the value at
+     * schedule time and its result is discarded if the generation has since moved on, so
+     * an edit (or zoom) that lands mid-build never gets overwritten by the stale surface.
+     */
+    private var cacheGen = 0
+
     var pageRects: List<Rect> = emptyList()
         private set
     var contentW: Double = 2 * MARGIN
@@ -230,14 +254,47 @@ class CanvasState(
         return buildCache(page, res).also { caches[page] = it }
     }
 
-    private fun buildCache(page: Page, res: Double): CacheEntry {
+    /**
+     * Like [cacheFor] but never rasterizes on the calling (UI) thread: returns the ready
+     * surface when one exists, otherwise schedules the build on [runAsync] and returns the
+     * stale-resolution surface to blit meanwhile (or null when the page has never been
+     * cached, in which case the caller draws bare paper until the build lands).
+     */
+    fun cacheForOrSchedule(page: Page): CacheEntry? {
+        val res = clampedRes(page)
+        val existing = caches[page]
+        if (existing != null && (zoomingInProgress || abs(existing.res - res) < 1e-6)) return existing
+        scheduleInk(page, res)
+        return caches[page] // sync scheduler filled it; async leaves the stale entry (or null)
+    }
+
+    private fun scheduleInk(page: Page, res: Double) {
+        if (!pendingInk.add(page)) return
+        val gen = cacheGen
+        val items = page.items.filterNot(isLiftedItem) // snapshot on the UI thread
+        runAsync {
+            val entry = renderInk(page, res, items)
+            postToMain {
+                pendingInk.remove(page)
+                if (gen == cacheGen) {
+                    caches[page] = entry
+                    onCacheReady?.invoke()
+                }
+            }
+        }
+    }
+
+    private fun buildCache(page: Page, res: Double): CacheEntry =
+        renderInk(page, res, page.items.filterNot(isLiftedItem))
+
+    private fun renderInk(page: Page, res: Double, items: List<CanvasItem>): CacheEntry {
         val w = ceil(page.width * res).toInt().coerceAtLeast(1)
         val h = ceil(page.height * res).toInt().coerceAtLeast(1)
         val surface = surfaceFactory.create(w, h, 1.0)
         surface.fill(TRANSPARENT)
         val r = surface.renderer()
         r.scale(res, res)
-        for (item in page.items) if (!isLiftedItem(item)) item.paint(r)
+        for (item in items) item.paint(r)
         return CacheEntry(surface, res)
     }
 
@@ -253,6 +310,31 @@ class CanvasState(
         val existing = bgCaches[page]
         if (existing != null && (zoomingInProgress || abs(existing.res - res) < 1e-6)) return existing
         return buildBackground(page, res).also { bgCaches[page] = it }
+    }
+
+    /** Non-blocking counterpart to [backgroundFor]; see [cacheForOrSchedule]. */
+    fun backgroundForOrSchedule(page: Page): CacheEntry? {
+        if (paintPageBackground == null) return null
+        val res = clampedRes(page)
+        val existing = bgCaches[page]
+        if (existing != null && (zoomingInProgress || abs(existing.res - res) < 1e-6)) return existing
+        scheduleBg(page, res)
+        return bgCaches[page]
+    }
+
+    private fun scheduleBg(page: Page, res: Double) {
+        if (!pendingBg.add(page)) return
+        val gen = cacheGen
+        runAsync {
+            val entry = buildBackground(page, res)
+            postToMain {
+                pendingBg.remove(page)
+                if (gen == cacheGen) {
+                    bgCaches[page] = entry
+                    onCacheReady?.invoke()
+                }
+            }
+        }
     }
 
     private fun buildBackground(page: Page, res: Double): CacheEntry {
@@ -305,11 +387,13 @@ class CanvasState(
 
     fun invalidatePage(page: Page) {
         caches.remove(page)
+        cacheGen++
     }
 
     fun invalidateAllCaches() {
         caches.clear()
         bgCaches.clear()
+        cacheGen++
     }
 
     fun dropCachesExcept(visible: Set<Page>) {
