@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,6 +41,7 @@ import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.Rgba
 import com.xnotes.settings.Preferences
+import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 
@@ -85,6 +87,9 @@ fun PreferencesPane(editor: Editor) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 accentPresets.forEach { c ->
                     ColorDot(c.toComposeColor(), prefs.accentColor == c) { update(prefs.copy(accentColor = c)) }
+                }
+                AccentColorPickerDot(prefs.accentColor, custom = prefs.accentColor !in accentPresets) {
+                    update(prefs.copy(accentColor = it))
                 }
             }
             CheckRow("Open PDFs in dark mode (invert pages)", prefs.pdfDarkMode) { update(prefs.copy(pdfDarkMode = it)) }
@@ -172,6 +177,63 @@ private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
             .border(1.dp, palette.border.toComposeColor(), CircleShape)
             .clickable(onClick = onClick),
     )
+}
+
+/** A spectrum wheel signals that this dot opens the full picker. */
+private val spectrumBrush = Brush.sweepGradient(
+    listOf(
+        Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00),
+        Color(0xFF00FFFF), Color(0xFF0000FF), Color(0xFFFF00FF), Color(0xFFFF0000),
+    ),
+)
+
+/**
+ * Fifth accent swatch: a spectrum dot that opens a grid of bright, saturated hues.
+ * Once a custom colour is chosen it fills the dot and reads as selected.
+ */
+@Composable
+private fun AccentColorPickerDot(current: Rgba, custom: Boolean, onPick: (Rgba) -> Unit) {
+    val palette = LocalPalette.current
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            Modifier
+                .size(30.dp)
+                .then(if (custom) Modifier.border(2.dp, palette.accent.toComposeColor(), CircleShape) else Modifier)
+                .padding(4.dp)
+                .clip(CircleShape)
+                .then(if (custom) Modifier.background(current.toComposeColor()) else Modifier.background(spectrumBrush))
+                .border(1.dp, palette.border.toComposeColor(), CircleShape)
+                .clickable { open = true },
+        )
+        if (open) AccentColorGridPopup(onDismiss = { open = false }) { onPick(it); open = false }
+    }
+}
+
+/** Picker grid restricted to bright, saturated hues — no greys, no washed-out tints. */
+@Composable
+private fun AccentColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
+    val hues = (0 until 12).map { it * 360.0 / 12.0 }
+    val shades = listOf(1.0 to 1.0, 1.0 to 0.82, 0.78 to 1.0)
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            shades.forEach { (s, v) ->
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    hues.forEach { h ->
+                        val c = ColorMath.hsvToRgb(h, s, v)
+                        Box(
+                            Modifier
+                                .size(20.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(c.toComposeColor())
+                                .border(0.5.dp, LocalPalette.current.border.toComposeColor(), RoundedCornerShape(2.dp))
+                                .clickable { onPick(c) },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
