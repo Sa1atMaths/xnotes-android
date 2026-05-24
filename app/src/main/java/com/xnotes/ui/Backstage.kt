@@ -1,9 +1,11 @@
 package com.xnotes.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +23,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,6 +69,9 @@ enum class BackstageView { RECENT, PREFERENCES }
 
 /** Whether the Home explorer is awaiting a new file/folder name. */
 private enum class CreateMode { NONE, FILE, FOLDER }
+
+/** An entry copied/cut in the explorer; [parentDocId] is the folder it came from (for moves). */
+private data class ClipItem(val uri: String, val name: String, val parentDocId: String, val isCut: Boolean)
 
 /**
  * The full-screen "File" area. The rail picks between Home (recent notes + an
@@ -298,6 +306,11 @@ private fun ExplorerSection(
     var fieldError by remember(root) { mutableStateOf<String?>(null) }
     var renaming by remember(root) { mutableStateOf<String?>(null) }
     var renameText by remember(root) { mutableStateOf("") }
+    var selected by remember(root) { mutableStateOf<BrowseEntry?>(null) }
+    var clipboard by remember(root) { mutableStateOf<ClipItem?>(null) }
+    var pendingDelete by remember(root) { mutableStateOf<BrowseEntry?>(null) }
+    var opError by remember(root) { mutableStateOf<String?>(null) }
+    var menuOpen by remember(root) { mutableStateOf(false) }
     val rootName by produceState<String?>(null, root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
     val fieldFocus = remember { FocusRequester() }
     LaunchedEffect(createMode) {
@@ -305,34 +318,64 @@ private fun ExplorerSection(
     }
 
     Column(Modifier.fillMaxSize()) {
-        // Folder name + actions.
-        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(rootName ?: "Folder", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            HeaderButton(XnotesIcons.plus, "New note") { onCreateMode(CreateMode.FILE) }
-            HeaderButton(XnotesIcons.newFolder, "New folder") { onCreateMode(CreateMode.FOLDER) }
-            HeaderButton(XnotesIcons.folder, "Change folder", onPickRoot)
-            HeaderButton(XnotesIcons.close, "Forget folder") { editor.clearBrowseRoot() }
-        }
-        // Breadcrumb: the granted folder's name (root) › folder › folder …
-        Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Path (breadcrumb, with "/" separators) + context actions, all on one line.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Row(
-                Modifier.clip(RoundedCornerShape(6.dp)).clickable { stack.clear() }.padding(horizontal = 4.dp, vertical = 4.dp),
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(XnotesIcons.home, "Root", tint = (if (stack.isEmpty()) palette.accent else palette.textDim).toComposeColor(), modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(rootName ?: "Folder", color = (if (stack.isEmpty()) palette.text else palette.textDim).toComposeColor(), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            stack.forEachIndexed { i, (_, name) ->
-                Text("  ›  ", color = palette.textDim.toComposeColor(), fontSize = 14.sp)
-                Text(
-                    name,
-                    color = (if (i == stack.lastIndex) palette.text else palette.textDim).toComposeColor(),
-                    fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable { while (stack.size > i + 1) stack.removeAt(stack.lastIndex) },
+                Icon(
+                    XnotesIcons.home, "Root",
+                    tint = (if (stack.isEmpty()) palette.accent else palette.textDim).toComposeColor(),
+                    modifier = Modifier.size(18.dp).clip(RoundedCornerShape(4.dp)).clickable { stack.clear(); selected = null; opError = null },
                 )
+                Spacer(Modifier.width(6.dp))
+                Crumb("${rootName ?: "Folder"}/", current = stack.isEmpty()) { stack.clear(); selected = null; opError = null }
+                stack.forEachIndexed { i, (_, name) ->
+                    Crumb("$name/", current = i == stack.lastIndex) {
+                        while (stack.size > i + 1) stack.removeAt(stack.lastIndex)
+                        selected = null; opError = null
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            val sel = selected
+            if (sel != null) {
+                IconAction(XnotesIcons.edit, "Rename") {
+                    renaming = sel.documentUri
+                    renameText = if (sel.isDir) sel.name else sel.name.removeSuffix(".xnote").removeSuffix(".XNOTE")
+                    selected = null
+                }
+                IconAction(XnotesIcons.copy, "Copy") { clipboard = ClipItem(sel.documentUri, sel.name, currentDocId, false); selected = null }
+                IconAction(XnotesIcons.cut, "Cut") { clipboard = ClipItem(sel.documentUri, sel.name, currentDocId, true); selected = null }
+                IconAction(XnotesIcons.trash, "Delete") { pendingDelete = sel }
+                IconAction(XnotesIcons.close, "Deselect") { selected = null }
+            } else {
+                IconAction(XnotesIcons.plus, "New note") { onCreateMode(CreateMode.FILE) }
+                IconAction(XnotesIcons.newFolder, "New folder") { onCreateMode(CreateMode.FOLDER) }
+                clipboard?.let { clip ->
+                    IconAction(XnotesIcons.paste, "Paste") {
+                        opError = null
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                if (clip.isCut) editor.moveDocumentInto(root, clip.uri, clip.parentDocId, currentDocId)
+                                else editor.copyDocumentInto(root, clip.uri, currentDocId)
+                            }
+                            if (ok) { clipboard = null; refreshKey++ } else opError = "Couldn’t paste here."
+                        }
+                    }
+                }
+                Box {
+                    IconAction(XnotesIcons.more, "More") { menuOpen = true }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Change folder") }, onClick = { menuOpen = false; onPickRoot() })
+                        DropdownMenuItem(text = { Text("Forget folder") }, onClick = { menuOpen = false; editor.clearBrowseRoot() })
+                    }
+                }
             }
         }
+        opError?.let { Text(it, color = Color(0xFFE5534B), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) }
+        Spacer(Modifier.height(10.dp))
         // Inline create (file or folder).
         if (createMode != CreateMode.NONE) {
             val isFolder = createMode == CreateMode.FOLDER
@@ -375,17 +418,16 @@ private fun ExplorerSection(
                     items(entries!!) { entry ->
                         EntryRow(
                             entry = entry,
+                            selected = selected?.documentUri == entry.documentUri,
                             isRenaming = renaming == entry.documentUri,
                             renameText = renameText,
                             onRenameTextChange = { renameText = it },
                             onClick = {
+                                selected = null; opError = null
                                 if (entry.isDir) stack.add(editor.browseDocId(entry.documentUri) to entry.name)
                                 else onOpenFile(entry.documentUri)
                             },
-                            onStartRename = {
-                                renaming = entry.documentUri
-                                renameText = if (entry.isDir) entry.name else entry.name.removeSuffix(".xnote").removeSuffix(".XNOTE")
-                            },
+                            onLongClick = { renaming = null; opError = null; selected = entry },
                             onConfirmRename = {
                                 val raw = renameText.trim()
                                 if (raw.isNotEmpty()) {
@@ -403,20 +445,76 @@ private fun ExplorerSection(
             }
         }
     }
+
+    pendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete?") },
+            text = { Text("Delete “${entryLabel(target)}”? This can’t be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val uri = target.documentUri
+                    pendingDelete = null; selected = null; opError = null
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) { editor.deleteDocument(uri) }
+                        if (ok) refreshKey++ else opError = "Couldn’t delete that."
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
+            containerColor = palette.menuBg.toComposeColor(),
+        )
+    }
 }
 
 @Composable
+private fun Crumb(text: String, current: Boolean, onClick: () -> Unit) {
+    val palette = LocalPalette.current
+    Text(
+        text,
+        color = (if (current) palette.text else palette.textDim).toComposeColor(),
+        fontSize = 14.sp,
+        maxLines = 1,
+        modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onClick).padding(horizontal = 2.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun IconAction(icon: ImageVector, desc: String, onClick: () -> Unit) {
+    val palette = LocalPalette.current
+    IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+        Icon(icon, desc, tint = palette.accent.toComposeColor(), modifier = Modifier.size(20.dp))
+    }
+}
+
+private fun entryLabel(entry: BrowseEntry): String =
+    if (entry.isDir) entry.name else entry.name.removeSuffix(".xnote").removeSuffix(".XNOTE")
+
+private fun entryDetails(ctx: android.content.Context, entry: BrowseEntry): String {
+    if (entry.isDir) return ""
+    return listOfNotNull(
+        if (entry.modified > 0)
+            android.text.format.DateUtils.getRelativeTimeSpanString(entry.modified, System.currentTimeMillis(), android.text.format.DateUtils.DAY_IN_MILLIS).toString()
+        else null,
+        if (entry.size > 0) android.text.format.Formatter.formatShortFileSize(ctx, entry.size) else null,
+    ).joinToString("  ·  ")
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun EntryRow(
     entry: BrowseEntry,
+    selected: Boolean,
     isRenaming: Boolean,
     renameText: String,
     onRenameTextChange: (String) -> Unit,
     onClick: () -> Unit,
-    onStartRename: () -> Unit,
+    onLongClick: () -> Unit,
     onConfirmRename: () -> Unit,
     onCancelRename: () -> Unit,
 ) {
     val palette = LocalPalette.current
+    val ctx = LocalContext.current
     val icon = if (entry.isDir) XnotesIcons.folder else XnotesIcons.file
     val tint = (if (entry.isDir) palette.accent else palette.textDim).toComposeColor()
     if (isRenaming) {
@@ -431,35 +529,32 @@ private fun EntryRow(
         }
     } else {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick).padding(start = 10.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .then(if (selected) Modifier.background(palette.accentAlpha(38).toComposeColor()) else Modifier)
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .padding(horizontal = 10.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(14.dp))
             Text(
-                if (entry.isDir) entry.name else entry.name.removeSuffix(".xnote").removeSuffix(".XNOTE"),
+                entryLabel(entry),
                 color = palette.text.toComposeColor(),
                 fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = onStartRename, modifier = Modifier.size(36.dp)) {
-                Icon(XnotesIcons.edit, "Rename", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
+            val details = entryDetails(ctx, entry)
+            if (details.isNotEmpty()) {
+                Spacer(Modifier.width(12.dp))
+                Text(details, color = palette.textDim.toComposeColor(), fontSize = 12.sp, maxLines = 1)
             }
         }
     }
 }
 
 // --- shared bits ---
-
-@Composable
-private fun HeaderButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    val palette = LocalPalette.current
-    TextButton(onClick = onClick) {
-        Icon(icon, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, color = palette.accent.toComposeColor())
-    }
-}
 
 @Composable
 private fun PrimaryButton(label: String, onClick: () -> Unit) {

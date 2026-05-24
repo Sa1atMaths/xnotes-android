@@ -47,7 +47,13 @@ import kotlinx.coroutines.launch
 data class ContextMenuTarget(val viewportX: Double, val viewportY: Double, val content: com.xnotes.core.geometry.Pt)
 
 /** One entry (folder or .xnote file) in the in-app explorer. [documentUri] is a SAF document URI. */
-data class BrowseEntry(val name: String, val documentUri: String, val isDir: Boolean)
+data class BrowseEntry(
+    val name: String,
+    val documentUri: String,
+    val isDir: Boolean,
+    val size: Long = 0,
+    val modified: Long = 0,
+)
 
 /** A recent note's thumbnail plus the details shown in the backstage list view. */
 data class RecentInfo(
@@ -738,6 +744,32 @@ class Editor(context: Context) {
         return true
     }
 
+    /** Deletes a document (file or folder). IO, call off-thread. */
+    fun deleteDocument(docUri: String): Boolean = runCatching {
+        val ok = android.provider.DocumentsContract.deleteDocument(appContext.contentResolver, android.net.Uri.parse(docUri))
+        if (ok && state.document.path == docUri) autosaveUri = null // its backing file is gone
+        ok
+    }.getOrDefault(false)
+
+    /** Copies [sourceUri] into the folder [targetParentDocId] within [treeUri]. IO, call off-thread. */
+    fun copyDocumentInto(treeUri: String, sourceUri: String, targetParentDocId: String): Boolean = runCatching {
+        val target = android.provider.DocumentsContract.buildDocumentUriUsingTree(android.net.Uri.parse(treeUri), targetParentDocId)
+        android.provider.DocumentsContract.copyDocument(appContext.contentResolver, android.net.Uri.parse(sourceUri), target) != null
+    }.getOrDefault(false)
+
+    /** Moves [sourceUri] from [sourceParentDocId] into [targetParentDocId] within [treeUri]; follows the open note. IO. */
+    fun moveDocumentInto(treeUri: String, sourceUri: String, sourceParentDocId: String, targetParentDocId: String): Boolean = runCatching {
+        val tree = android.net.Uri.parse(treeUri)
+        val sourceParent = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, sourceParentDocId)
+        val target = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, targetParentDocId)
+        val newUri = android.provider.DocumentsContract.moveDocument(appContext.contentResolver, android.net.Uri.parse(sourceUri), sourceParent, target)
+        if (newUri != null && state.document.path == sourceUri) {
+            state.document.path = newUri.toString()
+            if (autosaveUri == sourceUri) autosaveUri = newUri.toString()
+        }
+        newUri != null
+    }.getOrDefault(false)
+
     // --- autosave (notes living in the granted folder write back automatically) ---
 
     private fun isUnderTree(fileUri: String, treeUri: String): Boolean = runCatching {
@@ -798,6 +830,8 @@ class Editor(context: Context) {
                     android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                     android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                     android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    android.provider.DocumentsContract.Document.COLUMN_SIZE,
+                    android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED,
                 ),
                 null, null, null,
             )?.use { c ->
@@ -807,7 +841,9 @@ class Editor(context: Context) {
                     val isDir = c.getString(2) == android.provider.DocumentsContract.Document.MIME_TYPE_DIR
                     if (isDir || name.endsWith(".xnote", ignoreCase = true)) {
                         val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id).toString()
-                        out.add(BrowseEntry(name, docUri, isDir))
+                        val size = if (!c.isNull(3)) c.getLong(3) else 0L
+                        val modified = if (!c.isNull(4)) c.getLong(4) else 0L
+                        out.add(BrowseEntry(name, docUri, isDir, size, modified))
                     }
                 }
             }
