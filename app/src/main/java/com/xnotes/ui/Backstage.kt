@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -51,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,53 +99,198 @@ fun Backstage(
     onPickRoot: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Two panes need real estate; below this width we stack into a single scrollable
+    // menu that pushes Home / Preferences as full-screen sub-pages (phones in portrait).
+    val compact = LocalConfiguration.current.screenWidthDp < COMPACT_WIDTH_DP
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        if (compact) {
+            BackstageCompact(
+                editor, view, onSelectView, onNewBlank, onOpenSystem, onSave, onSaveAs, onShare,
+                onImportPdf, onExportPdf, onOpenRecent, onOpenFile, onPickRoot, onDismiss,
+            )
+        } else {
+            BackstageWide(
+                editor, view, onSelectView, onNewBlank, onOpenSystem, onSave, onSaveAs, onShare,
+                onImportPdf, onExportPdf, onOpenRecent, onOpenFile, onPickRoot, onDismiss,
+            )
+        }
+    }
+}
+
+/** Material's compact-width breakpoint: at or above this we keep the rail + pane. */
+private const val COMPACT_WIDTH_DP = 600
+
+// --- wide layout (tablets / landscape): rail on the left, content on the right ---
+
+@Composable
+private fun BackstageWide(
+    editor: Editor,
+    view: BackstageView,
+    onSelectView: (BackstageView) -> Unit,
+    onNewBlank: () -> Unit,
+    onOpenSystem: () -> Unit,
+    onSave: () -> Unit,
+    onSaveAs: () -> Unit,
+    onShare: () -> Unit,
+    onImportPdf: () -> Unit,
+    onExportPdf: () -> Unit,
+    onOpenRecent: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
+    onPickRoot: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     val palette = LocalPalette.current
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Row(
-            Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()),
+    Row(
+        Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()),
+    ) {
+        // Left command rail (scrolls when the screen is too short for every command).
+        Column(
+            Modifier.width(264.dp).fillMaxHeight().background(palette.panel.toComposeColor())
+                .verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
         ) {
-            // Left command rail.
-            Column(
-                Modifier.width(264.dp).fillMaxHeight().background(palette.panel.toComposeColor()).padding(vertical = 12.dp),
+            Row(
+                Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(XnotesIcons.close, "Close", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
-                    }
-                    Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
+                IconButton(onClick = onDismiss) {
+                    Icon(XnotesIcons.close, "Close", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
                 }
-                Spacer(Modifier.height(6.dp))
-                Command(XnotesIcons.home, "Home", selected = view == BackstageView.RECENT) {
-                    createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT)
-                }
-                Command(XnotesIcons.plus, "New") {
-                    if (editor.browseRoot != null) {
-                        onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE
-                    } else onNewBlank()
-                }
-                Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
-                RailDivider()
-                Command(XnotesIcons.save, "Save") { onSave() }
-                Command(XnotesIcons.copy, "Save As…") { onSaveAs() }
-                Command(XnotesIcons.share, "Share…") { onShare() }
-                RailDivider()
-                Command(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
-                Command(XnotesIcons.exportDoc, "Export to PDF…") { onExportPdf() }
-                RailDivider()
-                Command(XnotesIcons.sliders, "Preferences", selected = view == BackstageView.PREFERENCES) { onSelectView(BackstageView.PREFERENCES) }
+                Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
             }
+            Spacer(Modifier.height(6.dp))
+            Command(XnotesIcons.home, "Home", selected = view == BackstageView.RECENT) {
+                createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT)
+            }
+            Command(XnotesIcons.plus, "New") {
+                if (editor.browseRoot != null) {
+                    onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE
+                } else onNewBlank()
+            }
+            Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
+            RailDivider()
+            Command(XnotesIcons.save, "Save") { onSave() }
+            Command(XnotesIcons.copy, "Save As…") { onSaveAs() }
+            Command(XnotesIcons.share, "Share…") { onShare() }
+            RailDivider()
+            Command(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
+            Command(XnotesIcons.exportDoc, "Export to PDF…") { onExportPdf() }
+            RailDivider()
+            Command(XnotesIcons.sliders, "Preferences", selected = view == BackstageView.PREFERENCES) { onSelectView(BackstageView.PREFERENCES) }
+        }
 
-            // Right pane.
-            Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
-                when (view) {
-                    BackstageView.RECENT -> HomePane(editor, onOpenRecent, onOpenFile, onPickRoot, createMode, { createMode = it }, onDismiss)
-                    BackstageView.PREFERENCES -> PreferencesPane(editor)
+        // Right pane.
+        Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
+            when (view) {
+                BackstageView.RECENT -> HomePane(editor, onOpenRecent, onOpenFile, onPickRoot, createMode, { createMode = it }, onDismiss)
+                BackstageView.PREFERENCES -> PreferencesPane(editor)
+            }
+        }
+    }
+}
+
+// --- compact layout (phones / portrait): a stacked menu, with sub-pages ---
+
+/** Which screen the compact backstage is on: the menu, or a pushed sub-page. */
+private enum class CompactPage { MENU, HOME, PREFERENCES }
+
+@Composable
+private fun BackstageCompact(
+    editor: Editor,
+    initialView: BackstageView,
+    onSelectView: (BackstageView) -> Unit,
+    onNewBlank: () -> Unit,
+    onOpenSystem: () -> Unit,
+    onSave: () -> Unit,
+    onSaveAs: () -> Unit,
+    onShare: () -> Unit,
+    onImportPdf: () -> Unit,
+    onExportPdf: () -> Unit,
+    onOpenRecent: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
+    onPickRoot: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = LocalPalette.current
+    var page by remember {
+        mutableStateOf(if (initialView == BackstageView.PREFERENCES) CompactPage.PREFERENCES else CompactPage.MENU)
+    }
+    var createMode by remember { mutableStateOf(CreateMode.NONE) }
+
+    Column(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor())) {
+        // Top bar: close (X) at the menu, a back arrow inside a sub-page.
+        Row(
+            Modifier.fillMaxWidth().background(palette.panel.toComposeColor()).padding(start = 6.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (page == CompactPage.MENU) {
+                IconButton(onClick = onDismiss) {
+                    Icon(XnotesIcons.close, "Close", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
+                }
+                Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
+            } else {
+                IconButton(onClick = { createMode = CreateMode.NONE; page = CompactPage.MENU }) {
+                    Icon(XnotesIcons.prev, "Back", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
+                }
+                Text(
+                    if (page == CompactPage.HOME) "Home" else "Preferences",
+                    color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                    modifier = Modifier.padding(start = 2.dp),
+                )
+            }
+        }
+
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when (page) {
+                CompactPage.MENU -> Column(
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
+                ) {
+                    MenuRow(XnotesIcons.home, "Home", chevron = true) {
+                        createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT); page = CompactPage.HOME
+                    }
+                    MenuRow(XnotesIcons.plus, "New") {
+                        if (editor.browseRoot != null) {
+                            onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE; page = CompactPage.HOME
+                        } else onNewBlank()
+                    }
+                    MenuRow(XnotesIcons.folder, "Open…") { onOpenSystem() }
+                    RailDivider()
+                    MenuRow(XnotesIcons.save, "Save") { onSave() }
+                    MenuRow(XnotesIcons.copy, "Save As…") { onSaveAs() }
+                    MenuRow(XnotesIcons.share, "Share…") { onShare() }
+                    RailDivider()
+                    MenuRow(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
+                    MenuRow(XnotesIcons.exportDoc, "Export to PDF…") { onExportPdf() }
+                    RailDivider()
+                    MenuRow(XnotesIcons.sliders, "Preferences", chevron = true) {
+                        onSelectView(BackstageView.PREFERENCES); page = CompactPage.PREFERENCES
+                    }
+                }
+                CompactPage.HOME -> Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    HomePane(editor, onOpenRecent, onOpenFile, onPickRoot, createMode, { createMode = it }, onDismiss)
+                }
+                CompactPage.PREFERENCES -> Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    PreferencesPane(editor)
                 }
             }
+        }
+    }
+}
+
+/** A full-width menu entry in the compact backstage; [chevron] marks a sub-page. */
+@Composable
+private fun MenuRow(icon: ImageVector, label: String, chevron: Boolean = false, onClick: () -> Unit) {
+    val palette = LocalPalette.current
+    Row(
+        Modifier.fillMaxWidth().height(52.dp).clickable(onClick = onClick).padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = label, tint = palette.accent.toComposeColor(), modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(18.dp))
+        Text(label, color = palette.text.toComposeColor(), fontSize = 16.sp)
+        if (chevron) {
+            Spacer(Modifier.weight(1f))
+            Icon(XnotesIcons.next, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
         }
     }
 }
