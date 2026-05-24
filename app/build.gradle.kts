@@ -27,6 +27,12 @@ android {
         versionName = "0.2.0"
     }
 
+    // F-Droid rejects the AGP dependency-metadata block in the APK signing block.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
