@@ -346,7 +346,7 @@ private fun ExplorerSection(
                 IconAction(XnotesIcons.copy, "Copy") { clipboard = ClipItem(sel.documentUri, sel.name, currentDocId, false); selected = null }
                 IconAction(XnotesIcons.cut, "Cut") { clipboard = ClipItem(sel.documentUri, sel.name, currentDocId, true); selected = null }
                 IconAction(XnotesIcons.trash, "Delete") { pendingDelete = sel }
-                IconAction(XnotesIcons.close, "Deselect") { selected = null }
+                IconAction(XnotesIcons.close, "Deselect") { selected = null; clipboard = null }
             } else {
                 IconAction(XnotesIcons.plus, "New note") { onCreateMode(CreateMode.FILE) }
                 IconAction(XnotesIcons.newFolder, "New folder") { onCreateMode(CreateMode.FOLDER) }
@@ -361,6 +361,7 @@ private fun ExplorerSection(
                             if (ok) { clipboard = null; refreshKey++ } else opError = "Couldn’t paste here."
                         }
                     }
+                    IconAction(XnotesIcons.close, "Clear clipboard") { clipboard = null }
                 }
                 Box {
                     IconAction(XnotesIcons.more, "More") { menuOpen = true }
