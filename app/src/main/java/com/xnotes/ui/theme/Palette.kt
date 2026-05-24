@@ -47,21 +47,26 @@ data class Palette(
             isDark = true,
         )
 
-        fun light(accent: Rgba = Rgba(0, 161, 82)): Palette = Palette(
-            bg = hex(0xe8e8e8),
-            panel = hex(0xf4f4f4),
-            paper = hex(0xffffff),
-            paperBorder = hex(0xc4c4c4),
-            accent = accent,
-            accentDim = ColorMath.dim(accent),
-            border = hex(0xd0d0d0),
-            text = hex(0x1c1c1c),
-            textDim = hex(0x6f6f6f),
-            surface = hex(0xe4e4e4),
-            surfaceHi = hex(0xd8d8d8),
-            menuBg = hex(0xfbfbfb),
-            isDark = false,
-        )
+        fun light(accent: Rgba = Rgba(0, 161, 82)): Palette {
+            // A pale accent on the pale light background reads poorly, so deepen
+            // bright accents until they're legible (dark mode keeps them as-is).
+            val a = ColorMath.darkenForLight(accent)
+            return Palette(
+                bg = hex(0xe8e8e8),
+                panel = hex(0xf4f4f4),
+                paper = hex(0xffffff),
+                paperBorder = hex(0xc4c4c4),
+                accent = a,
+                accentDim = ColorMath.dim(a),
+                border = hex(0xd0d0d0),
+                text = hex(0x1c1c1c),
+                textDim = hex(0x6f6f6f),
+                surface = hex(0xe4e4e4),
+                surfaceHi = hex(0xd8d8d8),
+                menuBg = hex(0xfbfbfb),
+                isDark = false,
+            )
+        }
 
         fun forAppearance(dark: Boolean, accent: Rgba): Palette =
             if (dark) dark(accent) else light(accent)
@@ -77,6 +82,19 @@ object ColorMath {
     fun dim(c: Rgba): Rgba {
         val hsv = rgbToHsv(c)
         return hsvToRgb(hsv[0], 0.72, 0.55, c.a)
+    }
+
+    /**
+     * Cap an accent's perceived luminance for the light theme. Colours brighter
+     * than [maxLuminance] are scaled down in place (hue and saturation kept),
+     * so a bright yellow deepens to gold; colours already dark enough pass through.
+     */
+    fun darkenForLight(c: Rgba, maxLuminance: Double = 0.45): Rgba {
+        val lum = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255.0
+        if (lum <= maxLuminance) return c
+        val k = maxLuminance / lum
+        fun ch(v: Int) = (v * k).toInt().coerceIn(0, 255)
+        return Rgba(ch(c.r), ch(c.g), ch(c.b), c.a)
     }
 
     /** Lighten toward white by [amount] (0..1). */
