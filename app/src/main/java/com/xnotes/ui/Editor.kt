@@ -91,6 +91,8 @@ class Editor(context: Context) {
     private val recentThumbs = java.util.concurrent.ConcurrentHashMap<String, android.graphics.Bitmap>()
     /** Cached page counts per recent URI (filled alongside the thumbnail's doc load). */
     private val recentPages = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    /** On-disk thumbnail cache so the backstage opens instantly across launches. */
+    private val thumbCache = com.xnotes.platform.RecentThumbnailCache(java.io.File(appContext.filesDir, "recent_thumbs"))
 
     /** When non-null, the current note lives in the granted folder and autosaves to this URI. */
     var autosaveUri: String? = null
@@ -516,8 +518,7 @@ class Editor(context: Context) {
             maybeBindAutosave(uri) // saving into the folder makes it autosave thereafter
             refreshContent()
             rememberRecent(uri)
-            recentThumbs.remove(uri) // its first page may have changed; re-render next time
-            recentPages.remove(uri)
+            invalidateRecentThumb(uri) // content changed; re-render its thumbnail next time
         } catch (e: Exception) {
             message = "Could not save the note."
         }
@@ -528,14 +529,14 @@ class Editor(context: Context) {
     private fun rememberRecent(uri: String) {
         settings = settings.rememberFile(uri)
         settingsRepo.save(settings)
+        thumbCache.prune(settings.recentFiles.toSet()) // drop the file that fell off the capped list
     }
 
     /** Drop a recent entry (e.g., the file was moved or deleted) and its cached thumbnail. */
     fun removeRecentFile(uri: String) {
         settings = settings.copy(recentFiles = settings.recentFiles.filter { it != uri })
         settingsRepo.save(settings)
-        recentThumbs.remove(uri)
-        recentPages.remove(uri)
+        invalidateRecentThumb(uri)
     }
 
     /** The storage display name for a document/tree URI (no extension stripped), or null. */
@@ -562,16 +563,26 @@ class Editor(context: Context) {
     fun recentInfo(uri: String, widthPx: Int): RecentInfo {
         val haveThumb = recentThumbs[uri]?.let { !it.isRecycled } ?: false
         if (!haveThumb || !recentPages.containsKey(uri)) {
-            val doc = runCatching {
-                appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it) }
-            }.getOrNull()
-            if (doc != null) {
-                recentPages[uri] = doc.pages.size
-                if (!haveThumb) renderDocThumbnail(doc, widthPx)?.let { recentThumbs[uri] = it }
-                val keep = settings.recentFiles.toSet()
-                recentThumbs.keys.retainAll(keep)
-                recentPages.keys.retainAll(keep)
+            val cached = thumbCache.load(uri) // L2: on disk, avoids decoding the whole note
+            if (cached != null) {
+                recentThumbs[uri] = cached.first
+                recentPages[uri] = cached.second
+            } else {
+                val doc = runCatching {
+                    appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it) }
+                }.getOrNull()
+                if (doc != null) {
+                    val pages = doc.pages.size
+                    recentPages[uri] = pages
+                    renderDocThumbnail(doc, widthPx)?.let {
+                        recentThumbs[uri] = it
+                        thumbCache.store(uri, it, pages)
+                    }
+                }
             }
+            val keep = settings.recentFiles.toSet()
+            recentThumbs.keys.retainAll(keep)
+            recentPages.keys.retainAll(keep)
         }
         val (size, modified) = recentStat(uri)
         return RecentInfo(
@@ -582,6 +593,13 @@ class Editor(context: Context) {
             modified = modified,
             sizeBytes = size,
         )
+    }
+
+    /** Drop a recent note's cached thumbnail (memory + disk) so it re-renders with fresh content. */
+    private fun invalidateRecentThumb(uri: String) {
+        recentThumbs.remove(uri)
+        recentPages.remove(uri)
+        thumbCache.remove(uri)
     }
 
     /** Renders a loaded document's first page to a [widthPx]-wide thumbnail bitmap. */
@@ -641,6 +659,7 @@ class Editor(context: Context) {
         settingsRepo.save(settings)
         recentThumbs.clear()
         recentPages.clear()
+        thumbCache.prune(emptySet())
     }
 
     fun updateRecentGrid(grid: Boolean) {
@@ -807,7 +826,7 @@ class Editor(context: Context) {
         val ok = runCatching {
             appContext.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")?.use { codec.write(state.document, it) } != null
         }.getOrDefault(false)
-        if (ok) { state.document.dirty = false; dirty = false }
+        if (ok) { state.document.dirty = false; dirty = false; invalidateRecentThumb(uri) }
     }
 
     /** The document id of the explorer root, for listing its top-level children. */

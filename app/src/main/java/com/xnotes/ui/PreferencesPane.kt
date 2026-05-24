@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,14 +66,14 @@ fun PreferencesPane(editor: Editor) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Preferences", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Preferences", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { update(Preferences()) }) { Text("Reset to defaults") }
+            TextButton(onClick = { update(Preferences()) }) { Text("Reset to defaults", fontSize = 13.sp) }
         }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SectionTitle("General")
             FieldLabel("UI theme")
@@ -116,7 +117,7 @@ fun PreferencesPane(editor: Editor) {
                 value = prefs.sideMargin.toFloat(),
                 onValueChange = { update(prefs.copy(sideMargin = it.toDouble())) },
                 valueRange = 0f..64f,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.width(280.dp),
             )
             CheckRow("Page colour follows the theme", prefs.pageColor == null) {
                 update(prefs.copy(pageColor = if (it) null else pageColorPresets.first()))
@@ -135,12 +136,12 @@ fun PreferencesPane(editor: Editor) {
 
 @Composable
 private fun SectionTitle(text: String) {
-    Text(text, color = LocalPalette.current.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+    Text(text, color = LocalPalette.current.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 15.sp)
 }
 
 @Composable
 private fun FieldLabel(text: String) {
-    Text(text, color = LocalPalette.current.accent.toComposeColor())
+    Text(text, color = LocalPalette.current.accent.toComposeColor(), fontSize = 13.sp)
 }
 
 @Composable
@@ -152,9 +153,9 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
             .background(if (selected) palette.accentAlpha(48).toComposeColor() else palette.surface.toComposeColor())
             .border(1.dp, if (selected) palette.accent.toComposeColor() else palette.border.toComposeColor(), RoundedCornerShape(6.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
-        Text(label, color = if (selected) palette.accent.toComposeColor() else palette.text.toComposeColor())
+        Text(label, color = if (selected) palette.accent.toComposeColor() else palette.text.toComposeColor(), fontSize = 14.sp)
     }
 }
 
@@ -163,7 +164,7 @@ private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
     val palette = LocalPalette.current
     Box(
         Modifier
-            .size(34.dp)
+            .size(30.dp)
             .then(if (selected) Modifier.border(2.dp, palette.accent.toComposeColor(), CircleShape) else Modifier)
             .padding(4.dp)
             .clip(CircleShape)
@@ -177,7 +178,8 @@ private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
 private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onChange(!checked) }) {
         Checkbox(checked = checked, onCheckedChange = onChange)
-        Text(label, color = LocalPalette.current.text.toComposeColor())
+        Spacer(Modifier.width(2.dp))
+        Text(label, color = LocalPalette.current.text.toComposeColor(), fontSize = 14.sp)
     }
 }
 
@@ -191,9 +193,9 @@ private fun SizeDropdown(size: PageSize, onSelect: (PageSize) -> Unit) {
                 .clip(RoundedCornerShape(6.dp))
                 .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(6.dp))
                 .clickable { expanded = true }
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
         ) {
-            Text(size.displayName, color = palette.text.toComposeColor())
+            Text(size.displayName, color = palette.text.toComposeColor(), fontSize = 14.sp)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             PageSize.entries.forEach { s ->

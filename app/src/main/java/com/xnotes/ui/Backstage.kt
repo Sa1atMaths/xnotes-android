@@ -43,6 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -192,31 +193,27 @@ private fun HomePane(
     val palette = LocalPalette.current
     val recents = editor.recentFiles
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Recent notes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            Spacer(Modifier.weight(1f))
-            if (recents.isNotEmpty()) {
+        if (recents.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Recent notes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Spacer(Modifier.weight(1f))
                 TextButton(onClick = { editor.clearRecentFiles() }) {
                     Icon(XnotesIcons.trash, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Clear", color = palette.textDim.toComposeColor())
                 }
             }
-        }
-        Spacer(Modifier.height(10.dp))
-        if (recents.isEmpty()) {
-            Text("No recent notes yet.", color = palette.textDim.toComposeColor(), fontSize = 13.sp)
-        } else {
+            Spacer(Modifier.height(10.dp))
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 recents.forEach { uri -> RecentStripCard(editor, uri) { onOpenRecent(uri) } }
             }
+            Spacer(Modifier.height(18.dp))
+            HorizontalDivider(color = palette.border.toComposeColor())
+            Spacer(Modifier.height(18.dp))
         }
-        Spacer(Modifier.height(18.dp))
-        HorizontalDivider(color = palette.border.toComposeColor())
-        Spacer(Modifier.height(18.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             ExplorerSection(editor, onOpenFile, onPickRoot, createMode, onCreateMode, onDismiss)
         }
@@ -419,6 +416,7 @@ private fun ExplorerSection(
                         EntryRow(
                             entry = entry,
                             selected = selected?.documentUri == entry.documentUri,
+                            dimmed = clipboard?.let { it.isCut && it.uri == entry.documentUri } == true,
                             isRenaming = renaming == entry.documentUri,
                             renameText = renameText,
                             onRenameTextChange = { renameText = it },
@@ -505,6 +503,7 @@ private fun entryDetails(ctx: android.content.Context, entry: BrowseEntry): Stri
 private fun EntryRow(
     entry: BrowseEntry,
     selected: Boolean,
+    dimmed: Boolean,
     isRenaming: Boolean,
     renameText: String,
     onRenameTextChange: (String) -> Unit,
@@ -534,6 +533,7 @@ private fun EntryRow(
                 .clip(RoundedCornerShape(6.dp))
                 .then(if (selected) Modifier.background(palette.accentAlpha(38).toComposeColor()) else Modifier)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .alpha(if (dimmed) 0.4f else 1f)
                 .padding(horizontal = 10.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
