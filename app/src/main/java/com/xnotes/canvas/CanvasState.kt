@@ -102,7 +102,17 @@ class CanvasState(
 
     // --- sharp viewport (past the resolution cap) ---
 
-    private class SharpFrame(val surface: RasterSurface, val sx: Double, val sy: Double, val z: Double, val gen: Int)
+    // Two layers, like the page cache, so an erase can clear ink in a region without
+    // disturbing the (PDF/paper) background underneath: [base] holds window bg + paper +
+    // border + background + labels, [ink] holds just the strokes on a transparent surface.
+    private class SharpFrame(
+        val base: RasterSurface,
+        val ink: RasterSurface,
+        val sx: Double,
+        val sy: Double,
+        val z: Double,
+        val gen: Int,
+    )
 
     private var sharpFrame: SharpFrame? = null
     private var pendingSharp = false
@@ -376,7 +386,7 @@ class CanvasState(
 
     /** Append a single just-committed stroke into an existing cache (cheap), else rebuild. */
     fun appendToCache(page: Page, item: CanvasItem) {
-        sharpGen++ // the sharp viewport (if any) no longer reflects the page's content
+        appendToSharpInk(page, item) // keep the sharp viewport crisp without a full re-render
         val res = clampedRes(page)
         val existing = caches[page]
         if (existing == null || abs(existing.res - res) > 1e-6) {
@@ -399,7 +409,7 @@ class CanvasState(
      * [invalidatePage] for a full rebuild.
      */
     fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
-        sharpGen++ // erased content: the sharp viewport must re-render
+        repairSharpInk(page, dirtyRect) // erase from the sharp ink layer in place, no re-render
         val entry = caches[page] ?: return false
         val r = entry.surface.renderer()
         r.save()
@@ -462,22 +472,23 @@ class CanvasState(
         return false
     }
 
-    /** A ready sharp surface plus the viewport-pixel offset to blit it at (non-zero while panning). */
-    class SharpBlit(val surface: RasterSurface, val dx: Double, val dy: Double)
+    /** Ready sharp layers (background then ink) plus the viewport-pixel offset to blit them at. */
+    class SharpBlit(val base: RasterSurface, val ink: RasterSurface, val dx: Double, val dy: Double)
 
     /**
-     * The sharp viewport surface to blit, or null when there isn't a usable one. It stays usable
-     * across a *pan* (same zoom, same content): it was rendered for an earlier scroll, so we just
-     * slide it by the scroll delta — the part still on screen stays razor-sharp, and the strip that
-     * panned into view falls back to the soft cache underneath until the settled re-render lands.
-     * A zoom change or content edit makes it unusable (returns null).
+     * The sharp viewport layers to blit, or null when there isn't a usable one. It stays usable
+     * across a *pan* (same zoom): rendered for an earlier scroll, we slide it by the scroll delta —
+     * the part still on screen stays razor-sharp, and the strip that panned into view falls back to
+     * the soft cache underneath until the settled re-render lands. A zoom change or a non-incremental
+     * content edit ([sharpGen] moved) makes it unusable (returns null). Writes and erases keep it
+     * usable because they patch the ink layer directly via [appendToSharpInk] / [repairSharpInk].
      */
     fun sharpViewportBlit(): SharpBlit? {
         val f = sharpFrame ?: return null
         if (f.gen != sharpGen || f.z != zoom) return null
         val o = originFor(scrollX, scrollY, zoom)
         val o0 = originFor(f.sx, f.sy, f.z)
-        return SharpBlit(f.surface, o.x - o0.x, o.y - o0.y)
+        return SharpBlit(f.base, f.ink, o.x - o0.x, o.y - o0.y)
     }
 
     /** Drop the sharp viewport surface (e.g. once the zoom falls back below the cap). */
@@ -520,51 +531,94 @@ class CanvasState(
         if (draws.isEmpty()) return
         pendingSharp = true
         runAsync {
-            val surface = renderSharpSurface(vw, vh, o, z, res, bg, draws)
+            val base = surfaceFactory.create(vw, vh, 1.0).also { it.fill(bg) }
+            val ink = surfaceFactory.create(vw, vh, 1.0).also { it.fill(TRANSPARENT) }
+            renderSharpFrame(base, ink, o, z, res, draws)
             postToMain {
                 pendingSharp = false
                 if (gen == sharpGen && sx == scrollX && sy == scrollY && z == zoom) {
-                    sharpFrame = SharpFrame(surface, sx, sy, z, gen)
+                    sharpFrame = SharpFrame(base, ink, sx, sy, z, gen)
                     onCacheReady?.invoke()
                 }
             }
         }
     }
 
-    private fun renderSharpSurface(
-        vw: Int,
-        vh: Int,
+    /** Paint the [base] (paper/border/background/labels) and [ink] (strokes) sharp layers. */
+    private fun renderSharpFrame(
+        base: RasterSurface,
+        ink: RasterSurface,
         o: Pt,
         z: Double,
         res: Double,
-        bg: Rgba,
         draws: List<SharpPageSnap>,
-    ): RasterSurface {
-        val surface = surfaceFactory.create(vw, vh, 1.0)
-        surface.fill(bg)
-        val r = surface.renderer()
-        r.translate(o.x, o.y)
-        r.scale(z, z)
+    ) {
+        val rb = base.renderer()
+        rb.translate(o.x, o.y)
+        rb.scale(z, z)
+        val ri = ink.renderer()
+        ri.translate(o.x, o.y)
+        ri.scale(z, z)
         val border = Pen(palette.paperBorder, 1.0, cosmetic = true)
         for (d in draws) {
-            r.fillRect(d.pr, paperColor(d.page))
-            r.strokeRect(d.pr, border)
-            r.save()
-            r.clipRect(d.pr)
-            r.translate(d.pr.left, d.pr.top)
+            rb.fillRect(d.pr, paperColor(d.page))
+            rb.strokeRect(d.pr, border)
+            rb.save()
+            rb.clipRect(d.pr)
+            rb.translate(d.pr.left, d.pr.top)
             if (paintPageBackground != null && d.region.w > 0.0 && d.region.h > 0.0) {
-                paintPageBackground?.invoke(d.page, r, res, d.region)
+                paintPageBackground?.invoke(d.page, rb, res, d.region)
             }
-            for (item in d.items) item.paint(r)
-            r.restore()
-            r.drawText(
+            rb.restore()
+            rb.drawText(
                 "%02d".format(d.index + 1),
                 Rect(d.pr.left, d.pr.top - PAGE_LABEL_OFFSET, 140.0, 24.0),
                 FontSpec(9.0),
                 palette.textDim,
             )
+            ri.save()
+            ri.clipRect(d.pr)
+            ri.translate(d.pr.left, d.pr.top)
+            for (item in d.items) item.paint(ri)
+            ri.restore()
         }
-        return surface
+    }
+
+    /** Paint a just-committed stroke into the live sharp ink layer so it stays crisp (no re-render). */
+    private fun appendToSharpInk(page: Page, item: CanvasItem) {
+        val f = sharpFrame ?: return
+        if (f.z != zoom) return // surface is for a different zoom; it'll be re-rendered anyway
+        val idx = document.pages.indexOf(page)
+        val pr = pageRects.getOrNull(idx) ?: return
+        val o0 = originFor(f.sx, f.sy, f.z)
+        val r = f.ink.renderer()
+        r.save()
+        r.translate(o0.x, o0.y)
+        r.scale(f.z, f.z)
+        r.clipRect(pr)
+        r.translate(pr.left, pr.top)
+        item.paint(r)
+        r.restore()
+    }
+
+    /** Repair an erased region of the live sharp ink layer in place (background layer untouched). */
+    private fun repairSharpInk(page: Page, dirtyRect: Rect) {
+        val f = sharpFrame ?: return
+        if (f.z != zoom) return
+        val idx = document.pages.indexOf(page)
+        val pr = pageRects.getOrNull(idx) ?: return
+        val o0 = originFor(f.sx, f.sy, f.z)
+        val r = f.ink.renderer()
+        r.save()
+        r.translate(o0.x, o0.y)
+        r.scale(f.z, f.z)
+        r.translate(pr.left, pr.top)
+        r.clipRect(dirtyRect)
+        r.clear()
+        for (item in page.items) {
+            if (!isLiftedItem(item) && item.bounds().intersects(dirtyRect)) item.paint(r)
+        }
+        r.restore()
     }
 
     private fun originFor(sx: Double, sy: Double, z: Double): Pt {

@@ -241,7 +241,8 @@ class CanvasView @JvmOverloads constructor(
             if (blit != null) {
                 val vw = st.viewportW.toDouble()
                 val vh = st.viewportH.toDouble()
-                r.drawRaster(blit.surface, Rect(blit.dx, blit.dy, vw, vh))
+                r.drawRaster(blit.base, Rect(blit.dx, blit.dy, vw, vh))
+                r.drawRaster(blit.ink, Rect(blit.dx, blit.dy, vw, vh))
                 mainHandler.removeCallbacks(sharpDebounce)
                 // Off the exact rendered view (a pan): schedule a fresh render for where we settle.
                 if (blit.dx != 0.0 || blit.dy != 0.0) mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
