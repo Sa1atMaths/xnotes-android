@@ -6,6 +6,7 @@ import android.graphics.pdf.PdfDocument
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.PageSize
+import com.xnotes.core.model.Rgba
 import java.io.OutputStream
 import kotlin.math.roundToInt
 
@@ -27,7 +28,12 @@ object PdfImporter {
 
 /** Flattens a document — PDF backgrounds and every item — into a new PDF (spec 08 §6). */
 object PdfExporter {
-    fun export(doc: Document, source: PdfSource?, out: OutputStream) {
+    /**
+     * [paperColor] gives each page's background fill (the on-screen paper colour,
+     * e.g. dark-theme `#161616`); without it the page would keep the PDF canvas's
+     * default white, exporting dark-mode notes on a white background.
+     */
+    fun export(doc: Document, source: PdfSource?, out: OutputStream, paperColor: (Page) -> Rgba) {
         val pdf = PdfDocument()
         val scale = (72.0 / doc.dpi).toFloat()
         val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -37,6 +43,10 @@ object PdfExporter {
             val info = PdfDocument.PageInfo.Builder(wPts, hPts, index + 1).create()
             val pdfPage = pdf.startPage(info)
             val canvas = pdfPage.canvas
+            // Paint the paper colour over the whole page first (drawColor ignores the
+            // matrix); an embedded PDF page then covers it, but a plain note keeps it
+            // instead of falling through to the canvas's default white.
+            canvas.drawColor(paperColor(page).toArgb())
             // Draw in page-pixel coordinates; the canvas maps them to points.
             canvas.scale(scale, scale)
 

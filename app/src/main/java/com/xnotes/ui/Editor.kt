@@ -349,7 +349,7 @@ class Editor(context: Context) {
 
     fun exportPdf(output: OutputStream) {
         try {
-            com.xnotes.platform.PdfExporter.export(state.document, pdfSource, output)
+            com.xnotes.platform.PdfExporter.export(state.document, pdfSource, output, state::paperColor)
             message = "Exported to PDF."
         } catch (e: Exception) {
             message = "Could not export to PDF."
@@ -1004,7 +1004,7 @@ class Editor(context: Context) {
     fun writeCurrentDocument(out: OutputStream) = codec.write(state.document, out)
 
     fun writeCurrentPdf(out: OutputStream) =
-        com.xnotes.platform.PdfExporter.export(state.document, pdfSource, out)
+        com.xnotes.platform.PdfExporter.export(state.document, pdfSource, out, state::paperColor)
 
     private fun replaceDocument(doc: Document) {
         saveViewState() // remember the outgoing folder note's view before switching away
