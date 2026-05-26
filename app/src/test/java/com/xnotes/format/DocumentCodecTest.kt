@@ -166,7 +166,7 @@ class DocumentCodecTest {
 
         val s = roundTrip(doc).pages[0].items[0] as Stroke
         assertEquals(Tool.SPEED, s.tool)
-        assertEquals(0.6, s.config.speedStrength, 1e-9)
+        assertEquals(0.8, s.config.speedStrength, 1e-9)
         assertEquals(3, s.samples.size)
         assertEquals(16.0, s.samples[1].t, 1e-9)   // the 4th sample element survives
         assertEquals(33.0, s.samples[2].t, 1e-9)

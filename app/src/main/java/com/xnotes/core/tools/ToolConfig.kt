@@ -31,7 +31,7 @@ object ToolDefaults {
     fun configFor(tool: Tool): ToolConfig = when (tool) {
         Tool.PEN -> ToolConfig(baseWidth = 3.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0)
         Tool.CALLIGRAPHY -> ToolConfig(baseWidth = 6.0, pressureEnabled = true, pressureMinFactor = 0.40, directionStrength = 0.60)
-        Tool.SPEED -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0, speedStrength = 0.6)
+        Tool.SPEED -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0, speedStrength = 0.8)
         Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperAmount = 0.7)
         Tool.HIGHLIGHTER -> ToolConfig(baseWidth = 16.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
         Tool.ERASER -> ToolConfig(baseWidth = 24.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
@@ -60,10 +60,10 @@ object ToolConversions {
 
     fun directionStrengthToMultiplier(ds: Double): Double = (1.0 + ds) / (1.0 - ds)
 
-    /** SPEED (0..100, higher = stronger thinning at speed) -> `speedStrength` in [0, 0.85]. */
-    fun speedToStrength(speed: Double): Double = speed.coerceIn(0.0, 100.0) / 100.0 * 0.85
+    /** SPEED (0..100, higher = stronger thinning at speed) -> `speedStrength` in [0, 0.92]. */
+    fun speedToStrength(speed: Double): Double = speed.coerceIn(0.0, 100.0) / 100.0 * 0.92
 
-    fun strengthToSpeed(s: Double): Double = (s / 0.85) * 100.0
+    fun strengthToSpeed(s: Double): Double = (s / 0.92) * 100.0
 
     /** TAPER (0..100, higher = longer taper) -> `taperAmount` in [0, 1]. */
     fun taperToAmount(taper: Double): Double = taper.coerceIn(0.0, 100.0) / 100.0

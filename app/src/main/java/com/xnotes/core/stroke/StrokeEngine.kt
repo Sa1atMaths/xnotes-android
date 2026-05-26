@@ -19,9 +19,14 @@ object StrokeEngine {
     const val MIN_DIRECTION = 0.1
 
     /** Speed pen: page-px/ms at/below which the line stays full width, and the
-     *  speed at/above which it reaches its thinnest. Mapped through a smoothstep. */
-    const val SPEED_LO = 0.15
-    const val SPEED_HI = 2.2
+     *  speed at/above which it reaches its thinnest. Mapped through a smoothstep.
+     *  The window sits at everyday writing speeds so normal strokes already modulate. */
+    const val SPEED_LO = 0.06
+    const val SPEED_HI = 0.25
+
+    /** Speed pen: a heavier low-pass on the speed channel than [ALPHA] (position), so the
+     *  width glides between thick and thin over ~1/this samples instead of snapping. */
+    const val SPEED_ALPHA = 0.15
 
     /** Speed pen: minimum per-segment dt (ms) so a duplicate-timestamp pair can't
      *  divide by ~zero and spike the speed. */
@@ -89,7 +94,7 @@ object StrokeEngine {
             raw[i] = dist / dt
         }
         raw[0] = raw[1]
-        val speed = ema(raw.asList())
+        val speed = ema(raw.asList(), SPEED_ALPHA)
         return speed.map { 1.0 - speedStrength * smoothstep(SPEED_LO, SPEED_HI, it) }
     }
 
