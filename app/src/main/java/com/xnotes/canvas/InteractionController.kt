@@ -1038,6 +1038,7 @@ class InteractionController(
         state.scrollY = pinchAnchorContent.y * z - mid.y
         state.clampScroll()
         lastPan = mid
+        onViewChanged() // live zoom %: refresh the toolbar each pinch frame, not just at the end
         requestRender()
     }
 

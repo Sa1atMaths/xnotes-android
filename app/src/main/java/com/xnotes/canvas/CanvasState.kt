@@ -401,6 +401,32 @@ class CanvasState(
         bgCaches.keys.retainAll(visible)
     }
 
+    /** A read-only count of the live page caches and their bitmap bytes, for the debug overlay. */
+    class CacheSnapshot(val inkPages: Int, val bgPages: Int, val bytes: Long)
+
+    fun cacheSnapshot(): CacheSnapshot {
+        var bytes = 0L
+        for (e in caches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
+        for (e in bgCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
+        return CacheSnapshot(caches.size, bgCaches.size, bytes)
+    }
+
+    /**
+     * The pixel dimensions the current page's cache *would* be built at for the current
+     * zoom (i.e. [clampedRes] applied). Tracks live while zooming — unlike the actual
+     * cached surface, which is blitted stale-scaled during a pinch and only rebuilt when
+     * the gesture ends. Used by the debug overlay's `res` line; returns 0×0 with no pages.
+     */
+    fun targetRasterSize(): Pair<Int, Int> {
+        val pages = document.pages
+        if (pages.isEmpty()) return 0 to 0
+        val page = pages[currentPageIndex()]
+        val res = clampedRes(page)
+        val w = ceil(page.width * res).toInt().coerceAtLeast(1)
+        val h = ceil(page.height * res).toInt().coerceAtLeast(1)
+        return w to h
+    }
+
     companion object {
         const val MARGIN = 48.0
         const val GAP = 38.0

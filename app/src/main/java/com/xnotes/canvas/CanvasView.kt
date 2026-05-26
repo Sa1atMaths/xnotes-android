@@ -60,14 +60,114 @@ class CanvasView @JvmOverloads constructor(
     /** Hover handler (stylus/mouse hover) for the eraser cursor. */
     var hover: ((MotionEvent) -> Boolean)? = null
 
+    /** Transparent debug HUD (frame rate / cache / heap), toggled by a four-finger tap. */
+    val debugOverlay = DebugOverlay()
+
+    /**
+     * Low-rate repaint while the HUD is visible. The canvas only repaints on interaction,
+     * so without this the frame-rate line would freeze at its last value when idle instead
+     * of falling to 0. Runs only while [DebugOverlay.enabled]; costs nothing otherwise.
+     */
+    private val debugTick = object : Runnable {
+        override fun run() {
+            if (!debugOverlay.enabled) return
+            invalidate()
+            mainHandler.postDelayed(this, DEBUG_TICK_MS)
+        }
+    }
+
+    // --- four-finger-tap recognition (toggles the debug HUD) ---
+    private var gestureDownMs = 0L
+    private var gestureMaxPointers = 0
+    private var fourFingerActive = false
+    private var fourCx = 0f
+    private var fourCy = 0f
+    private var fourMoved = false
+
     init {
         isFocusableInTouchMode = true
         setWillNotDraw(false)
     }
 
     @Suppress("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean =
-        input?.invoke(event) ?: super.onTouchEvent(event)
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (trackFourFingerTap(event)) return true
+        return input?.invoke(event) ?: super.onTouchEvent(event)
+    }
+
+    /**
+     * Watch the touch stream for a clean four-finger tap. Once a 4th finger lands we
+     * cancel whatever gesture the interaction layer began (e.g. a pinch) and swallow the
+     * rest of the gesture; on a quick, near-stationary release with exactly four fingers
+     * we toggle [debugOverlay]. Returns true when the event was consumed here (so the
+     * caller must not forward it to the interaction layer).
+     */
+    private fun trackFourFingerTap(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                gestureDownMs = e.eventTime
+                gestureMaxPointers = 1
+                fourFingerActive = false
+                fourMoved = false
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                gestureMaxPointers = maxOf(gestureMaxPointers, e.pointerCount)
+                if (!fourFingerActive && e.pointerCount >= 4) {
+                    fourFingerActive = true
+                    val (cx, cy) = centroid(e)
+                    fourCx = cx; fourCy = cy
+                    cancelInteraction(e) // abort the pinch the controller already started
+                }
+                if (fourFingerActive) return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (fourFingerActive) {
+                    val (cx, cy) = centroid(e)
+                    if (kotlin.math.hypot((cx - fourCx).toDouble(), (cy - fourCy).toDouble()) > TAP_SLOP) {
+                        fourMoved = true
+                    }
+                    return true
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (fourFingerActive) return true // wait for the last finger to lift
+            }
+            MotionEvent.ACTION_UP -> {
+                if (fourFingerActive) {
+                    fourFingerActive = false
+                    val quick = e.eventTime - gestureDownMs <= TAP_TIMEOUT_MS
+                    if (quick && !fourMoved && gestureMaxPointers == 4) {
+                        debugOverlay.toggle()
+                        mainHandler.removeCallbacks(debugTick)
+                        if (debugOverlay.enabled) mainHandler.postDelayed(debugTick, DEBUG_TICK_MS)
+                        requestRender()
+                    }
+                    return true
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                if (fourFingerActive) {
+                    fourFingerActive = false
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun centroid(e: MotionEvent): Pair<Float, Float> {
+        var sx = 0f; var sy = 0f
+        for (i in 0 until e.pointerCount) { sx += e.getX(i); sy += e.getY(i) }
+        return sx / e.pointerCount to sy / e.pointerCount
+    }
+
+    /** Forward a synthetic CANCEL so the interaction layer abandons its in-flight gesture. */
+    private fun cancelInteraction(e: MotionEvent) {
+        val cancel = MotionEvent.obtain(e)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        input?.invoke(cancel)
+        cancel.recycle()
+    }
 
     override fun onHoverEvent(event: MotionEvent): Boolean =
         hover?.invoke(event) ?: super.onHoverEvent(event)
@@ -83,6 +183,7 @@ class CanvasView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         cacheExecutor?.shutdown()
+        mainHandler.removeCallbacks(debugTick)
         super.onDetachedFromWindow()
     }
 
@@ -132,6 +233,10 @@ class CanvasView @JvmOverloads constructor(
         drawOverlay?.invoke(r, canvas)
 
         st.dropCachesExcept(visiblePages)
+
+        // Debug HUD on top, reading the just-pruned cache state (viewport space).
+        debugOverlay.sampleFrame(System.nanoTime())
+        debugOverlay.draw(r, st)
     }
 
     private fun drawPageLabel(r: AndroidRenderer, st: CanvasState, index: Int, pr: Rect) {
@@ -141,4 +246,15 @@ class CanvasView @JvmOverloads constructor(
 
     /** Request a vsync-aligned repaint (rides the display refresh while drawing). */
     fun requestRender() = postInvalidateOnAnimation()
+
+    companion object {
+        /** Max gesture duration (ms) still counted as a tap. */
+        private const val TAP_TIMEOUT_MS = 500L
+
+        /** Max centroid drift (viewport px) the four fingers may wander and still tap. */
+        private const val TAP_SLOP = 40.0
+
+        /** Idle repaint interval (ms) while the debug HUD is visible, so its FPS falls to 0. */
+        private const val DEBUG_TICK_MS = 250L
+    }
 }
