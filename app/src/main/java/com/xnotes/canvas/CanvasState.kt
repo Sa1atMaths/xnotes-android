@@ -472,23 +472,29 @@ class CanvasState(
         return false
     }
 
-    /** Ready sharp layers (background then ink) plus the viewport-pixel offset to blit them at. */
-    class SharpBlit(val base: RasterSurface, val ink: RasterSurface, val dx: Double, val dy: Double)
+    /**
+     * Ready sharp layers (background then ink) plus the affine transform to blit them at: each is
+     * drawn into `Rect(dx, dy, base.width * scale, base.height * scale)`.
+     */
+    class SharpBlit(val base: RasterSurface, val ink: RasterSurface, val scale: Double, val dx: Double, val dy: Double)
 
     /**
      * The sharp viewport layers to blit, or null when there isn't a usable one. It stays usable
-     * across a *pan* (same zoom): rendered for an earlier scroll, we slide it by the scroll delta —
-     * the part still on screen stays razor-sharp, and the strip that panned into view falls back to
-     * the soft cache underneath until the settled re-render lands. A zoom change or a non-incremental
-     * content edit ([sharpGen] moved) makes it unusable (returns null). Writes and erases keep it
-     * usable because they patch the ink layer directly via [appendToSharpInk] / [repairSharpInk].
+     * across a *pan or zoom* (same content): rendered for an earlier view, we re-fit it with a
+     * scale + translate so the content lines up — the part still on screen stays sharp (crisper than
+     * the soft cache even when scaled), and whatever falls outside it uses the soft cache underneath
+     * until the settled re-render lands. Only a non-incremental content edit ([sharpGen] moved)
+     * makes it unusable; writes and erases patch the ink layer directly ([appendToSharpInk] /
+     * [repairSharpInk]) so they keep it valid.
      */
     fun sharpViewportBlit(): SharpBlit? {
         val f = sharpFrame ?: return null
-        if (f.gen != sharpGen || f.z != zoom) return null
+        if (f.gen != sharpGen) return null
+        val scale = zoom / f.z
         val o = originFor(scrollX, scrollY, zoom)
         val o0 = originFor(f.sx, f.sy, f.z)
-        return SharpBlit(f.base, f.ink, o.x - o0.x, o.y - o0.y)
+        // Surface pixel p maps to screen scale*p + (o - scale*o0).
+        return SharpBlit(f.base, f.ink, scale, o.x - scale * o0.x, o.y - scale * o0.y)
     }
 
     /** Drop the sharp viewport surface (e.g. once the zoom falls back below the cap). */
@@ -587,7 +593,6 @@ class CanvasState(
     /** Paint a just-committed stroke into the live sharp ink layer so it stays crisp (no re-render). */
     private fun appendToSharpInk(page: Page, item: CanvasItem) {
         val f = sharpFrame ?: return
-        if (f.z != zoom) return // surface is for a different zoom; it'll be re-rendered anyway
         val idx = document.pages.indexOf(page)
         val pr = pageRects.getOrNull(idx) ?: return
         val o0 = originFor(f.sx, f.sy, f.z)
@@ -604,7 +609,6 @@ class CanvasState(
     /** Repair an erased region of the live sharp ink layer in place (background layer untouched). */
     private fun repairSharpInk(page: Page, dirtyRect: Rect) {
         val f = sharpFrame ?: return
-        if (f.z != zoom) return
         val idx = document.pages.indexOf(page)
         val pr = pageRects.getOrNull(idx) ?: return
         val o0 = originFor(f.sx, f.sy, f.z)

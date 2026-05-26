@@ -239,13 +239,14 @@ class CanvasView @JvmOverloads constructor(
         if (st.isPastResolutionCap()) {
             val blit = st.sharpViewportBlit()
             if (blit != null) {
-                val vw = st.viewportW.toDouble()
-                val vh = st.viewportH.toDouble()
-                r.drawRaster(blit.base, Rect(blit.dx, blit.dy, vw, vh))
-                r.drawRaster(blit.ink, Rect(blit.dx, blit.dy, vw, vh))
+                val dw = blit.base.width * blit.scale
+                val dh = blit.base.height * blit.scale
+                r.drawRaster(blit.base, Rect(blit.dx, blit.dy, dw, dh))
+                r.drawRaster(blit.ink, Rect(blit.dx, blit.dy, dw, dh))
                 mainHandler.removeCallbacks(sharpDebounce)
-                // Off the exact rendered view (a pan): schedule a fresh render for where we settle.
-                if (blit.dx != 0.0 || blit.dy != 0.0) mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
+                // Off the exact rendered view (panned or zoomed): re-render for where we settle.
+                val exact = blit.scale == 1.0 && blit.dx == 0.0 && blit.dy == 0.0
+                if (!exact) mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
             } else {
                 mainHandler.removeCallbacks(sharpDebounce)
                 mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
