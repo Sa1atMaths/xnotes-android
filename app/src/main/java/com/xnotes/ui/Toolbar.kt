@@ -14,12 +14,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -60,6 +67,7 @@ fun Toolbar(
     val palette = LocalPalette.current
     var configForTool by remember { mutableStateOf<Tool?>(null) }
     var switcherIndex by remember { mutableStateOf<Int?>(null) }
+    var renaming by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -71,7 +79,14 @@ fun Toolbar(
     ) {
         ToolbarIcon(XnotesIcons.file, "File") { onOpenBackstage() }
         EditMenu(editor)
-        Label(editor.title + if (editor.dirty) " *" else "")
+        // One trailing char is always reserved for the dirty "*" so autosave toggling
+        // it on/off doesn't change the title's width and nudge the toolbar. Tap to rename.
+        Label(
+            editor.title + if (editor.dirty) " *" else "  ",
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { renaming = true },
+        )
         Separator()
 
         ToolbarIcon(XnotesIcons.sidebar, "Side panel", active = editor.sidebarVisible) { editor.toggleSidebar() }
@@ -142,6 +157,42 @@ fun Toolbar(
         ToolbarIcon(XnotesIcons.fullscreen, "Full screen") { onToggleFullscreen() }
         ToolbarIcon(XnotesIcons.present, "Present", active = editor.presentationRunning) { onPresent() }
     }
+
+    if (renaming) {
+        RenameDialog(
+            initial = editor.title,
+            onConfirm = { name ->
+                renaming = false
+                if (!editor.renameCurrentDocument(name)) editor.message = "Couldn’t rename the note."
+            },
+            onDismiss = { renaming = false },
+        )
+    }
+}
+
+/** Renames the open note: a small prefilled text field; the ".xnote" suffix is implicit. */
+@Composable
+private fun RenameDialog(initial: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename note") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                modifier = Modifier.focusRequester(focus),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { if (text.isBlank()) onDismiss() else onConfirm(text) }) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        containerColor = LocalPalette.current.menuBg.toComposeColor(),
+    )
 }
 
 @Composable
@@ -165,12 +216,12 @@ private fun ToolbarIcon(
 
 @Composable
 private fun Swatch(color: androidx.compose.ui.graphics.Color, active: Boolean, onClick: () -> Unit) {
-    val palette = LocalPalette.current
     Box(
         modifier = Modifier
             .padding(horizontal = 3.dp)
             .size(28.dp)
-            .then(if (active) Modifier.border(2.dp, palette.accent.toComposeColor(), CircleShape) else Modifier)
+            // The selection ring takes the swatch's own colour, not the theme accent.
+            .then(if (active) Modifier.border(2.dp, color, CircleShape) else Modifier)
             .padding(4.dp)
             .clip(CircleShape)
             .background(color)
@@ -179,13 +230,13 @@ private fun Swatch(color: androidx.compose.ui.graphics.Color, active: Boolean, o
 }
 
 @Composable
-private fun Label(text: String) {
+private fun Label(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         color = LocalPalette.current.textDim.toComposeColor(),
         fontFamily = FontFamily.Monospace,
         fontSize = 12.sp,
-        modifier = Modifier.padding(horizontal = 4.dp),
+        modifier = modifier.padding(horizontal = 4.dp),
     )
 }
 

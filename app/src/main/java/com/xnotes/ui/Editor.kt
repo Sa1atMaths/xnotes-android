@@ -791,6 +791,26 @@ class Editor(context: Context) {
         return true
     }
 
+    /**
+     * Renames the currently open note. With a backing file it renames the file (and
+     * follows it, like [renameDocument]); with none it just sets the in-memory title
+     * the next save will use. Main thread — touches Compose state; the file rename is
+     * a quick provider call. Returns false on a blank name or a failed file rename.
+     */
+    fun renameCurrentDocument(rawName: String): Boolean {
+        val name = rawName.trim()
+        if (name.isEmpty()) return false
+        val fileName = if (name.endsWith(".xnote", ignoreCase = true)) name else "$name.xnote"
+        val uri = currentUri
+        return if (uri != null) {
+            renameDocument(uri, fileName)
+        } else {
+            state.document.displayName = fileName
+            title = state.document.title
+            true
+        }
+    }
+
     /** Deletes a document (file or folder). IO, call off-thread. */
     fun deleteDocument(docUri: String): Boolean = runCatching {
         val ok = android.provider.DocumentsContract.deleteDocument(appContext.contentResolver, android.net.Uri.parse(docUri))

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,12 +55,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -103,6 +109,7 @@ fun Backstage(
     // menu that pushes Home / Preferences as full-screen sub-pages (phones in portrait).
     val compact = LocalConfiguration.current.screenWidthDp < COMPACT_WIDTH_DP
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        FullscreenDialogWindow()
         if (compact) {
             BackstageCompact(
                 editor, view, onSelectView, onNewBlank, onOpenSystem, onSave, onSaveAs, onShare,
@@ -119,6 +126,30 @@ fun Backstage(
 
 /** Material's compact-width breakpoint: at or above this we keep the rail + pane. */
 private const val COMPACT_WIDTH_DP = 600
+
+/**
+ * Stretch the backstage's own dialog window edge-to-edge — into the display cutout and
+ * behind the (hidden) system bars — so it fills the screen like the editor instead of
+ * leaving the camera-cutout band the default dialog window reserves at the top.
+ */
+@Composable
+private fun FullscreenDialogWindow() {
+    val view = LocalView.current
+    LaunchedEffect(view) {
+        val window = (view.parent as? DialogWindowProvider)?.window ?: return@LaunchedEffect
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        WindowInsetsControllerCompat(window, view).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+}
 
 // --- wide layout (tablets / landscape): rail on the left, content on the right ---
 
@@ -142,7 +173,7 @@ private fun BackstageWide(
     val palette = LocalPalette.current
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
     Row(
-        Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()),
+        Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding(),
     ) {
         // Left command rail (scrolls when the screen is too short for every command).
         Column(
@@ -217,7 +248,7 @@ private fun BackstageCompact(
     }
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
 
-    Column(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor())) {
+    Column(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
         // Top bar: close (X) at the menu, a back arrow inside a sub-page.
         Row(
             Modifier.fillMaxWidth().background(palette.panel.toComposeColor()).padding(start = 6.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
