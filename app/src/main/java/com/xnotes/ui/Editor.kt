@@ -298,7 +298,8 @@ class Editor(context: Context) {
                     val ry = (region.top * res).toInt()
                     val rw = kotlin.math.ceil(region.w * res).toInt()
                     val rh = kotlin.math.ceil(region.h * res).toInt()
-                    src.renderRegion(pi, fullW, fullH, rx, ry, rw, rh, settings.prefs.pdfDarkMode)?.let { bg ->
+                    val invert = settings.prefs.pdfDarkMode
+                    src.renderRegion(pi, fullW, fullH, rx, ry, rw, rh, invert, keepImages = invert && settings.prefs.pdfKeepImageColors)?.let { bg ->
                         renderer.drawRaster(
                             bg,
                             com.xnotes.core.geometry.Rect(region.left, region.top, region.w, region.h),
@@ -712,7 +713,7 @@ class Editor(context: Context) {
             runCatching {
                 com.xnotes.platform.PdfSource.create(appContext, bytes)?.let { src ->
                     page.pdfPage?.let { pi ->
-                        src.renderPage(pi, w, h, settings.prefs.pdfDarkMode)?.let { bg ->
+                        src.renderPage(pi, w, h, settings.prefs.pdfDarkMode, keepImages = settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors)?.let { bg ->
                             r.drawRaster(bg, Rect(0.0, 0.0, page.width, page.height))
                             bg.recycle()
                         }

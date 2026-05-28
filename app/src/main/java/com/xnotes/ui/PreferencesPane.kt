@@ -92,7 +92,12 @@ fun PreferencesPane(editor: Editor) {
                     update(prefs.copy(accentColor = it))
                 }
             }
-            CheckRow("Open PDFs in dark mode (invert pages)", prefs.pdfDarkMode) { update(prefs.copy(pdfDarkMode = it)) }
+            Column {
+                CheckRow("Open PDFs in dark mode (invert pages)", prefs.pdfDarkMode) { update(prefs.copy(pdfDarkMode = it)) }
+                if (prefs.pdfDarkMode) {
+                    CheckRow("Don't invert images", prefs.pdfKeepImageColors) { update(prefs.copy(pdfKeepImageColors = it)) }
+                }
+            }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Input")

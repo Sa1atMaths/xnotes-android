@@ -11,6 +11,8 @@ import org.json.JSONObject
  */
 data class Preferences(
     val pdfDarkMode: Boolean = false,
+    /** When dark mode is on, keep embedded PDF images in their original colours instead of inverting them. */
+    val pdfKeepImageColors: Boolean = false,
     val uiAppearance: String = "dark", // "dark" | "light"
     val accentColor: Rgba = DEFAULT_ACCENT,
     val hideWindowDecoration: Boolean = false,
@@ -30,6 +32,7 @@ data class Preferences(
 
     fun toJson(): JSONObject = JSONObject()
         .put("pdf_dark_mode", pdfDarkMode)
+        .put("pdf_keep_image_colors", pdfKeepImageColors)
         .put("ui_appearance", uiAppearance)
         .put("accent_color", Rgba.toHex(accentColor))
         .put("hide_window_decoration", hideWindowDecoration)
@@ -51,6 +54,7 @@ data class Preferences(
             val template = o.optString("default_template", "color").let { if (it == "pdf") "pdf" else "color" }
             return Preferences(
                 pdfDarkMode = o.optBoolean("pdf_dark_mode", false),
+                pdfKeepImageColors = o.optBoolean("pdf_keep_image_colors", false),
                 uiAppearance = appearance,
                 accentColor = Rgba.fromHex(o.optString("accent_color")) ?: DEFAULT_ACCENT,
                 hideWindowDecoration = o.optBoolean("hide_window_decoration", false),
