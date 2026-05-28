@@ -105,14 +105,23 @@ class Stroke(
      * [config.neonStrength] scales the halo's size and brightness. Overrides the
      * translucent path, so it works on any stroke tool.
      */
+    private fun neonGlowRadius(): Double {
+        val s = config.neonStrength.coerceIn(0.0, 1.0)
+        return (config.baseWidth * (NEON_GLOW_FACTOR_MIN + NEON_GLOW_FACTOR_SPAN * s)).coerceAtLeast(NEON_GLOW_MIN)
+    }
+
+    override fun paintBounds(): Rect =
+        if (config.neon && tool != Tool.HIGHLIGHTER) bounds().outset(neonGlowRadius() * 2 + 4)
+        else bounds()
+
     private fun paintNeon(r: Renderer, g: StrokeGeometry, color: Rgba) {
+        val glowR = neonGlowRadius()
         val s = config.neonStrength.coerceIn(0.0, 1.0)
         val body = color.withAlpha(255)
 
         // 1) Outer halo (ink colour), wider and brighter as intensity rises.
-        val glowR = (config.baseWidth * (NEON_GLOW_FACTOR_MIN + NEON_GLOW_FACTOR_SPAN * s)).coerceAtLeast(NEON_GLOW_MIN)
         val glowAlpha = NEON_GLOW_ALPHA_MIN + NEON_GLOW_ALPHA_SPAN * s
-        r.saveLayerAlpha(bounds().outset(glowR * 2 + 4), glowAlpha)
+        r.saveLayerAlpha(paintBounds(), glowAlpha)
         if (g.outline.size >= 3) r.fillPolygonGlow(g.outline, body, FillRule.NONZERO, glowR)
         for (cap in g.caps) if (cap.radius > 0.0) r.fillCircleGlow(cap.center, cap.radius, body, glowR)
         r.restore()

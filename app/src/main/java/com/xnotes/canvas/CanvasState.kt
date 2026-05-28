@@ -489,7 +489,7 @@ class CanvasState(
         r.clipRect(dirtyRect)
         r.clear()
         for (item in page.items) {
-            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.bounds().intersects(dirtyRect)) item.paint(r)
+            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
         }
         r.restore()
         return true
@@ -692,7 +692,7 @@ class CanvasState(
         r.clipRect(dirtyRect)
         r.clear()
         for (item in page.items) {
-            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.bounds().intersects(dirtyRect)) item.paint(r)
+            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
         }
         r.restore()
     }

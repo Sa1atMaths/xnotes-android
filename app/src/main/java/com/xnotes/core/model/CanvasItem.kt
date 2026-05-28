@@ -25,6 +25,9 @@ interface CanvasItem {
     /** The item's page-local AABB. */
     fun bounds(): Rect
 
+    /** The region this item actually paints into, including soft-effect overflow such as neon glow. Defaults to [bounds]. */
+    fun paintBounds(): Rect = bounds()
+
     /** Shift the item by a page-local delta. */
     fun translate(dx: Double, dy: Double)
 

@@ -109,18 +109,27 @@ class ShapeItem(
      * opaque colour **body**, then a thinner **white-hot core** down the centre so
      * the colour reads at the tube's edges. [neonStrength] scales the halo only.
      */
+    private fun neonGlowRadius(): Double {
+        val s = neonStrength.coerceIn(0.0, 1.0)
+        return (strokeWidth * (GLOW_FACTOR_MIN + GLOW_FACTOR_SPAN * s)).coerceAtLeast(GLOW_MIN)
+    }
+
+    override fun paintBounds(): Rect =
+        if (neon) bounds().outset(neonGlowRadius() * 2.0 + 4.0)
+        else bounds()
+
     private fun paintNeon(r: Renderer) {
+        val glowR = neonGlowRadius()
         val s = neonStrength.coerceIn(0.0, 1.0)
         val color = strokeRgba.withAlpha(255)
         val white = Rgba(255, 255, 255, 255)
-        val glowR = (strokeWidth * (GLOW_FACTOR_MIN + GLOW_FACTOR_SPAN * s)).coerceAtLeast(GLOW_MIN)
         val glowAlpha = GLOW_ALPHA_MIN + GLOW_ALPHA_SPAN * s
         val coreW = (strokeWidth * CORE_WIDTH_FRAC).coerceAtLeast(CORE_WIDTH_MIN)
 
         fillRgba?.let { drawFill(r, it) }
 
         // 1) Outer halo (ink colour), bounded in its own glow-alpha layer.
-        r.saveLayerAlpha(bounds().outset(glowR * 2.0 + 4.0), glowAlpha)
+        r.saveLayerAlpha(paintBounds(), glowAlpha)
         drawOutline(r, Pen(color = color, width = strokeWidth, cosmetic = false, glowRadius = glowR))
         if (shape == ShapeKind.ARROW) drawArrowHead(r, color, glowR)
         r.restore()

@@ -411,7 +411,7 @@ class InteractionController(
                 for (item in toRemove) {
                     page.items.remove(item)
                     eraseRemovals.add(page to item)
-                    val b = item.bounds()
+                    val b = item.paintBounds()
                     dirty = dirty?.union(b) ?: b
                 }
                 // Repaint only the erased area in place; fall back to a full
