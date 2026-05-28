@@ -325,7 +325,6 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             editor = editor,
             view = backstageView,
             onSelectView = { backstageView = it },
-            onNewBlank = { showBackstage = false; guarded { editor.newNote() } },
             onOpenSystem = { showBackstage = false; guarded { openLauncher.launch(arrayOf("*/*")) } },
             onImportPdf = { showBackstage = false; importPdfLauncher.launch(arrayOf("application/pdf")) },
             onOpenRecent = { uri -> showBackstage = false; guarded { openRecent(uri) } },

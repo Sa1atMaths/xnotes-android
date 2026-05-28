@@ -95,17 +95,16 @@ private fun nextUntitled(entries: List<BrowseEntry>?): String {
 }
 
 /**
- * The full-screen "File" area. The rail picks between Home (recent notes + an
- * in-app file explorer rooted at a folder the user granted) and Preferences, and
- * carries the file commands. "Open…" uses the system picker; "New" makes a note
- * in the explorer's current folder (or a blank in-memory note when none is set).
+ * The full-screen "File" area (the home screen). Shows recent notes + an in-app file
+ * explorer rooted at a folder the user granted, with a command sidebar that is a
+ * collapsible left pane on wide screens and a slide-over drawer on phones. "Open…" uses
+ * the system picker; "New note" / "Import PDF" land a file in the current folder.
  */
 @Composable
 fun Backstage(
     editor: Editor,
     view: BackstageView,
     onSelectView: (BackstageView) -> Unit,
-    onNewBlank: () -> Unit,
     onOpenSystem: () -> Unit,
     onImportPdf: () -> Unit,
     onOpenRecent: (String) -> Unit,
@@ -116,26 +115,18 @@ fun Backstage(
     onExportFilePdf: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Two panes need real estate; below this width we stack into a single scrollable
-    // menu that pushes Home / Preferences as full-screen sub-pages (phones in portrait).
+    // Below this width the sidebar becomes a slide-over drawer instead of a persistent pane.
     val compact = LocalConfiguration.current.screenWidthDp < COMPACT_WIDTH_DP
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         FullscreenDialogWindow()
-        if (compact) {
-            BackstageCompact(
-                editor, view, onSelectView, onNewBlank, onOpenSystem, onImportPdf,
-                onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onDismiss,
-            )
-        } else {
-            BackstageWide(
-                editor, view, onSelectView, onNewBlank, onOpenSystem, onImportPdf,
-                onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onDismiss,
-            )
-        }
+        BackstageContent(
+            editor, compact, view, onSelectView, onOpenSystem, onImportPdf,
+            onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf,
+        )
     }
 }
 
-/** Material's compact-width breakpoint: at or above this we keep the rail + pane. */
+/** Width at or above which the sidebar is a persistent pane rather than a drawer. */
 private const val COMPACT_WIDTH_DP = 600
 
 /**
@@ -162,14 +153,17 @@ private fun FullscreenDialogWindow() {
     }
 }
 
-// --- wide layout (tablets / landscape): rail on the left, content on the right ---
-
+/**
+ * The home-first layout: the recents + explorer (or Preferences) fill the screen, with a
+ * command sidebar that's a collapsible left pane on wide screens and a slide-over drawer on
+ * phones. A `<` collapses it; a hamburger (hidden while open) brings it back.
+ */
 @Composable
-private fun BackstageWide(
+private fun BackstageContent(
     editor: Editor,
+    compact: Boolean,
     view: BackstageView,
     onSelectView: (BackstageView) -> Unit,
-    onNewBlank: () -> Unit,
     onOpenSystem: () -> Unit,
     onImportPdf: () -> Unit,
     onOpenRecent: (String) -> Unit,
@@ -178,153 +172,124 @@ private fun BackstageWide(
     onShareFile: (String) -> Unit,
     onSaveCopyFile: (String) -> Unit,
     onExportFilePdf: (String) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val palette = LocalPalette.current
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
-    Row(
-        Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding(),
-    ) {
-        // Left command rail (scrolls when the screen is too short for every command).
-        Column(
-            Modifier.width(264.dp).fillMaxHeight().background(palette.panel.toComposeColor())
-                .verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onDismiss) {
-                    Icon(XnotesIcons.close, "Close", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
-                }
-                Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
-            }
-            Spacer(Modifier.height(6.dp))
-            Command(XnotesIcons.home, "Home", selected = view == BackstageView.RECENT) {
-                createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT)
-            }
-            Command(XnotesIcons.plus, "New note") {
-                if (editor.browseRoot != null) {
-                    onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE
-                } else onNewBlank()
-            }
-            Command(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
-            Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
-            RailDivider()
-            Command(XnotesIcons.sliders, "Preferences", selected = view == BackstageView.PREFERENCES) { onSelectView(BackstageView.PREFERENCES) }
-        }
+    var sidebarOpen by remember { mutableStateOf(!compact) }
 
-        // Right pane.
-        Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
+    // A folder is required for these actions; without one, send the user to pick a folder first.
+    val selectView: (BackstageView) -> Unit = { v ->
+        if (v == BackstageView.RECENT) createMode = CreateMode.NONE
+        onSelectView(v)
+        if (compact) sidebarOpen = false
+    }
+    val newNote: () -> Unit = {
+        if (editor.browseRoot != null) { onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE } else onPickRoot()
+        if (compact) sidebarOpen = false
+    }
+    val importPdf: () -> Unit = {
+        if (editor.browseRoot != null) onImportPdf() else onPickRoot()
+        if (compact) sidebarOpen = false
+    }
+    val openSystem: () -> Unit = {
+        if (editor.browseRoot != null) onOpenSystem() else onPickRoot()
+        if (compact) sidebarOpen = false
+    }
+
+    if (compact) {
+        Box(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
+            BackstageMain(
+                Modifier.fillMaxSize(), editor, view, sidebarOpen, { sidebarOpen = true },
+                onOpenRecent, onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+            )
+            if (sidebarOpen) {
+                Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { sidebarOpen = false })
+                BackstageSidebar(Modifier.width(296.dp), view, { sidebarOpen = false }, selectView, newNote, importPdf, openSystem)
+            }
+        }
+    } else {
+        Row(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
+            if (sidebarOpen) {
+                BackstageSidebar(Modifier.width(264.dp), view, { sidebarOpen = false }, selectView, newNote, importPdf, openSystem)
+            }
+            BackstageMain(
+                Modifier.weight(1f).fillMaxHeight(), editor, view, sidebarOpen, { sidebarOpen = true },
+                onOpenRecent, onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+            )
+        }
+    }
+}
+
+/** The command sidebar (collapsible pane on wide screens, slide-over drawer on phones). */
+@Composable
+private fun BackstageSidebar(
+    modifier: Modifier,
+    view: BackstageView,
+    onCollapse: () -> Unit,
+    onSelectView: (BackstageView) -> Unit,
+    onNewNote: () -> Unit,
+    onImportPdf: () -> Unit,
+    onOpenSystem: () -> Unit,
+) {
+    val palette = LocalPalette.current
+    Column(
+        modifier.fillMaxHeight().background(palette.panel.toComposeColor())
+            .verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onCollapse) {
+                Icon(XnotesIcons.prev, "Collapse sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
+            }
+            Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Command(XnotesIcons.home, "Home", selected = view == BackstageView.RECENT) { onSelectView(BackstageView.RECENT) }
+        Command(XnotesIcons.plus, "New note") { onNewNote() }
+        Command(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
+        Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
+        RailDivider()
+        Command(XnotesIcons.sliders, "Preferences", selected = view == BackstageView.PREFERENCES) { onSelectView(BackstageView.PREFERENCES) }
+    }
+}
+
+/** The main pane (recents + explorer, or Preferences); shows a hamburger when the sidebar is hidden. */
+@Composable
+private fun BackstageMain(
+    modifier: Modifier,
+    editor: Editor,
+    view: BackstageView,
+    sidebarOpen: Boolean,
+    onShowSidebar: () -> Unit,
+    onOpenRecent: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
+    onPickRoot: () -> Unit,
+    onImportPdf: () -> Unit,
+    onShareFile: (String) -> Unit,
+    onSaveCopyFile: (String) -> Unit,
+    onExportFilePdf: (String) -> Unit,
+    createMode: CreateMode,
+    onCreateMode: (CreateMode) -> Unit,
+) {
+    val palette = LocalPalette.current
+    Column(modifier) {
+        if (!sidebarOpen) {
+            Row(Modifier.fillMaxWidth().padding(start = 6.dp, top = 8.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onShowSidebar) {
+                    Icon(XnotesIcons.sidebar, "Show sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
             when (view) {
                 BackstageView.RECENT -> HomePane(
                     editor, onOpenRecent, onOpenFile, onPickRoot, onImportPdf,
-                    onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+                    onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode,
                 )
                 BackstageView.PREFERENCES -> PreferencesPane(editor)
             }
-        }
-    }
-}
-
-// --- compact layout (phones / portrait): a stacked menu, with sub-pages ---
-
-/** Which screen the compact backstage is on: the menu, or a pushed sub-page. */
-private enum class CompactPage { MENU, HOME, PREFERENCES }
-
-@Composable
-private fun BackstageCompact(
-    editor: Editor,
-    initialView: BackstageView,
-    onSelectView: (BackstageView) -> Unit,
-    onNewBlank: () -> Unit,
-    onOpenSystem: () -> Unit,
-    onImportPdf: () -> Unit,
-    onOpenRecent: (String) -> Unit,
-    onOpenFile: (String) -> Unit,
-    onPickRoot: () -> Unit,
-    onShareFile: (String) -> Unit,
-    onSaveCopyFile: (String) -> Unit,
-    onExportFilePdf: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val palette = LocalPalette.current
-    var page by remember {
-        mutableStateOf(if (initialView == BackstageView.PREFERENCES) CompactPage.PREFERENCES else CompactPage.MENU)
-    }
-    var createMode by remember { mutableStateOf(CreateMode.NONE) }
-
-    Column(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
-        // Top bar: close (X) at the menu, a back arrow inside a sub-page.
-        Row(
-            Modifier.fillMaxWidth().background(palette.panel.toComposeColor()).padding(start = 6.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (page == CompactPage.MENU) {
-                IconButton(onClick = onDismiss) {
-                    Icon(XnotesIcons.close, "Close", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
-                }
-                Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
-            } else {
-                IconButton(onClick = { createMode = CreateMode.NONE; page = CompactPage.MENU }) {
-                    Icon(XnotesIcons.prev, "Back", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
-                }
-                Text(
-                    if (page == CompactPage.HOME) "Home" else "Preferences",
-                    color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp,
-                    modifier = Modifier.padding(start = 2.dp),
-                )
-            }
-        }
-
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when (page) {
-                CompactPage.MENU -> Column(
-                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
-                ) {
-                    MenuRow(XnotesIcons.home, "Home", chevron = true) {
-                        createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT); page = CompactPage.HOME
-                    }
-                    MenuRow(XnotesIcons.plus, "New note") {
-                        if (editor.browseRoot != null) {
-                            onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE; page = CompactPage.HOME
-                        } else onNewBlank()
-                    }
-                    MenuRow(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
-                    MenuRow(XnotesIcons.folder, "Open…") { onOpenSystem() }
-                    RailDivider()
-                    MenuRow(XnotesIcons.sliders, "Preferences", chevron = true) {
-                        onSelectView(BackstageView.PREFERENCES); page = CompactPage.PREFERENCES
-                    }
-                }
-                CompactPage.HOME -> Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    HomePane(
-                        editor, onOpenRecent, onOpenFile, onPickRoot, onImportPdf,
-                        onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
-                    )
-                }
-                CompactPage.PREFERENCES -> Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    PreferencesPane(editor)
-                }
-            }
-        }
-    }
-}
-
-/** A full-width menu entry in the compact backstage; [chevron] marks a sub-page. */
-@Composable
-private fun MenuRow(icon: ImageVector, label: String, chevron: Boolean = false, onClick: () -> Unit) {
-    val palette = LocalPalette.current
-    Row(
-        Modifier.fillMaxWidth().height(52.dp).clickable(onClick = onClick).padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = label, tint = palette.accent.toComposeColor(), modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(18.dp))
-        Text(label, color = palette.text.toComposeColor(), fontSize = 16.sp)
-        if (chevron) {
-            Spacer(Modifier.weight(1f))
-            Icon(XnotesIcons.next, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
         }
     }
 }
