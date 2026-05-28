@@ -261,13 +261,14 @@ private fun BackstageSidebar(
             .verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 6.dp, end = 12.dp, bottom = 6.dp),
+            Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(Modifier.weight(1f))
             IconButton(onClick = onCollapse) {
                 Icon(XnotesIcons.prev, "Collapse sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
             }
-            Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(start = 2.dp))
         }
         Spacer(Modifier.height(6.dp))
         Command(XnotesIcons.home, "Home", selected = view == BackstageView.RECENT) { onSelectView(BackstageView.RECENT) }
