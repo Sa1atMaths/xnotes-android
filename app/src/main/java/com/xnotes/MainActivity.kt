@@ -128,12 +128,18 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
+    // "Open…" reads the picked .xnote and asks for a name before saving it into the folder (it opens only when tapped).
     val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
-            runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
-            val name = displayNameOf(resolver, it)
-            runCatching { resolver.openInputStream(it)?.use { s -> editor.open(s, it.toString(), name) } }
-                .onFailure { editor.message = "Could not open the note." }
+            val stem = com.xnotes.core.util.Paths.stem(displayNameOf(resolver, it) ?: "Note")
+            runCatching {
+                val bytes = resolver.openInputStream(it)?.use { s -> s.readBytes() }
+                if (bytes != null) {
+                    editor.requestImport(com.xnotes.ui.ImportKind.OPEN, stem, bytes)
+                    backstageView = com.xnotes.ui.BackstageView.RECENT
+                    showBackstage = true
+                }
+            }.onFailure { editor.message = "Could not open the note." }
         }
     }
     val createLauncher = rememberLauncherForActivityResult(
@@ -148,10 +154,18 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         }
     }
 
+    // "Import PDF" reads the picked PDF and asks for a name before saving it as an .xnote in the folder (opens only when tapped).
     val importPdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
-            runCatching { resolver.openInputStream(it)?.use { s -> editor.importPdf(s.readBytes()) } }
-                .onFailure { editor.message = "Could not import the PDF." }
+            val stem = com.xnotes.core.util.Paths.stem(displayNameOf(resolver, it) ?: "Document")
+            runCatching {
+                val bytes = resolver.openInputStream(it)?.use { s -> s.readBytes() }
+                if (bytes != null) {
+                    editor.requestImport(com.xnotes.ui.ImportKind.PDF, stem, bytes)
+                    backstageView = com.xnotes.ui.BackstageView.RECENT
+                    showBackstage = true
+                }
+            }.onFailure { editor.message = "Could not import the PDF." }
         }
     }
     val exportPdfLauncher = rememberLauncherForActivityResult(
@@ -267,7 +281,10 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     editor.keyActions = remember {
         Editor.KeyActions(
             newNote = { guarded { editor.newNote() } },
-            open = { guarded { openLauncher.launch(arrayOf("*/*")) } },
+            open = {
+                if (editor.browseRoot != null) openLauncher.launch(arrayOf("*/*"))
+                else { backstageView = com.xnotes.ui.BackstageView.RECENT; showBackstage = true }
+            },
             save = { saveOrPrompt() },
             saveAs = { createLauncher.launch("${editor.title}.xnote") },
             exportPdf = { exportPdfLauncher.launch("${editor.title}.pdf") },
@@ -325,8 +342,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             editor = editor,
             view = backstageView,
             onSelectView = { backstageView = it },
-            onOpenSystem = { showBackstage = false; guarded { openLauncher.launch(arrayOf("*/*")) } },
-            onImportPdf = { showBackstage = false; importPdfLauncher.launch(arrayOf("application/pdf")) },
+            onOpenSystem = { openLauncher.launch(arrayOf("*/*")) },
+            onImportPdf = { importPdfLauncher.launch(arrayOf("application/pdf")) },
             onOpenRecent = { uri -> showBackstage = false; guarded { openRecent(uri) } },
             onOpenFile = { uri -> showBackstage = false; guarded { openTreeFile(uri) } },
             onPickRoot = { pickRootLauncher.launch(null) },

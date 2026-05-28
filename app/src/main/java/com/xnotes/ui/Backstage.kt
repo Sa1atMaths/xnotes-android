@@ -472,14 +472,16 @@ private fun ExplorerSection(
     val rootName by produceState(editor.cachedRootName(root), root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
     val fieldFocus = remember { FocusRequester() }
     val fieldBring = remember { BringIntoViewRequester() }
-    LaunchedEffect(createMode) {
-        if (createMode != CreateMode.NONE) {
-            fieldValue = if (createMode == CreateMode.FILE) {
-                val n = nextUntitled(editor.cachedChildren(root, currentDocId))
-                TextFieldValue(n, selection = TextRange(0, n.length)) // select the whole word so typing replaces it
-            } else {
-                TextFieldValue("")
+    val pendingImport = editor.pendingImport
+    LaunchedEffect(createMode, pendingImport) {
+        val active = createMode != CreateMode.NONE || pendingImport != null
+        if (active) {
+            val default = when {
+                pendingImport != null -> pendingImport.defaultName // import names default to the source file
+                createMode == CreateMode.FILE -> nextUntitled(editor.cachedChildren(root, currentDocId))
+                else -> "" // new folder
             }
+            fieldValue = TextFieldValue(default, selection = TextRange(0, default.length)) // select the whole word so typing replaces it
             fieldError = null
             runCatching { fieldFocus.requestFocus() }
             runCatching { fieldBring.bringIntoView() }
@@ -561,9 +563,9 @@ private fun ExplorerSection(
         }
         opError?.let { Text(it, color = Color(0xFFE5534B), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) }
         Spacer(Modifier.height(10.dp))
-        // Inline create (file or folder).
-        if (createMode != CreateMode.NONE) {
-            val isFolder = createMode == CreateMode.FOLDER
+        // Inline name field: new note, new folder, or naming a pending PDF/Open import.
+        if (createMode != CreateMode.NONE || pendingImport != null) {
+            val isFolder = pendingImport == null && createMode == CreateMode.FOLDER
             Row(Modifier.fillMaxWidth().padding(bottom = 4.dp).bringIntoViewRequester(fieldBring), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = fieldValue,
@@ -574,19 +576,27 @@ private fun ExplorerSection(
                 )
                 IconButton(onClick = {
                     val n = fieldValue.text.trim()
-                    if (isFolder) {
-                        if (n.isEmpty()) fieldError = "Enter a folder name."
-                        else scope.launch {
-                            val ok = withContext(Dispatchers.IO) { editor.createFolder(root, currentDocId, n) }
-                            if (ok) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create that folder."
+                    when {
+                        pendingImport != null -> scope.launch {
+                            // Land the import in the current folder; it opens only when the user taps it.
+                            val uri = withContext(Dispatchers.IO) { editor.commitImport(root, currentDocId, n) }
+                            if (uri != null) refreshKey++ else fieldError = "Couldn’t save that note."
                         }
-                    } else scope.launch {
-                        // Just create the note in the explorer — it opens only when the user taps it.
-                        val uri = withContext(Dispatchers.IO) { editor.createBlankNoteFile(root, currentDocId, n) }
-                        if (uri != null) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create the note."
+                        isFolder -> {
+                            if (n.isEmpty()) fieldError = "Enter a folder name."
+                            else scope.launch {
+                                val ok = withContext(Dispatchers.IO) { editor.createFolder(root, currentDocId, n) }
+                                if (ok) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create that folder."
+                            }
+                        }
+                        else -> scope.launch {
+                            // Just create the note in the explorer — it opens only when the user taps it.
+                            val uri = withContext(Dispatchers.IO) { editor.createBlankNoteFile(root, currentDocId, n) }
+                            if (uri != null) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create the note."
+                        }
                     }
                 }) { Icon(XnotesIcons.check, "Create", tint = palette.accent.toComposeColor(), modifier = Modifier.size(22.dp)) }
-                IconButton(onClick = { onCreateMode(CreateMode.NONE) }) {
+                IconButton(onClick = { if (pendingImport != null) editor.cancelImport() else onCreateMode(CreateMode.NONE) }) {
                     Icon(XnotesIcons.close, "Cancel", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp))
                 }
             }

@@ -56,6 +56,12 @@ data class BrowseEntry(
     val modified: Long = 0,
 )
 
+/** Whether a pending import came from the PDF picker or the system "Open…" file picker. */
+enum class ImportKind { PDF, OPEN }
+
+/** A picked file awaiting a name before it's saved into the explorer's current folder. */
+data class PendingImport(val kind: ImportKind, val defaultName: String, val bytes: ByteArray)
+
 /** A recent note's thumbnail plus the details shown in the backstage list view. */
 data class RecentInfo(
     val thumbnail: android.graphics.Bitmap?,
@@ -132,6 +138,9 @@ class Editor(context: Context) {
         private set
     /** Granted explorer root (a SAF tree URI), or null until the user picks a folder. */
     var browseRoot by mutableStateOf(settings.browseRoot)
+        private set
+    /** A picked PDF/.xnote awaiting a name before it's saved into the explorer; drives the inline name field. */
+    var pendingImport by mutableStateOf<PendingImport?>(null)
         private set
     var zoomLocked by mutableStateOf(false)
         private set
@@ -288,18 +297,6 @@ class Editor(context: Context) {
                 }
             }
         }
-    }
-
-    fun importPdf(bytes: ByteArray) {
-        val source = com.xnotes.platform.PdfSource.create(appContext, bytes)
-        if (source == null) {
-            message = "Could not import the PDF."
-            return
-        }
-        val doc = com.xnotes.platform.PdfImporter.import(bytes, source, state.document.dpi)
-        source.close()
-        doc.dirty = true
-        replaceDocument(doc)
     }
 
     fun insertImage(bytes: ByteArray) = insertImageAt(bytes, null)
@@ -765,27 +762,72 @@ class Editor(context: Context) {
         ) != null
     }.getOrDefault(false)
 
-    /** Resolves a note file name: blank -> "untitled_N.xnote" (N avoids conflicts); else ensures .xnote. */
-    private fun resolveNoteName(treeUri: String, parentDocId: String, raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.isNotEmpty()) return if (trimmed.endsWith(".xnote", ignoreCase = true)) trimmed else "$trimmed.xnote"
+    /** Resolves a note file name: blank -> "untitled_N.xnote"; else ensures .xnote and avoids conflicts with a "_N" suffix. */
+    private fun uniqueNoteName(treeUri: String, parentDocId: String, raw: String): String {
         val taken = browseChildren(treeUri, parentDocId).map { it.name.lowercase() }.toSet()
+        val base = raw.trim().removeSuffix(".xnote").removeSuffix(".XNOTE").trim()
+        if (base.isEmpty()) {
+            var n = 1
+            while ("untitled_$n.xnote" in taken) n++
+            return "untitled_$n.xnote"
+        }
+        if ("${base.lowercase()}.xnote" !in taken) return "$base.xnote"
         var n = 1
-        while ("untitled_$n.xnote" in taken) n++
-        return "untitled_$n.xnote"
+        while ("${base.lowercase()}_$n.xnote" in taken) n++
+        return "${base}_$n.xnote"
     }
 
-    /** Creates a blank `.xnote` under [parentDocId]; returns its URI, or null. IO — call off-thread. */
-    fun createBlankNoteFile(treeUri: String, parentDocId: String, rawName: String): String? = runCatching {
-        val name = resolveNoteName(treeUri, parentDocId, rawName)
+    /** Creates a new `.xnote` named [name] under [parentDocId], written by [write]; returns its URI, or null. */
+    private fun createNoteFile(treeUri: String, parentDocId: String, name: String, write: (OutputStream) -> Unit): String? = runCatching {
         val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(android.net.Uri.parse(treeUri), parentDocId)
         val uri = android.provider.DocumentsContract.createDocument(
             appContext.contentResolver, parent, "application/octet-stream", name,
         ) ?: return null
-        val blank = Document.blank(Document.DEFAULT_NEW_PAGES, settings.prefs.defaultPageSize, settings.prefs.defaultPageOrientation)
-        appContext.contentResolver.openOutputStream(uri, "wt")?.use { codec.write(blank, it) }
+        appContext.contentResolver.openOutputStream(uri, "wt")?.use { write(it) }
         uri.toString()
     }.getOrNull()
+
+    /** Creates a blank `.xnote` under [parentDocId]; returns its URI, or null. IO — call off-thread. */
+    fun createBlankNoteFile(treeUri: String, parentDocId: String, rawName: String): String? {
+        val name = uniqueNoteName(treeUri, parentDocId, rawName)
+        val blank = Document.blank(Document.DEFAULT_NEW_PAGES, settings.prefs.defaultPageSize, settings.prefs.defaultPageOrientation)
+        return createNoteFile(treeUri, parentDocId, name) { codec.write(blank, it) }
+    }
+
+    /** Imports [pdfBytes] into a new `.xnote` under [parentDocId] (named after [rawName]); returns its URI, or null. IO. */
+    fun createPdfNoteFile(treeUri: String, parentDocId: String, rawName: String, pdfBytes: ByteArray): String? {
+        val source = com.xnotes.platform.PdfSource.create(appContext, pdfBytes) ?: return null
+        val doc = com.xnotes.platform.PdfImporter.import(pdfBytes, source, state.document.dpi)
+        source.close()
+        val name = uniqueNoteName(treeUri, parentDocId, rawName)
+        return createNoteFile(treeUri, parentDocId, name) { codec.write(doc, it) }
+    }
+
+    /** Saves picked `.xnote` [bytes] into a new file under [parentDocId] (named after [rawName]); returns its URI, or null. IO. */
+    fun createNoteFileFromBytes(treeUri: String, parentDocId: String, rawName: String, bytes: ByteArray): String? {
+        runCatching { codec.read(java.io.ByteArrayInputStream(bytes)) }.getOrNull() ?: return null // validate it's a real .xnote
+        val name = uniqueNoteName(treeUri, parentDocId, rawName)
+        return createNoteFile(treeUri, parentDocId, name) { it.write(bytes) }
+    }
+
+    /** A picked PDF/.xnote now awaits a name (shown by the explorer's inline field) before being saved into the folder. */
+    fun requestImport(kind: ImportKind, defaultName: String, bytes: ByteArray) {
+        pendingImport = PendingImport(kind, defaultName, bytes)
+    }
+
+    /** Discards a pending import (the user cancelled the name prompt). */
+    fun cancelImport() { pendingImport = null }
+
+    /** Saves a pending import into [parentDocId] under [treeUri] as [rawName]; returns its URI, or null, then clears the request. IO. */
+    fun commitImport(treeUri: String, parentDocId: String, rawName: String): String? {
+        val pending = pendingImport ?: return null
+        val uri = when (pending.kind) {
+            ImportKind.PDF -> createPdfNoteFile(treeUri, parentDocId, rawName, pending.bytes)
+            ImportKind.OPEN -> createNoteFileFromBytes(treeUri, parentDocId, rawName, pending.bytes)
+        }
+        if (uri != null) pendingImport = null
+        return uri
+    }
 
     /** Renames a document (file or folder) to [newName]; follows the open note. IO, call off-thread. */
     fun renameDocument(docUri: String, newName: String): Boolean {
