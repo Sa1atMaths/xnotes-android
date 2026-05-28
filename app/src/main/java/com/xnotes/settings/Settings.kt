@@ -54,6 +54,8 @@ data class Settings(
     val renderScale: Double = 1.0,
     val presentation: PresentationSettings = PresentationSettings(),
     val prefs: Preferences = Preferences(),
+    /** One-shot flag: the first-run stylus check (which may auto-enable finger-draw) has run. */
+    val fingerDrawAutoChecked: Boolean = false,
 ) {
     fun configFor(tool: Tool): ToolConfig = tools[tool] ?: ToolDefaults.configFor(tool)
 
@@ -80,6 +82,7 @@ data class Settings(
             .put("render_scale", renderScale)
             .put("presentation", presentation.toJson())
             .put("prefs", prefs.toJson())
+            .put("finger_draw_auto_checked", fingerDrawAutoChecked)
     }
 
     companion object {
@@ -112,6 +115,7 @@ data class Settings(
                 renderScale = o.optDouble("render_scale", 1.0),
                 presentation = PresentationSettings.fromJson(o.optJSONObject("presentation")),
                 prefs = Preferences.fromJson(o.optJSONObject("prefs")),
+                fingerDrawAutoChecked = o.optBoolean("finger_draw_auto_checked", false),
             )
         }
 

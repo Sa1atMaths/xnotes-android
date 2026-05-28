@@ -232,6 +232,7 @@ class Editor(context: Context) {
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         view.afterLayout = { refreshView() }
         controller.clipboardHasImage = { clipboardImageUri() != null }
+        maybeAutoEnableFingerDraw()
         applySettings()
         rebuildPdfSource()
         // Clean up legacy duplicate recents (the same note remembered under both a tree
@@ -366,6 +367,23 @@ class Editor(context: Context) {
     }
 
     val preferences: Preferences get() = settings.prefs
+
+    /**
+     * First-run only: a device with no stylus/pen cannot draw at all under the default
+     * finger-pans behaviour, so turn finger-draw on automatically. Runs once per install
+     * (guarded by [Settings.fingerDrawAutoChecked]); only ever flips the default off→on,
+     * never on a device that has a pen — so a stylus tablet keeps finger-pans and any
+     * later choice in the Preferences dialog is preserved.
+     */
+    private fun maybeAutoEnableFingerDraw() {
+        if (settings.fingerDrawAutoChecked) return
+        var prefs = settings.prefs
+        if (!prefs.fingerDraws && !com.xnotes.platform.DeviceCapabilities.hasStylus(appContext)) {
+            prefs = prefs.copy(fingerDraws = true)
+        }
+        settings = settings.copy(prefs = prefs, fingerDrawAutoChecked = true)
+        settingsRepo.save(settings)
+    }
 
     private fun applySettings() {
         toolbarColors = settings.toolbarColors

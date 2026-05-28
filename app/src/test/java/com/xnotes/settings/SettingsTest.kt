@@ -75,4 +75,13 @@ class SettingsTest {
     @Test fun pageColorNullByDefault() {
         assertNull(Settings.fromJson(JSONObject()).prefs.pageColor)
     }
+
+    @Test fun fingerDrawAutoCheckedDefaultsFalse() {
+        assertFalse(Settings.fromJson(JSONObject()).fingerDrawAutoChecked)
+    }
+
+    @Test fun fingerDrawAutoCheckedRoundTrips() {
+        val back = Settings.fromJson(Settings(fingerDrawAutoChecked = true).toJson())
+        assertTrue(back.fingerDrawAutoChecked)
+    }
 }
