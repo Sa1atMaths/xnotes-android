@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +38,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.R
@@ -84,12 +86,12 @@ fun Toolbar(
     ) {
         ToolbarIcon(XnotesIcons.prev, "Home") { onOpenBackstage() }
         EditMenu(editor)
-        // The dirty "*" sits right after the name; a trailing space reserves its slot when
-        // clean so autosave toggling it on/off doesn't change the width and nudge the toolbar.
+        // Notes autosave into the folder, so no dirty marker; long titles truncate with an ellipsis.
         // Tap to rename.
         Label(
-            editor.title + if (editor.dirty) "*" else " ",
+            editor.title,
             modifier = Modifier
+                .widthIn(max = 160.dp)
                 .clip(RoundedCornerShape(4.dp))
                 .clickable { renaming = true },
         )
@@ -242,6 +244,8 @@ private fun Label(text: String, modifier: Modifier = Modifier) {
         color = LocalPalette.current.textDim.toComposeColor(),
         fontFamily = FontFamily.Monospace,
         fontSize = 12.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
         modifier = modifier.padding(horizontal = 4.dp),
     )
 }

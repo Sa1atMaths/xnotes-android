@@ -446,7 +446,8 @@ private fun RecentStripCard(editor: Editor, uri: String, onClick: () -> Unit) {
         ) {
             val bmp = info?.thumbnail?.asImageBitmap()
             if (bmp != null) {
-                Image(bmp, info?.label, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(1.dp))
+                // Fit to width (page top showing); the card clips the overflowing height.
+                Image(bmp, info?.label, contentScale = ContentScale.FillWidth, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter))
             } else {
                 Icon(XnotesIcons.file, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(28.dp))
             }

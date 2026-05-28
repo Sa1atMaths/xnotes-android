@@ -751,6 +751,7 @@ class Editor(context: Context) {
         browseCache.clear()
         rootNameCache.clear()
         viewStates.clear() // forget every remembered per-note view for the released folder
+        clearRecentFiles() // every recent lived in the folder we just released, so clear them too
     }
 
     /** The granted root folder's display name (e.g. "Documents"), or null. */
