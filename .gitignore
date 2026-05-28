@@ -1,6 +1,5 @@
 # --- Planning / spec / AI artifacts (never commit) ---
-spec/
-PLAN.md
+CLAUDE.md
 .claude/
 
 # --- Gradle ---
