@@ -1007,12 +1007,23 @@ class Editor(context: Context) {
         }
     }
 
-    // --- sharing (writes the current document for an ACTION_SEND intent) ---
+    // --- per-file actions in the explorer (operate on a stored note URI, not the open document) ---
 
-    fun writeCurrentDocument(out: OutputStream) = codec.write(state.document, out)
+    /** Streams a stored note's raw bytes to [out] (share-as-.xnote / save-a-copy). */
+    fun copyFileTo(srcUri: String, out: OutputStream) {
+        appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { it.copyTo(out) }
+    }
 
-    fun writeCurrentPdf(out: OutputStream) =
-        com.xnotes.platform.PdfExporter.export(state.document, pdfSource, out, state::paperColor)
+    /** Loads the note at [srcUri] and writes it flattened to a PDF in [out] (share-as-PDF / export). */
+    fun exportFileToPdf(srcUri: String, out: OutputStream) {
+        val doc = appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { codec.read(it) } ?: return
+        val src = doc.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
+        try {
+            com.xnotes.platform.PdfExporter.export(doc, src, out) { page -> state.paperColor(page) }
+        } finally {
+            src?.close()
+        }
+    }
 
     private fun replaceDocument(doc: Document) {
         saveViewState() // remember the outgoing folder note's view before switching away

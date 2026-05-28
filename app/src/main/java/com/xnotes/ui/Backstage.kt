@@ -107,14 +107,13 @@ fun Backstage(
     onSelectView: (BackstageView) -> Unit,
     onNewBlank: () -> Unit,
     onOpenSystem: () -> Unit,
-    onSave: () -> Unit,
-    onSaveAs: () -> Unit,
-    onShare: () -> Unit,
     onImportPdf: () -> Unit,
-    onExportPdf: () -> Unit,
     onOpenRecent: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
+    onShareFile: (String) -> Unit,
+    onSaveCopyFile: (String) -> Unit,
+    onExportFilePdf: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Two panes need real estate; below this width we stack into a single scrollable
@@ -124,13 +123,13 @@ fun Backstage(
         FullscreenDialogWindow()
         if (compact) {
             BackstageCompact(
-                editor, view, onSelectView, onNewBlank, onOpenSystem, onSave, onSaveAs, onShare,
-                onImportPdf, onExportPdf, onOpenRecent, onOpenFile, onPickRoot, onDismiss,
+                editor, view, onSelectView, onNewBlank, onOpenSystem, onImportPdf,
+                onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onDismiss,
             )
         } else {
             BackstageWide(
-                editor, view, onSelectView, onNewBlank, onOpenSystem, onSave, onSaveAs, onShare,
-                onImportPdf, onExportPdf, onOpenRecent, onOpenFile, onPickRoot, onDismiss,
+                editor, view, onSelectView, onNewBlank, onOpenSystem, onImportPdf,
+                onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onDismiss,
             )
         }
     }
@@ -172,14 +171,13 @@ private fun BackstageWide(
     onSelectView: (BackstageView) -> Unit,
     onNewBlank: () -> Unit,
     onOpenSystem: () -> Unit,
-    onSave: () -> Unit,
-    onSaveAs: () -> Unit,
-    onShare: () -> Unit,
     onImportPdf: () -> Unit,
-    onExportPdf: () -> Unit,
     onOpenRecent: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
+    onShareFile: (String) -> Unit,
+    onSaveCopyFile: (String) -> Unit,
+    onExportFilePdf: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val palette = LocalPalette.current
@@ -205,19 +203,13 @@ private fun BackstageWide(
             Command(XnotesIcons.home, "Home", selected = view == BackstageView.RECENT) {
                 createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT)
             }
-            Command(XnotesIcons.plus, "New") {
+            Command(XnotesIcons.plus, "New note") {
                 if (editor.browseRoot != null) {
                     onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE
                 } else onNewBlank()
             }
-            Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
-            RailDivider()
-            Command(XnotesIcons.save, "Save") { onSave() }
-            Command(XnotesIcons.copy, "Save As…") { onSaveAs() }
-            Command(XnotesIcons.share, "Share…") { onShare() }
-            RailDivider()
             Command(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
-            Command(XnotesIcons.exportDoc, "Export to PDF…") { onExportPdf() }
+            Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
             RailDivider()
             Command(XnotesIcons.sliders, "Preferences", selected = view == BackstageView.PREFERENCES) { onSelectView(BackstageView.PREFERENCES) }
         }
@@ -225,7 +217,10 @@ private fun BackstageWide(
         // Right pane.
         Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
             when (view) {
-                BackstageView.RECENT -> HomePane(editor, onOpenRecent, onOpenFile, onPickRoot, createMode, { createMode = it }, onDismiss)
+                BackstageView.RECENT -> HomePane(
+                    editor, onOpenRecent, onOpenFile, onPickRoot, onImportPdf,
+                    onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+                )
                 BackstageView.PREFERENCES -> PreferencesPane(editor)
             }
         }
@@ -244,14 +239,13 @@ private fun BackstageCompact(
     onSelectView: (BackstageView) -> Unit,
     onNewBlank: () -> Unit,
     onOpenSystem: () -> Unit,
-    onSave: () -> Unit,
-    onSaveAs: () -> Unit,
-    onShare: () -> Unit,
     onImportPdf: () -> Unit,
-    onExportPdf: () -> Unit,
     onOpenRecent: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
+    onShareFile: (String) -> Unit,
+    onSaveCopyFile: (String) -> Unit,
+    onExportFilePdf: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val palette = LocalPalette.current
@@ -291,26 +285,23 @@ private fun BackstageCompact(
                     MenuRow(XnotesIcons.home, "Home", chevron = true) {
                         createMode = CreateMode.NONE; onSelectView(BackstageView.RECENT); page = CompactPage.HOME
                     }
-                    MenuRow(XnotesIcons.plus, "New") {
+                    MenuRow(XnotesIcons.plus, "New note") {
                         if (editor.browseRoot != null) {
                             onSelectView(BackstageView.RECENT); createMode = CreateMode.FILE; page = CompactPage.HOME
                         } else onNewBlank()
                     }
-                    MenuRow(XnotesIcons.folder, "Open…") { onOpenSystem() }
-                    RailDivider()
-                    MenuRow(XnotesIcons.save, "Save") { onSave() }
-                    MenuRow(XnotesIcons.copy, "Save As…") { onSaveAs() }
-                    MenuRow(XnotesIcons.share, "Share…") { onShare() }
-                    RailDivider()
                     MenuRow(XnotesIcons.importDoc, "Import PDF…") { onImportPdf() }
-                    MenuRow(XnotesIcons.exportDoc, "Export to PDF…") { onExportPdf() }
+                    MenuRow(XnotesIcons.folder, "Open…") { onOpenSystem() }
                     RailDivider()
                     MenuRow(XnotesIcons.sliders, "Preferences", chevron = true) {
                         onSelectView(BackstageView.PREFERENCES); page = CompactPage.PREFERENCES
                     }
                 }
                 CompactPage.HOME -> Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    HomePane(editor, onOpenRecent, onOpenFile, onPickRoot, createMode, { createMode = it }, onDismiss)
+                    HomePane(
+                        editor, onOpenRecent, onOpenFile, onPickRoot, onImportPdf,
+                        onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+                    )
                 }
                 CompactPage.PREFERENCES -> Box(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     PreferencesPane(editor)
@@ -376,9 +367,12 @@ private fun HomePane(
     onOpenRecent: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
+    onImportPdf: () -> Unit,
+    onShareFile: (String) -> Unit,
+    onSaveCopyFile: (String) -> Unit,
+    onExportFilePdf: (String) -> Unit,
     createMode: CreateMode,
     onCreateMode: (CreateMode) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val palette = LocalPalette.current
     val recents = editor.recentFiles
@@ -405,7 +399,10 @@ private fun HomePane(
             Spacer(Modifier.height(18.dp))
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            ExplorerSection(editor, onOpenFile, onPickRoot, createMode, onCreateMode, onDismiss)
+            ExplorerSection(
+                editor, onOpenFile, onPickRoot, onImportPdf,
+                onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode,
+            )
         }
     }
 }
@@ -466,9 +463,12 @@ private fun ExplorerSection(
     editor: Editor,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
+    onImportPdf: () -> Unit,
+    onShareFile: (String) -> Unit,
+    onSaveCopyFile: (String) -> Unit,
+    onExportFilePdf: (String) -> Unit,
     createMode: CreateMode,
     onCreateMode: (CreateMode) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val palette = LocalPalette.current
     val root = editor.browseRoot
@@ -503,6 +503,7 @@ private fun ExplorerSection(
         if (i >= 0) selection.removeAt(i) else selection.add(e)
     }
     var menuOpen by remember(root) { mutableStateOf(false) }
+    var newMenuOpen by remember(root) { mutableStateOf(false) }
     val rootName by produceState(editor.cachedRootName(root), root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
     val fieldFocus = remember { FocusRequester() }
     val fieldBring = remember { BringIntoViewRequester() }
@@ -543,7 +544,13 @@ private fun ExplorerSection(
             }
             Spacer(Modifier.width(8.dp))
             if (selection.isEmpty()) {
-                IconAction(XnotesIcons.plus, "New note") { onCreateMode(CreateMode.FILE) }
+                Box {
+                    IconAction(XnotesIcons.plus, "New") { newMenuOpen = true }
+                    DropdownMenu(expanded = newMenuOpen, onDismissRequest = { newMenuOpen = false }) {
+                        DropdownMenuItem(text = { Text("New Note") }, onClick = { newMenuOpen = false; onCreateMode(CreateMode.FILE) })
+                        DropdownMenuItem(text = { Text("Import PDF") }, onClick = { newMenuOpen = false; onImportPdf() })
+                    }
+                }
                 IconAction(XnotesIcons.newFolder, "New folder") { onCreateMode(CreateMode.FOLDER) }
                 clipboard?.let { clip ->
                     IconAction(XnotesIcons.paste, "Paste") {
@@ -630,6 +637,8 @@ private fun ExplorerSection(
                 entries!!.isEmpty() -> EmptyPane("This folder has no notes.")
                 else -> LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     items(entries!!) { entry ->
+                        // Per-file actions show only on file rows when not in select mode.
+                        val fileActions = !entry.isDir && selection.isEmpty()
                         EntryRow(
                             entry = entry,
                             selected = selection.any { it.documentUri == entry.documentUri },
@@ -637,6 +646,9 @@ private fun ExplorerSection(
                             isRenaming = renaming == entry.documentUri,
                             renameText = renameText,
                             onRenameTextChange = { renameText = it },
+                            onShare = if (fileActions) ({ onShareFile(entry.documentUri) }) else null,
+                            onSaveCopy = if (fileActions) ({ onSaveCopyFile(entry.documentUri) }) else null,
+                            onExportPdf = if (fileActions) ({ onExportFilePdf(entry.documentUri) }) else null,
                             onClick = {
                                 opError = null
                                 when {
@@ -740,6 +752,9 @@ private fun EntryRow(
     isRenaming: Boolean,
     renameText: String,
     onRenameTextChange: (String) -> Unit,
+    onShare: (() -> Unit)? = null,
+    onSaveCopy: (() -> Unit)? = null,
+    onExportPdf: (() -> Unit)? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onConfirmRename: () -> Unit,
@@ -747,6 +762,7 @@ private fun EntryRow(
 ) {
     val palette = LocalPalette.current
     val ctx = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
     val icon = if (entry.isDir) XnotesIcons.folder else XnotesIcons.file
     val tint = (if (entry.isDir) palette.accent else palette.textDim).toComposeColor()
     if (isRenaming) {
@@ -783,6 +799,18 @@ private fun EntryRow(
             if (details.isNotEmpty()) {
                 Spacer(Modifier.width(12.dp))
                 Text(details, color = palette.textDim.toComposeColor(), fontSize = 12.sp, maxLines = 1)
+            }
+            if (onShare != null) {
+                Box {
+                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
+                        Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Share") }, onClick = { menuOpen = false; onShare() })
+                        DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { menuOpen = false; onSaveCopy?.invoke() })
+                        DropdownMenuItem(text = { Text("Export to PDF") }, onClick = { menuOpen = false; onExportPdf?.invoke() })
+                    }
+                }
             }
         }
     }

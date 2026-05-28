@@ -122,6 +122,9 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     var guardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pendingAfterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pendingInsertContent by remember { mutableStateOf<com.xnotes.core.geometry.Pt?>(null) }
+    var pendingShareUri by remember { mutableStateOf<String?>(null) }
+    var pendingSaveCopyUri by remember { mutableStateOf<String?>(null) }
+    var pendingExportUri by remember { mutableStateOf<String?>(null) }
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
@@ -156,6 +159,26 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     ) { uri ->
         uri?.let {
             runCatching { resolver.openOutputStream(it)?.use { o -> editor.exportPdf(o) } }
+                .onFailure { editor.message = "Could not export to PDF." }
+        }
+    }
+
+    // Save a copy of an explorer file (.xnote) elsewhere, and export an explorer file to PDF.
+    val saveCopyLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        val src = pendingSaveCopyUri; pendingSaveCopyUri = null
+        if (uri != null && src != null) {
+            runCatching { resolver.openOutputStream(uri)?.use { o -> editor.copyFileTo(src, o) } }
+                .onFailure { editor.message = "Could not save a copy." }
+        }
+    }
+    val exportFilePdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri ->
+        val src = pendingExportUri; pendingExportUri = null
+        if (uri != null && src != null) {
+            runCatching { resolver.openOutputStream(uri)?.use { o -> editor.exportFileToPdf(src, o) } }
                 .onFailure { editor.message = "Could not export to PDF." }
         }
     }
@@ -216,14 +239,18 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         if (!opened) editor.message = "Could not open that note."
     }
 
-    fun shareCurrent(asPdf: Boolean) {
+    fun stemOf(uriStr: String): String =
+        com.xnotes.core.util.Paths.stem(displayNameOf(resolver, Uri.parse(uriStr)) ?: "Note")
+
+    fun shareFile(uriStr: String, asPdf: Boolean) {
         runCatching {
+            val stem = stemOf(uriStr)
             val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
             dir.listFiles()?.forEach { it.delete() } // keep only the file we're about to share
             val ext = if (asPdf) "pdf" else "xnote"
-            val file = java.io.File(dir, "${editor.title}.$ext")
+            val file = java.io.File(dir, "$stem.$ext")
             java.io.FileOutputStream(file).use { o ->
-                if (asPdf) editor.writeCurrentPdf(o) else editor.writeCurrentDocument(o)
+                if (asPdf) editor.exportFileToPdf(uriStr, o) else editor.copyFileTo(uriStr, o)
             }
             val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             val send = Intent(Intent.ACTION_SEND).apply {
@@ -231,7 +258,7 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(send, "Share ${editor.title}"))
+            context.startActivity(Intent.createChooser(send, "Share $stem"))
         }.onFailure { editor.message = "Could not share the note." }
     }
 
@@ -300,34 +327,34 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             onSelectView = { backstageView = it },
             onNewBlank = { showBackstage = false; guarded { editor.newNote() } },
             onOpenSystem = { showBackstage = false; guarded { openLauncher.launch(arrayOf("*/*")) } },
-            onSave = { showBackstage = false; saveOrPrompt() },
-            onSaveAs = { showBackstage = false; createLauncher.launch("${editor.title}.xnote") },
-            onShare = { showBackstage = false; showShareChooser = true },
             onImportPdf = { showBackstage = false; importPdfLauncher.launch(arrayOf("application/pdf")) },
-            onExportPdf = { showBackstage = false; exportPdfLauncher.launch("${editor.title}.pdf") },
             onOpenRecent = { uri -> showBackstage = false; guarded { openRecent(uri) } },
             onOpenFile = { uri -> showBackstage = false; guarded { openTreeFile(uri) } },
             onPickRoot = { pickRootLauncher.launch(null) },
+            onShareFile = { uri -> pendingShareUri = uri; showShareChooser = true },
+            onSaveCopyFile = { uri -> pendingSaveCopyUri = uri; saveCopyLauncher.launch("${stemOf(uri)}.xnote") },
+            onExportFilePdf = { uri -> pendingExportUri = uri; exportFilePdfLauncher.launch("${stemOf(uri)}.pdf") },
             onDismiss = { showBackstage = false },
         )
     }
     if (showShareChooser) {
+        val shareUri = pendingShareUri
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showShareChooser = false },
+            onDismissRequest = { showShareChooser = false; pendingShareUri = null },
             title = { androidx.compose.material3.Text("Share note") },
-            text = { androidx.compose.material3.Text("Share “${editor.title}” as:") },
+            text = { androidx.compose.material3.Text("Share “${shareUri?.let { stemOf(it) } ?: ""}” as:") },
             confirmButton = {
                 androidx.compose.foundation.layout.Row {
-                    androidx.compose.material3.TextButton(onClick = { showShareChooser = false; shareCurrent(asPdf = false) }) {
+                    androidx.compose.material3.TextButton(onClick = { showShareChooser = false; pendingShareUri = null; shareUri?.let { shareFile(it, asPdf = false) } }) {
                         androidx.compose.material3.Text(".xnote file")
                     }
-                    androidx.compose.material3.TextButton(onClick = { showShareChooser = false; shareCurrent(asPdf = true) }) {
+                    androidx.compose.material3.TextButton(onClick = { showShareChooser = false; pendingShareUri = null; shareUri?.let { shareFile(it, asPdf = true) } }) {
                         androidx.compose.material3.Text("PDF")
                     }
                 }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { showShareChooser = false }) {
+                androidx.compose.material3.TextButton(onClick = { showShareChooser = false; pendingShareUri = null }) {
                     androidx.compose.material3.Text("Cancel")
                 }
             },
