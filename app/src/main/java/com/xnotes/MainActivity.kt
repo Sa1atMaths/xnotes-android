@@ -469,6 +469,7 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             editor = editor,
             view = backstageView,
             onSelectView = { backstageView = it },
+            onExitApp = { (context as? android.app.Activity)?.finish() },
             onOpenSystem = { openLauncher.launch(arrayOf("*/*")) },
             onImportPdf = { importPdfLauncher.launch(arrayOf("application/pdf")) },
             onOpenRecent = { uri -> showHome = false; guarded { openRecent(uri) } },

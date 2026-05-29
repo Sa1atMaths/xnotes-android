@@ -123,6 +123,8 @@ fun Backstage(
     onSaveCopyFile: (String) -> Unit,
     onExportFilePdf: (String) -> Unit,
     onDismiss: () -> Unit,
+    /** Home is the app's root: back from here leaves the app rather than dropping into the editor. */
+    onExitApp: () -> Unit,
 ) {
     // Below this width the sidebar becomes a slide-over drawer instead of a persistent pane.
     val compact = LocalConfiguration.current.screenWidthDp < COMPACT_WIDTH_DP
@@ -130,7 +132,7 @@ fun Backstage(
         FullscreenDialogWindow()
         BackstageContent(
             editor, compact, view, onSelectView, onOpenSystem, onImportPdf,
-            onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf,
+            onOpenRecent, onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onExitApp,
         )
     }
 }
@@ -181,6 +183,7 @@ private fun BackstageContent(
     onShareFile: (String) -> Unit,
     onSaveCopyFile: (String) -> Unit,
     onExportFilePdf: (String) -> Unit,
+    onExitApp: () -> Unit,
 ) {
     val palette = LocalPalette.current
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
@@ -205,9 +208,19 @@ private fun BackstageContent(
         if (compact) sidebarOpen = false
     }
 
-    // Back closes the drawer (phones) or steps Preferences back to Home before leaving the screen.
-    BackHandler(enabled = (compact && sidebarOpen) || view == BackstageView.PREFERENCES) {
-        if (compact && sidebarOpen) sidebarOpen = false else selectView(BackstageView.RECENT)
+    // Home is the app's root, so it owns every back press while it's up (the editor sits
+    // underneath in the same activity — letting the dialog dismiss would just bounce back to
+    // it, and the editor's own handler would re-open Home: an endless loop). Back peels off
+    // one layer at a time — drawer, Preferences, an in-progress create — and once at the bare
+    // Home screen it leaves the app instead. A deeper explorer folder is popped first by the
+    // explorer's own (more-nested) handler before this one ever sees the press.
+    BackHandler {
+        when {
+            compact && sidebarOpen -> sidebarOpen = false
+            view == BackstageView.PREFERENCES -> selectView(BackstageView.RECENT)
+            createMode != CreateMode.NONE -> createMode = CreateMode.NONE
+            else -> onExitApp()
+        }
     }
 
     if (compact) {
@@ -505,6 +518,13 @@ private fun ExplorerSection(
     var clipboard by remember(root) { mutableStateOf<ClipItem?>(null) }
     var pendingDelete by remember(root) { mutableStateOf<List<BrowseEntry>?>(null) }
     var opError by remember(root) { mutableStateOf<String?>(null) }
+    // Inside a subfolder, back climbs one level out (this sits below the Backstage's root
+    // handler, so it's consulted first and only fires while there's a folder to leave).
+    BackHandler(enabled = stack.isNotEmpty()) {
+        stack.removeAt(stack.lastIndex)
+        selection.clear()
+        opError = null
+    }
     fun toggleSelect(e: BrowseEntry) {
         val i = selection.indexOfFirst { it.documentUri == e.documentUri }
         if (i >= 0) selection.removeAt(i) else selection.add(e)
