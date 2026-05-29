@@ -993,30 +993,53 @@ class Editor(context: Context) {
         }
     }
 
-    /** Deletes a document (file or folder); also clears it (and a folder's contents) from recents. IO, call off-thread. */
+    /** Deletes a document (file or folder), then erases every trace of it. IO, call off-thread. */
     fun deleteDocument(docUri: String): Boolean = runCatching {
         val ok = android.provider.DocumentsContract.deleteDocument(appContext.contentResolver, android.net.Uri.parse(docUri))
-        if (ok) {
-            if (state.document.path == docUri) autosaveUri = null // its backing file is gone
-            pruneRecentsUnder(docUri)
-        }
+        if (ok) purgeDeleted(docUri)
         ok
     }.getOrDefault(false)
 
-    /** Drop any recent pointing at [docUri] — or, when it's a folder, anything beneath it — plus cached thumbs. */
-    private fun pruneRecentsUnder(docUri: String) {
+    /**
+     * Erase every trace of a just-deleted document — or, when it's a folder, everything beneath
+     * it: discard the open note if it was the deleted file, drop matching recents, and discard
+     * their cached thumbnails and remembered views. Matching is by document identity (authority +
+     * id), not the raw URI string, so a file reached through more than one URI form is fully
+     * purged. Discarding the open note is what stops it from coming back — via [persist] re-adding
+     * it to recents, autosave rewriting its file, or the unsaved-changes guard offering to save it.
+     */
+    private fun purgeDeleted(docUri: String) {
         val target = android.net.Uri.parse(docUri)
         val delId = runCatching { android.provider.DocumentsContract.getDocumentId(target) }.getOrNull() ?: return
-        val removed = settings.recentFiles.filter { r ->
-            val u = android.net.Uri.parse(r)
-            val rid = runCatching { android.provider.DocumentsContract.getDocumentId(u) }.getOrNull()
-            u.authority == target.authority && rid != null && (rid == delId || rid.startsWith("$delId/"))
+        val auth = target.authority
+        fun matches(uri: String): Boolean {
+            val u = android.net.Uri.parse(uri)
+            val rid = runCatching { android.provider.DocumentsContract.getDocumentId(u) }.getOrNull() ?: return false
+            return u.authority == auth && (rid == delId || rid.startsWith("$delId/"))
         }
-        if (removed.isEmpty()) return
-        settings = settings.copy(recentFiles = settings.recentFiles - removed.toSet())
-        recentFiles = settings.recentFiles
+
+        // The note on screen was just deleted. Detach it at once — cancel autosave, drop its path
+        // and remembered view, mark it clean — so nothing can rewrite the file or prompt to "save"
+        // it back, then drop the document itself for a fresh blank note on the main thread. The
+        // identity guard skips that reset if the user has meanwhile opened another note.
+        if (currentUri?.let { matches(it) } == true) {
+            val deleted = state.document
+            autosaveJob?.cancel()
+            autosaveUri = null
+            viewKey(currentUri)?.let { viewStates.remove(it) }
+            deleted.path = null
+            deleted.dirty = false
+            dirty = false
+            autosaveScope.launch { if (state.document === deleted) newNote() }
+        }
+
+        val removed = settings.recentFiles.filter { matches(it) }
+        if (removed.isNotEmpty()) {
+            settings = settings.copy(recentFiles = settings.recentFiles - removed.toSet())
+            recentFiles = settings.recentFiles
+            removed.forEach { invalidateRecentThumb(it) }
+        }
         settingsRepo.save(settings)
-        removed.forEach { invalidateRecentThumb(it) }
     }
 
     /** Copies [sourceUri] into the folder [targetParentDocId] within [treeUri]. IO, call off-thread. */

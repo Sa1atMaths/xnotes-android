@@ -31,6 +31,11 @@ class ViewStateStore(private val store: JsonStore) {
         store.write(toJson())
     }
 
+    /** Forget one note's remembered view (e.g. when its file is deleted). */
+    fun remove(key: String) {
+        if (views.remove(key) != null) store.write(toJson())
+    }
+
     /** Forget every remembered view (e.g. when the granted folder is released). */
     fun clear() {
         views.clear()
