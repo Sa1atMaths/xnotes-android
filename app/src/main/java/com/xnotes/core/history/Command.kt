@@ -128,26 +128,6 @@ class CompositeCommand(private val commands: List<Command>) : Command {
     }
 }
 
-/**
- * Move a page from one index to another (drag-reorder in the side panel). [to] is the target index
- * in the list *after* the page has been removed from [from] — matching `removeAt(from); add(to, page)`.
- */
-class MovePage(
-    private val document: Document,
-    private val from: Int,
-    private val to: Int,
-) : Command {
-    override fun redo() = move(from, to)
-    override fun undo() = move(to, from)
-
-    private fun move(src: Int, dst: Int) {
-        val pages = document.pages
-        if (src !in pages.indices) return
-        val page = pages.removeAt(src)
-        pages.add(dst.coerceIn(0, pages.size), page)
-    }
-}
-
 /** Delete a page (reversible by re-inserting at its original index). */
 class DeletePage(
     private val document: Document,

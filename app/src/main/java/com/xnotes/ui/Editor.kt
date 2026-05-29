@@ -22,7 +22,6 @@ import com.xnotes.core.history.CompositeCommand
 import com.xnotes.core.history.DeletePage
 import com.xnotes.core.history.EraseItems
 import com.xnotes.core.history.History
-import com.xnotes.core.history.MovePage
 import com.xnotes.core.model.Bookmark
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
@@ -192,14 +191,6 @@ class Editor(context: Context) {
 
     /** Bumped when the bookmark list changes. */
     var bookmarkVersion by mutableStateOf(0)
-        private set
-
-    /**
-     * Bumped when the page order/count changes *without* a content edit (a drag-reorder), so the
-     * side panel re-reads the page list. Distinct from [contentVersion] so reordering doesn't evict
-     * the (page-keyed) thumbnail cache — the rows just animate to their new spots.
-     */
-    var pagesVersion by mutableStateOf(0)
         private set
 
     /** Pages the side panel has selected, by **identity** so reorder/delete never breaks the set. */
@@ -538,7 +529,7 @@ class Editor(context: Context) {
 
     // --- side panel ---
 
-    /** A live snapshot of the document's pages, for the side panel (recompose via [pagesVersion]/[contentVersion]). */
+    /** A live snapshot of the document's pages, for the side panel (recompose keyed on [contentVersion]). */
     fun pagesSnapshot(): List<Page> = state.document.pages.toList()
 
     fun pageAt(index: Int): Page? = state.document.pages.getOrNull(index)
@@ -1432,32 +1423,6 @@ class Editor(context: Context) {
         history.push(CompositeCommand(cmds))
         clearPageSelection()
         afterPageEdit()
-    }
-
-    /**
-     * Live step of a drag-reorder: move the page at [from] to [to] with no history entry, bumping
-     * only [pagesVersion] so the panel re-reads order without re-rendering thumbnails. The drop is
-     * recorded once via [commitPageMove].
-     */
-    fun movePageLive(from: Int, to: Int) {
-        val pages = state.document.pages
-        if (from !in pages.indices) return
-        val dst = to.coerceIn(0, pages.size - 1)
-        if (from == dst) return
-        val page = pages.removeAt(from)
-        pages.add(dst, page)
-        state.document.dirty = true
-        state.relayout()
-        pagesVersion++
-        view.requestRender()
-    }
-
-    /** Record a completed drag-reorder (model already moved by [movePageLive]) as one undoable move. */
-    fun commitPageMove(from: Int, to: Int) {
-        if (from == to) return
-        history.push(MovePage(state.document, from, to))
-        state.document.dirty = true
-        refreshContent()
     }
 
     // --- side-panel page selection (multi-select) ---
