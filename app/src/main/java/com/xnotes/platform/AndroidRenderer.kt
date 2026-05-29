@@ -212,8 +212,11 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
             null
         }
         strokePaint.pathEffect = if (pen.dashed) {
-            val on = (6.0 * (if (pen.cosmetic) 1.0 / avgScale else 1.0)).toFloat()
-            val off = (4.0 * (if (pen.cosmetic) 1.0 / avgScale else 1.0)).toFloat()
+            // Cosmetic dashes (chrome) keep a fixed device-pixel rhythm; content dashes (the
+            // dashed pen) are specified in content px and so scale with zoom like the ink.
+            val s = if (pen.cosmetic) 1.0 / avgScale else 1.0
+            val on = (pen.dashOn * s).toFloat().coerceAtLeast(0.1f)
+            val off = (pen.dashGap * s).toFloat().coerceAtLeast(0.1f)
             DashPathEffect(floatArrayOf(on, off), 0f)
         } else {
             null

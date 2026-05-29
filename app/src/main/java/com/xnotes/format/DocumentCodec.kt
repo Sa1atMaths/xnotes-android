@@ -179,6 +179,11 @@ class DocumentCodec(
             config.put("neon", true)
             config.put("neon_strength", s.config.neonStrength)
         }
+        // Dash runs matter only to the dashed pen, so a plain stroke's config is unchanged.
+        if (s.tool == Tool.DASHED) {
+            config.put("dash_length", s.config.dashLength)
+            config.put("dash_gap", s.config.dashGap)
+        }
         val obj = JSONObject()
             .put("kind", Stroke.KIND)
             .put("tool", s.tool.id)
@@ -247,6 +252,8 @@ class DocumentCodec(
             taperAmount = c?.optDouble("taper_amount", def.taperAmount) ?: def.taperAmount,
             neon = c?.optBoolean("neon", def.neon) ?: def.neon,
             neonStrength = c?.optDouble("neon_strength", def.neonStrength) ?: def.neonStrength,
+            dashLength = c?.optDouble("dash_length", def.dashLength) ?: def.dashLength,
+            dashGap = c?.optDouble("dash_gap", def.dashGap) ?: def.dashGap,
         )
         val samples = ArrayList<Sample>()
         o.optJSONArray("samples")?.let { arr ->

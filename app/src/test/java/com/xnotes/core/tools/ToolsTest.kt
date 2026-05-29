@@ -48,6 +48,7 @@ class ToolsTest {
 
     @Test fun strokeToolsAndAlpha() {
         assertTrue(Tool.CALLIGRAPHY.isStroke)
+        assertTrue(Tool.DASHED.isStroke)
         assertFalse(Tool.SELECT.isStroke)
         assertEquals(0.35, Tool.HIGHLIGHTER.alphaScale, 1e-9)
         assertEquals(1.0, Tool.PEN.alphaScale, 1e-9)
@@ -64,6 +65,6 @@ class ToolsTest {
 
     @Test fun toolIdRoundTrip() {
         for (t in Tool.entries) assertEquals(t, Tool.fromId(t.id))
-        assertEquals(11, Tool.wheelOrder.size)
+        assertEquals(12, Tool.wheelOrder.size)
     }
 }

@@ -5,6 +5,7 @@ import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.pal.BlendMode
 import com.xnotes.core.pal.FillRule
+import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.stroke.Sample
 import com.xnotes.core.stroke.StrokeEngine
@@ -68,6 +69,10 @@ class Stroke(
         val g = geometry()
         val color = renderColor
         when {
+            // The dashed pen draws its (uniform-width) centreline as a dashed, round-capped
+            // line rather than a solid ribbon; the full ribbon geometry is still used for
+            // bounds/hit-testing/erasing, so the whole line stays selectable through the gaps.
+            tool == Tool.DASHED -> paintDashed(r, g, color)
             // The highlighter never glows (a translucent marker; glow is meaningless there).
             config.neon && tool != Tool.HIGHLIGHTER -> paintNeon(r, g, color)
             color.a >= 255 -> {
@@ -91,6 +96,29 @@ class Stroke(
     private fun paintFills(r: Renderer, g: StrokeGeometry, color: Rgba) {
         if (g.outline.size >= 3) r.fillPolygon(g.outline, color, FillRule.NONZERO)
         for (cap in g.caps) if (cap.radius > 0.0) r.fillCircle(cap.center, cap.radius, color)
+    }
+
+    /**
+     * The dashed pen: a constant-width, round-capped dashed line traced down the smoothed
+     * centreline (so its rounded dashes match the tool's icon). Dash/gap runs are in content
+     * px so they scale with zoom like the ink. A single tap (no line) is drawn as a dot.
+     */
+    private fun paintDashed(r: Renderer, g: StrokeGeometry, color: Rgba) {
+        if (g.centerline.size >= 2) {
+            r.strokePolyline(
+                g.centerline,
+                Pen(
+                    color = color,
+                    width = config.baseWidth,
+                    cosmetic = false,
+                    dashed = true,
+                    dashOn = config.dashLength,
+                    dashGap = config.dashGap,
+                ),
+            )
+        } else {
+            for (cap in g.caps) if (cap.radius > 0.0) r.fillCircle(cap.center, cap.radius, color)
+        }
     }
 
     /**

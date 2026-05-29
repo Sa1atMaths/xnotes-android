@@ -26,6 +26,9 @@ data class Pen(
     val width: Double = 1.0,
     val cosmetic: Boolean = true,
     val dashed: Boolean = false,
+    /** Dash on/off run lengths used when [dashed]; device px when [cosmetic], else content px. */
+    val dashOn: Double = 6.0,
+    val dashGap: Double = 4.0,
     /** Soft outward glow (page-px blur) on the stroke — the neon halo for shapes. 0 = crisp. */
     val glowRadius: Double = 0.0,
 )

@@ -3,6 +3,7 @@ package com.xnotes.core.tools
 /** The tool set (spec 04 §1). */
 enum class Tool(val id: String) {
     PEN("pen"),
+    DASHED("dashed"),
     CALLIGRAPHY("calligraphy"),
     SPEED("speed"),
     TAPER("taper"),
@@ -16,8 +17,8 @@ enum class Tool(val id: String) {
     IMAGE("image");
 
     /** Tools that produce ink via the stroke engine. */
-    val isStroke: Boolean get() = this == PEN || this == CALLIGRAPHY || this == SPEED ||
-        this == TAPER || this == HIGHLIGHTER
+    val isStroke: Boolean get() = this == PEN || this == DASHED || this == CALLIGRAPHY ||
+        this == SPEED || this == TAPER || this == HIGHLIGHTER
 
     /** Render-time ink alpha scale: the highlighter is translucent (spec 03 §3). */
     val alphaScale: Double get() = if (this == HIGHLIGHTER) 0.35 else 1.0
@@ -29,6 +30,6 @@ enum class Tool(val id: String) {
         val DEFAULT = CALLIGRAPHY
 
         /** Quick-tool-wheel order (spec 06 §11 / 10 §7). */
-        val wheelOrder = listOf(PEN, CALLIGRAPHY, SPEED, TAPER, HIGHLIGHTER, ERASER, SELECT, LASSO, SHAPE, TEXT, PAN)
+        val wheelOrder = listOf(PEN, DASHED, CALLIGRAPHY, SPEED, TAPER, HIGHLIGHTER, ERASER, SELECT, LASSO, SHAPE, TEXT, PAN)
     }
 }

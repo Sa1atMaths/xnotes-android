@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,6 +34,7 @@ import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConversions
+import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -52,6 +55,8 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     var width by remember { mutableStateOf(base.baseWidth.toFloat()) }
     var glow by remember { mutableStateOf(base.neon) }
     var glowIntensity by remember { mutableStateOf(ToolConversions.neonStrengthToIntensity(base.neonStrength).toFloat()) }
+    var dashLen by remember { mutableStateOf(base.dashLength.toFloat()) }
+    var gapLen by remember { mutableStateOf(base.dashGap.toFloat()) }
 
     fun emit() {
         val m = ToolConversions.sensitivityToMinFactor(sensitivity.toDouble())
@@ -69,6 +74,8 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                 taperAmount = tp,
                 neon = glow,
                 neonStrength = ToolConversions.intensityToNeonStrength(glowIntensity.toDouble()),
+                dashLength = dashLen.toDouble(),
+                dashGap = gapLen.toDouble(),
             ),
         )
     }
@@ -92,8 +99,13 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
             }
             val range = ToolConversions.widthRange(tool)
             SliderRow("WIDTH", width, range.start.toFloat()..range.endInclusive.toFloat()) { width = it; emit() }
-            // Glow is offered on every stroke tool except the highlighter (a translucent marker).
-            if (tool.isStroke && tool != Tool.HIGHLIGHTER) {
+            if (tool == Tool.DASHED) {
+                SliderRow("DASH", dashLen, 2f..40f) { dashLen = it; emit() }
+                SliderRow("GAP", gapLen, 2f..40f) { gapLen = it; emit() }
+            }
+            // Glow is offered on every stroke tool except the highlighter (translucent) and the
+            // dashed pen (it draws a line, not a fillable ribbon, so a halo has nothing to hug).
+            if (tool.isStroke && tool != Tool.HIGHLIGHTER && tool != Tool.DASHED) {
                 ToggleRow("NEON", glow) { glow = it; emit() }
                 if (glow) {
                     SliderRow("INTENSITY", glowIntensity, 0f..100f) { glowIntensity = it; emit() }
@@ -121,12 +133,12 @@ fun ShapeConfigPopup(editor: Editor, onDismiss: () -> Unit) {
             PopupTitle("SHAPE")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ShapeKind.entries.forEach { k ->
-                    KindChip(k.id.take(4), selected = kind == k) { kind = k; emit() }
+                    KindChip(shapeIcon(k), k.id, selected = kind == k) { kind = k; emit() }
                 }
             }
             SliderRow("WIDTH", width, 1f..20f) { width = it; emit() }
             ToggleRow("FILL", fill) { fill = it; emit() }
-            ToggleRow("GLOW", glow) { glow = it; emit() }
+            ToggleRow("NEON", glow) { glow = it; emit() }
             if (glow) {
                 SliderRow("INTENSITY", glowIntensity, 0f..100f) { glowIntensity = it; emit() }
             }
@@ -216,8 +228,17 @@ private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRan
     }
 }
 
+/** Glyph shown in the shape-kind picker for each [ShapeKind]. */
+private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
+    ShapeKind.LINE -> XnotesIcons.shapeLine
+    ShapeKind.ARROW -> XnotesIcons.shapeArrow
+    ShapeKind.RECTANGLE -> XnotesIcons.shapeRect
+    ShapeKind.ELLIPSE -> XnotesIcons.shapeEllipse
+    ShapeKind.TRIANGLE -> XnotesIcons.shapeTriangle
+}
+
 @Composable
-private fun KindChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun KindChip(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
     val palette = LocalPalette.current
     Box(
         Modifier
@@ -225,8 +246,13 @@ private fun KindChip(label: String, selected: Boolean, onClick: () -> Unit) {
             .background(if (selected) palette.accentAlpha(48).toComposeColor() else palette.surface.toComposeColor())
             .border(1.dp, if (selected) palette.accent.toComposeColor() else palette.border.toComposeColor(), RoundedCornerShape(5.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .padding(8.dp),
     ) {
-        Text(label, color = if (selected) palette.accent.toComposeColor() else palette.text.toComposeColor(), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (selected) palette.accent.toComposeColor() else palette.text.toComposeColor(),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }

@@ -138,6 +138,8 @@ data class Settings(
             .put("taper_amount", c.taperAmount)
             .put("neon", c.neon)
             .put("neon_strength", c.neonStrength)
+            .put("dash_length", c.dashLength)
+            .put("dash_gap", c.dashGap)
             .put("rgba", rgbaArr(c.rgba))
 
         private fun toolConfig(o: JSONObject, tool: Tool): ToolConfig {
@@ -152,6 +154,8 @@ data class Settings(
                 taperAmount = o.optDouble("taper_amount", d.taperAmount),
                 neon = o.optBoolean("neon", d.neon),
                 neonStrength = o.optDouble("neon_strength", d.neonStrength),
+                dashLength = o.optDouble("dash_length", d.dashLength),
+                dashGap = o.optDouble("dash_gap", d.dashGap),
             )
         }
 

@@ -26,12 +26,18 @@ data class ToolConfig(
     val neon: Boolean = false,
     /** Glow intensity (the neon halo): 0 = faint & tight, 1 = bright & wide. Only used when [neon]. */
     val neonStrength: Double = 0.6,
+    /** Dashed pen: length of each dash, in content px. Only used by [Tool.DASHED]. */
+    val dashLength: Double = 10.0,
+    /** Dashed pen: gap between dashes, in content px. Only used by [Tool.DASHED]. */
+    val dashGap: Double = 8.0,
 )
 
 /** Factory defaults per tool (spec 04 §3). */
 object ToolDefaults {
     fun configFor(tool: Tool): ToolConfig = when (tool) {
         Tool.PEN -> ToolConfig(baseWidth = 3.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0)
+        // Dashed pen: uniform-width (pressure off), so its dashes stay even; dash/gap set the rhythm.
+        Tool.DASHED -> ToolConfig(baseWidth = 3.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0, dashLength = 10.0, dashGap = 8.0)
         Tool.CALLIGRAPHY -> ToolConfig(baseWidth = 6.0, pressureEnabled = true, pressureMinFactor = 0.40, directionStrength = 0.60)
         Tool.SPEED -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0, speedStrength = 0.8)
         Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperAmount = 0.7)
@@ -42,7 +48,7 @@ object ToolDefaults {
     }
 
     /** Tools whose config is persisted in settings (spec 09 §2). */
-    val persistedTools = listOf(Tool.PEN, Tool.CALLIGRAPHY, Tool.SPEED, Tool.TAPER, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASSO)
+    val persistedTools = listOf(Tool.PEN, Tool.DASHED, Tool.CALLIGRAPHY, Tool.SPEED, Tool.TAPER, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASSO)
 }
 
 /**

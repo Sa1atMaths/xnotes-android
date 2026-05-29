@@ -61,6 +61,7 @@ fun Toolbar(
     // tinted at the call site like every other icon; the rest use the built-in line set.
     val toolIcons: List<Pair<Tool, ImageVector>> = listOf(
         Tool.PEN to ImageVector.vectorResource(R.drawable.ic_stroke_regular),
+        Tool.DASHED to ImageVector.vectorResource(R.drawable.ic_stroke_dashed),
         Tool.CALLIGRAPHY to ImageVector.vectorResource(R.drawable.ic_stroke_calligraphy),
         Tool.SPEED to ImageVector.vectorResource(R.drawable.ic_stroke_speed),
         Tool.TAPER to ImageVector.vectorResource(R.drawable.ic_stroke_taper),
@@ -119,7 +120,7 @@ fun Toolbar(
                     }
                 }
             }
-            if (i == 5 || i == 8) Separator()
+            if (i == 6 || i == 9) Separator()
         }
         Separator()
 
