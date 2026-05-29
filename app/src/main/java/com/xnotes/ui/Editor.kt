@@ -24,6 +24,7 @@ import com.xnotes.core.history.EraseItems
 import com.xnotes.core.history.History
 import com.xnotes.core.history.MovePage
 import com.xnotes.core.model.Bookmark
+import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Orientation
@@ -564,11 +565,28 @@ class Editor(context: Context) {
         r.scale(scale, scale)
         if (!active()) return null
         state.paintPageBackground?.invoke(page, r, scale, com.xnotes.core.geometry.Rect(0.0, 0.0, page.width, page.height))
-        for (item in page.items) {
+        for (item in itemsSnapshot(page)) {
             if (!active()) return null
             item.paint(r)
         }
         return surface.bitmap
+    }
+
+    /**
+     * A defensive copy of a page's items: thumbnails render off the main thread, so iterating
+     * [Page.items] directly can race a main-thread edit and throw [ConcurrentModificationException].
+     * Retries a few times (an edit is momentary), then gives up rather than crash — a dropped frame
+     * re-renders on the next [contentVersion] bump.
+     */
+    private fun itemsSnapshot(page: Page): List<CanvasItem> {
+        repeat(8) {
+            try {
+                return ArrayList(page.items)
+            } catch (_: java.util.ConcurrentModificationException) {
+                // a main-thread edit landed mid-copy; retry
+            }
+        }
+        return emptyList()
     }
 
     /** An already-rendered side-panel thumbnail for [page] at the current content, or null. */

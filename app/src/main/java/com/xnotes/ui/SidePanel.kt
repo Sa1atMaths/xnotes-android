@@ -185,7 +185,7 @@ private fun PagesTab(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            itemsIndexed(pages, key = { _, page -> page }) { index, page ->
+            itemsIndexed(pages, key = { _, page -> page.uid }) { index, page ->
                 val dragging = index == dragIndex
                 // The dragged row floats (translation + raised) with no placement animation; others animate.
                 val rowModifier = Modifier
@@ -196,7 +196,7 @@ private fun PagesTab(
                 // restart the gesture mid-drag — pointerInput is keyed only on the stable page identity.
                 val curIndex by rememberUpdatedState(index)
                 val curSelecting by rememberUpdatedState(selecting)
-                val gesture = Modifier.pointerInput(page) {
+                val gesture = Modifier.pointerInput(page.uid) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (down.isConsumed) return@awaitEachGesture // the three-dot button took it
