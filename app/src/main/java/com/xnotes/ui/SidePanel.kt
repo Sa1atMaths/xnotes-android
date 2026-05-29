@@ -1,11 +1,9 @@
 package com.xnotes.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
@@ -43,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,24 +50,30 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.xnotes.core.model.Page
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The side panel. The Pages tab shows page thumbnails with a per-page three-dot menu (add / copy /
- * cut / paste / delete / erase / share / save as) and supports multi-select (long-press, then tap
- * more pages) with a bottom action bar. Share/Save-as need the activity's SAF launchers, so they're
- * passed in as callbacks; everything else acts on [editor] directly.
+ * cut / paste / delete / erase / share / save as), supports multi-select (long-press, then tap more
+ * pages) with a bottom action bar, and drag-to-reorder (press and move a thumbnail). Share/Save-as
+ * need the activity's SAF launchers, so they're passed in as callbacks; everything else acts on
+ * [editor] directly.
  */
 @Composable
 fun SidePanel(
@@ -116,6 +121,9 @@ private fun SegIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, desc:
     }
 }
 
+/** What the thumbnail touch turned out to be (long-press resolves as `null` from the timeout). */
+private enum class ThumbGesture { TAP, DRAG, SCROLL, IGNORE }
+
 @Composable
 private fun PagesTab(
     editor: Editor,
@@ -128,6 +136,48 @@ private fun PagesTab(
     // rather than re-rendering by index; pagesVersion/contentVersion drive a fresh read of the order.
     val pages = remember(editor.pagesVersion, editor.contentVersion) { editor.pagesSnapshot() }
     val selecting = editor.inPageSelectionMode
+    val haptics = LocalHapticFeedback.current
+
+    // Drag-reorder state (px in the list's offset space). dragIndex follows the page as it moves.
+    var dragIndex by remember { mutableStateOf(-1) }
+    var dragStartIndex by remember { mutableStateOf(-1) }
+    var dragOffsetY by remember { mutableStateOf(0f) }
+    var dragPointerY by remember { mutableStateOf(0f) }
+
+    fun evaluateSwap() {
+        val from = dragIndex
+        if (from < 0) return
+        val info = listState.layoutInfo
+        val dragged = info.visibleItemsInfo.firstOrNull { it.index == from } ?: return
+        val center = dragged.offset + dragged.size / 2f + dragOffsetY
+        val target = info.visibleItemsInfo.firstOrNull { it.index != from && center >= it.offset && center <= it.offset + it.size }
+        if (target != null && target.index != from) {
+            editor.movePageLive(from, target.index)
+            dragOffsetY += (dragged.offset - target.offset) // keep the floating row under the finger across the swap
+            dragIndex = target.index
+        }
+    }
+
+    // Auto-scroll the list while the dragged row hovers near an edge.
+    LaunchedEffect(dragIndex >= 0) {
+        if (dragIndex < 0) return@LaunchedEffect
+        while (dragIndex >= 0) {
+            val info = listState.layoutInfo
+            val edge = 64f
+            val step = when {
+                dragPointerY < info.viewportStartOffset + edge && listState.canScrollBackward -> -10f
+                dragPointerY > info.viewportEndOffset - edge && listState.canScrollForward -> 10f
+                else -> 0f
+            }
+            if (step != 0f) {
+                listState.scrollBy(step)
+                dragOffsetY += step
+                evaluateSwap()
+            }
+            delay(16)
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize().padding(8.dp),
@@ -136,20 +186,85 @@ private fun PagesTab(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             itemsIndexed(pages, key = { _, page -> page }) { index, page ->
-                PageThumb(editor, index, page, selecting, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
+                val dragging = index == dragIndex
+                // The dragged row floats (translation + raised) with no placement animation; others animate.
+                val rowModifier = Modifier
+                    .zIndex(if (dragging) 1f else 0f)
+                    .graphicsLayer { translationY = if (dragging) dragOffsetY else 0f }
+                    .then(if (dragging) Modifier else Modifier.animateItem())
+                // Read index/selecting through latest-state so a reorder (which changes index) doesn't
+                // restart the gesture mid-drag — pointerInput is keyed only on the stable page identity.
+                val curIndex by rememberUpdatedState(index)
+                val curSelecting by rememberUpdatedState(selecting)
+                val gesture = Modifier.pointerInput(page) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (down.isConsumed) return@awaitEachGesture // the three-dot button took it
+                        val slop = viewConfiguration.touchSlop
+                        val kind = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            while (true) {
+                                val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                                    ?: return@withTimeoutOrNull ThumbGesture.TAP
+                                if (ch.isConsumed) return@withTimeoutOrNull ThumbGesture.IGNORE
+                                if (!ch.pressed) return@withTimeoutOrNull ThumbGesture.TAP
+                                if ((ch.position - down.position).getDistance() > slop) {
+                                    return@withTimeoutOrNull if (curSelecting) ThumbGesture.SCROLL else ThumbGesture.DRAG
+                                }
+                            }
+                            @Suppress("UNREACHABLE_CODE") ThumbGesture.TAP
+                        }
+                        when (kind) {
+                            null -> { // held still past the timeout: enter/extend multi-select
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                editor.togglePageSelection(curIndex)
+                                while (true) {
+                                    val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                    ch.consume()
+                                    if (!ch.pressed) break
+                                }
+                            }
+                            ThumbGesture.TAP ->
+                                if (curSelecting) editor.togglePageSelection(curIndex) else editor.goToPage(curIndex)
+                            ThumbGesture.DRAG -> {
+                                dragStartIndex = curIndex
+                                dragIndex = curIndex
+                                dragOffsetY = 0f
+                                var lastY = down.position.y
+                                while (true) {
+                                    val ch = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                    ch.consume()
+                                    if (!ch.pressed) break
+                                    dragOffsetY += ch.position.y - lastY
+                                    lastY = ch.position.y
+                                    listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == dragIndex }?.let {
+                                        dragPointerY = it.offset + dragOffsetY + ch.position.y
+                                    }
+                                    evaluateSwap()
+                                }
+                                val from = dragStartIndex
+                                val to = dragIndex
+                                dragIndex = -1; dragStartIndex = -1; dragOffsetY = 0f
+                                if (to >= 0 && to != from) editor.commitPageMove(from, to)
+                            }
+                            else -> Unit // SCROLL / IGNORE: leave the events for the list / child
+                        }
+                    }
+                }
+                PageThumb(editor, index, page, selecting, rowModifier, gesture, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
             }
         }
         VerticalScrollbar(listState, Modifier.align(Alignment.CenterEnd))
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PageThumb(
     editor: Editor,
     index: Int,
     page: Page,
     selecting: Boolean,
+    rowModifier: Modifier,
+    interactionModifier: Modifier,
     onSharePages: (List<Int>, Boolean) -> Unit,
     onSavePagesAsPdf: (List<Int>) -> Unit,
     onSavePagesAsImages: (List<Int>) -> Unit,
@@ -172,16 +287,12 @@ private fun PageThumb(
     // Reserve the row's height from the aspect ratio so it stays put before the bitmap loads.
     val aspect = editor.pageAspectRatio(page)
     val borderColor = if (selected || current) palette.accent else palette.border
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(rowModifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier
+            interactionModifier
                 .width(150.dp)
                 .height(150.dp * aspect)
-                .border(if (selected || current) 2.dp else 1.dp, borderColor.toComposeColor())
-                .combinedClickable(
-                    onClick = { if (selecting) editor.togglePageSelection(index) else editor.goToPage(index) },
-                    onLongClick = { editor.togglePageSelection(index) },
-                ),
+                .border(if (selected || current) 2.dp else 1.dp, borderColor.toComposeColor()),
         ) {
             bitmap?.let { Image(it, contentDescription = "Page ${index + 1}", modifier = Modifier.fillMaxSize()) }
 
