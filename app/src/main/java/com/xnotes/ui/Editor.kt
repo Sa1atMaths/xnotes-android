@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.LruCache
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
@@ -16,8 +17,12 @@ import com.xnotes.canvas.InteractionController
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.history.AddItem
 import com.xnotes.core.history.AddPage
+import com.xnotes.core.history.Command
+import com.xnotes.core.history.CompositeCommand
 import com.xnotes.core.history.DeletePage
+import com.xnotes.core.history.EraseItems
 import com.xnotes.core.history.History
+import com.xnotes.core.history.MovePage
 import com.xnotes.core.model.Bookmark
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.ImageItem
@@ -25,6 +30,7 @@ import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.model.deepCopy
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
@@ -107,9 +113,13 @@ class Editor(context: Context) {
     private val recentPages = java.util.concurrent.ConcurrentHashMap<String, Int>()
     /** On-disk thumbnail cache so the backstage opens instantly across launches. */
     private val thumbCache = com.xnotes.platform.RecentThumbnailCache(java.io.File(appContext.filesDir, "recent_thumbs"))
-    /** Side-panel page thumbnails, rendered once and reused so scrolling the panel doesn't re-render. */
-    private val pageThumbs = object : LruCache<Int, ImageBitmap>(24 * 1024 * 1024) {
-        override fun sizeOf(key: Int, value: ImageBitmap) = value.width * value.height * 4
+    /**
+     * Side-panel page thumbnails, rendered once and reused so scrolling the panel doesn't re-render.
+     * Keyed by [Page] **identity** (not index) so a drag-reorder keeps each page's bitmap instead of
+     * re-rendering every row; the whole cache is dropped when [contentVersion] moves (a real edit).
+     */
+    private val pageThumbs = object : LruCache<Page, ImageBitmap>(24 * 1024 * 1024) {
+        override fun sizeOf(key: Page, value: ImageBitmap) = value.width * value.height * 4
     }
     private var pageThumbsVersion = -1
     /** In-memory caches so reopening the backstage paints instantly (seed first, refresh after). */
@@ -182,6 +192,21 @@ class Editor(context: Context) {
     /** Bumped when the bookmark list changes. */
     var bookmarkVersion by mutableStateOf(0)
         private set
+
+    /**
+     * Bumped when the page order/count changes *without* a content edit (a drag-reorder), so the
+     * side panel re-reads the page list. Distinct from [contentVersion] so reordering doesn't evict
+     * the (page-keyed) thumbnail cache — the rows just animate to their new spots.
+     */
+    var pagesVersion by mutableStateOf(0)
+        private set
+
+    /** Pages the side panel has selected, by **identity** so reorder/delete never breaks the set. */
+    private val selectedPages = mutableStateListOf<Page>()
+
+    /** Deep-cloned pages held for paste (cleared when the document changes). A snapshot list so
+     *  paste affordances recompose when it gains/loses contents. */
+    private val pageClipboard = mutableStateListOf<Page>()
 
     /** The current document's storage location (a SAF content URI string), or null. */
     val currentUri: String? get() = state.document.path
@@ -512,21 +537,24 @@ class Editor(context: Context) {
 
     // --- side panel ---
 
+    /** A live snapshot of the document's pages, for the side panel (recompose via [pagesVersion]/[contentVersion]). */
+    fun pagesSnapshot(): List<Page> = state.document.pages.toList()
+
+    fun pageAt(index: Int): Page? = state.document.pages.getOrNull(index)
+
     /**
      * A page's height/width ratio. The side panel reserves each thumbnail row's height from this
      * so rows don't grow when their bitmap finishes loading — that resizing was what made the
      * scrollbar thumb wobble while scrolling (its size is derived from the visible rows' heights).
      */
-    fun pageAspectRatio(index: Int): Float? =
-        state.document.pages.getOrNull(index)?.let { (it.height / it.width).toFloat() }
+    fun pageAspectRatio(page: Page): Float = (page.height / page.width).toFloat()
 
     /**
      * Renders a page to a thumbnail bitmap (paper + PDF/template background + items). [active] is
      * polled before the costly steps (PDF background, each item) so a render abandoned mid-flight —
      * the side-panel row scrolled out of view — bails out instead of burning CPU the scroll needs.
      */
-    fun renderThumbnail(pageIndex: Int, widthPx: Int, active: () -> Boolean = { true }): android.graphics.Bitmap? {
-        val page = state.document.pages.getOrNull(pageIndex) ?: return null
+    fun renderThumbnail(page: Page, widthPx: Int, active: () -> Boolean = { true }): android.graphics.Bitmap? {
         val scale = widthPx / page.width
         val w = widthPx.coerceAtLeast(1)
         val h = (page.height * scale).toInt().coerceAtLeast(1)
@@ -543,27 +571,27 @@ class Editor(context: Context) {
         return surface.bitmap
     }
 
-    /** An already-rendered side-panel thumbnail for [index] at the current content, or null. */
-    fun cachedPageThumbnail(index: Int): ImageBitmap? = synchronized(pageThumbs) {
+    /** An already-rendered side-panel thumbnail for [page] at the current content, or null. */
+    fun cachedPageThumbnail(page: Page): ImageBitmap? = synchronized(pageThumbs) {
         if (pageThumbsVersion != contentVersion) {
             pageThumbs.evictAll()
             pageThumbsVersion = contentVersion
         }
-        pageThumbs.get(index)
+        pageThumbs.get(page)
     }
 
     /**
-     * The side-panel thumbnail for page [index], rendered off the main thread and cached so
-     * scrolling the panel reuses bitmaps instead of re-rendering each page on every pass — that
-     * re-render churn (heap allocation + GC) was what made the panel scroll janky. Stale entries
-     * are dropped when [contentVersion] moves (see [cachedPageThumbnail]).
+     * The side-panel thumbnail for [page], rendered off the main thread and cached so scrolling the
+     * panel reuses bitmaps instead of re-rendering each page on every pass — that re-render churn
+     * (heap allocation + GC) was what made the panel scroll janky. Keyed by page identity, so a
+     * reorder keeps it; dropped wholesale when [contentVersion] moves (see [cachedPageThumbnail]).
      */
-    suspend fun pageThumbnail(index: Int, widthPx: Int): ImageBitmap? {
-        cachedPageThumbnail(index)?.let { return it }
+    suspend fun pageThumbnail(page: Page, widthPx: Int): ImageBitmap? {
+        cachedPageThumbnail(page)?.let { return it }
         return withContext(Dispatchers.Default) {
-            cachedPageThumbnail(index)?.let { return@withContext it }
-            val bmp = renderThumbnail(index, widthPx, active = { isActive })?.asImageBitmap() ?: return@withContext null
-            synchronized(pageThumbs) { pageThumbs.put(index, bmp) }
+            cachedPageThumbnail(page)?.let { return@withContext it }
+            val bmp = renderThumbnail(page, widthPx, active = { isActive })?.asImageBitmap() ?: return@withContext null
+            synchronized(pageThumbs) { pageThumbs.put(page, bmp) }
             bmp
         }
     }
@@ -1158,6 +1186,8 @@ class Editor(context: Context) {
         autosaveUri = null
         controller.commitTextEdit()
         controller.clearSelection()
+        clearPageSelection()
+        pageClipboard.clear() // clones reference the outgoing document; don't paste them into another
         state.document = doc
         rebuildPdfSource()
         history.clear()
@@ -1261,6 +1291,7 @@ class Editor(context: Context) {
         val (w, h) = if (ref != null) ref.width to ref.height else PageSize.A4.pixels(Orientation.PORTRAIT, state.document.dpi)
         val at = index.coerceIn(0, pages.size)
         val page = Page(w, h)
+        controller.clearSelection() // inserting shifts later page indices; drop any stale item selection
         pages.add(at, page)
         history.push(AddPage(state.document, page, at))
         state.document.dirty = true
@@ -1268,6 +1299,16 @@ class Editor(context: Context) {
         refreshContent()
         view.requestRender()
         return at
+    }
+
+    /** Common tail for a side-panel page edit: re-layout, refresh the chrome, repaint. */
+    private fun afterPageEdit() {
+        controller.clearSelection()
+        state.document.dirty = true
+        state.relayout()
+        state.clampScroll()
+        refreshContent()
+        view.requestRender()
     }
 
     /** Toolbar "Add page": insert a blank page right after the current one (sized from it) and go to it. */
@@ -1297,6 +1338,155 @@ class Editor(context: Context) {
         state.relayout()
         refreshContent()
         view.requestRender()
+    }
+
+    // --- side-panel page operations (operate on explicit page indices) ---
+
+    /** Insert a blank page right after [index] (sized from it) and reveal it. */
+    fun insertPageAfter(index: Int) {
+        goToPage(insertBlankPageAt(index + 1, index))
+    }
+
+    /** Clear all of a page's items but keep the page (and its PDF/template background). Undoable. */
+    fun erasePage(index: Int) {
+        val page = pageAt(index) ?: return
+        if (page.items.isEmpty()) { message = "That page is already empty."; return }
+        val removals = page.items.map { page to it }
+        page.items.clear()
+        history.push(EraseItems(removals))
+        state.invalidatePage(page)
+        afterPageEdit()
+    }
+
+    /** Deep-clone [indices] (document order) into the page clipboard for a later paste. */
+    fun copyPages(indices: List<Int>) {
+        val pages = indices.distinct().sorted().mapNotNull { pageAt(it) }
+        if (pages.isEmpty()) return
+        pageClipboard.clear()
+        pages.forEach { pageClipboard.add(it.deepCopy(textMeasurer)) }
+    }
+
+    /** Copy [indices] to the clipboard then delete them (kept ≥ 1 page). */
+    fun cutPages(indices: List<Int>) {
+        if (indices.isEmpty()) return
+        if (indices.distinct().size >= state.document.pages.size) {
+            message = "A note must keep at least one page."
+            return
+        }
+        copyPages(indices)
+        deletePages(indices)
+    }
+
+    /** Insert fresh clones of the page clipboard right after [index]; selects nothing, reveals the first. */
+    fun pastePagesAfter(index: Int) {
+        if (pageClipboard.isEmpty()) return
+        val pages = state.document.pages
+        val firstAt = (index + 1).coerceIn(0, pages.size)
+        var at = firstAt
+        val cmds = ArrayList<Command>()
+        for (src in pageClipboard) {
+            val clone = src.deepCopy(textMeasurer) // fresh clone each paste, so repeated pastes are independent
+            pages.add(at, clone)
+            cmds.add(AddPage(state.document, clone, at))
+            at++
+        }
+        history.push(CompositeCommand(cmds))
+        afterPageEdit()
+        goToPage(firstAt)
+    }
+
+    /** Delete [indices] as one undoable edit, refusing to empty the note. */
+    fun deletePages(indices: List<Int>) {
+        val pages = state.document.pages
+        val targets = indices.filter { it in pages.indices }.distinct().sortedDescending()
+        if (targets.isEmpty()) return
+        if (targets.size >= pages.size) {
+            message = "A note must keep at least one page."
+            return
+        }
+        val cmds = ArrayList<Command>()
+        for (i in targets) { // descending, so each removeAt index stays valid and DeletePage stores the original index
+            val page = pages[i]
+            pages.removeAt(i)
+            state.invalidatePage(page)
+            cmds.add(DeletePage(state.document, page, i))
+        }
+        history.push(CompositeCommand(cmds))
+        clearPageSelection()
+        afterPageEdit()
+    }
+
+    /**
+     * Live step of a drag-reorder: move the page at [from] to [to] with no history entry, bumping
+     * only [pagesVersion] so the panel re-reads order without re-rendering thumbnails. The drop is
+     * recorded once via [commitPageMove].
+     */
+    fun movePageLive(from: Int, to: Int) {
+        val pages = state.document.pages
+        if (from !in pages.indices) return
+        val dst = to.coerceIn(0, pages.size - 1)
+        if (from == dst) return
+        val page = pages.removeAt(from)
+        pages.add(dst, page)
+        state.document.dirty = true
+        state.relayout()
+        pagesVersion++
+        view.requestRender()
+    }
+
+    /** Record a completed drag-reorder (model already moved by [movePageLive]) as one undoable move. */
+    fun commitPageMove(from: Int, to: Int) {
+        if (from == to) return
+        history.push(MovePage(state.document, from, to))
+        state.document.dirty = true
+        refreshContent()
+    }
+
+    // --- side-panel page selection (multi-select) ---
+
+    val canPastePages: Boolean get() = pageClipboard.isNotEmpty()
+    val pageSelectionCount: Int get() = selectedPages.size
+    val inPageSelectionMode: Boolean get() = selectedPages.isNotEmpty()
+
+    fun isPageSelected(index: Int): Boolean {
+        val p = pageAt(index) ?: return false
+        return selectedPages.any { it === p }
+    }
+
+    /** Selected page indices in document order. */
+    fun selectedPageIndices(): List<Int> =
+        state.document.pages.mapIndexedNotNull { i, p -> if (selectedPages.any { it === p }) i else null }
+
+    /** Toggle a page's membership in the selection (entering selection mode on the first add). */
+    fun togglePageSelection(index: Int) {
+        val p = pageAt(index) ?: return
+        val at = selectedPages.indexOfFirst { it === p }
+        if (at >= 0) selectedPages.removeAt(at) else selectedPages.add(p)
+    }
+
+    fun clearPageSelection() {
+        if (selectedPages.isNotEmpty()) selectedPages.clear()
+    }
+
+    // --- export a subset of pages (side-panel Share / Save as) ---
+
+    /** Flatten the pages at [indices] (document order) into a PDF written to [out]. */
+    fun exportPagesToPdf(indices: List<Int>, out: OutputStream) {
+        val pages = indices.distinct().sorted().mapNotNull { pageAt(it) }
+        if (pages.isEmpty()) return
+        val sub = Document(dpi = state.document.dpi, pdfBytes = state.document.pdfBytes)
+        sub.pages.addAll(pages) // share the page objects; export only reads them
+        com.xnotes.platform.PdfExporter.export(sub, pdfSource, out, state::paperColor)
+    }
+
+    /** PNG bytes for page [index], rendered at full page resolution (paper + background + items), or null. */
+    fun pageImagePng(index: Int): ByteArray? {
+        val page = pageAt(index) ?: return null
+        val bmp = renderThumbnail(page, page.width.toInt().coerceAtLeast(1)) ?: return null
+        return java.io.ByteArrayOutputStream().use { out ->
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        }
     }
 
     // --- selection edits ---
@@ -1411,6 +1601,8 @@ class Editor(context: Context) {
         )
         history.clear()
         controller.clearSelection()
+        clearPageSelection()
+        pageClipboard.clear()
         state.invalidateAllCaches()
         state.relayout()
         installInitialView(null) // a fresh in-memory note: fit width

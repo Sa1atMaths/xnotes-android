@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.focusable
@@ -39,6 +40,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.xnotes.ui.Editor
 import com.xnotes.ui.Toolbar
 import com.xnotes.ui.theme.XnotesTheme
+import kotlinx.coroutines.launch
 
 /** Minimum time the launch loader stays up, so its animation is briefly seen even
  *  when the session restores instantly. */
@@ -127,6 +129,9 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     var pendingShareUri by remember { mutableStateOf<String?>(null) }
     var pendingSaveCopyUri by remember { mutableStateOf<String?>(null) }
     var pendingExportUri by remember { mutableStateOf<String?>(null) }
+    // Page indices awaiting a SAF "Save as" destination (side-panel page export).
+    var pendingExportPages by remember { mutableStateOf<List<Int>>(emptyList()) }
+    val scope = rememberCoroutineScope()
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
@@ -196,6 +201,63 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         if (uri != null && src != null) {
             runCatching { resolver.openOutputStream(uri)?.use { o -> editor.exportFileToPdf(src, o) } }
                 .onFailure { editor.message = "Could not export to PDF." }
+        }
+    }
+
+    // Save the selected side-panel pages as one PDF.
+    val savePagesPdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri ->
+        val pages = pendingExportPages; pendingExportPages = emptyList()
+        if (uri != null && pages.isNotEmpty()) {
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val ok = runCatching { resolver.openOutputStream(uri)?.use { o -> editor.exportPagesToPdf(pages, o) } != null }.getOrDefault(false)
+                if (!ok) editor.message = "Could not save the PDF."
+            }
+        }
+    }
+
+    // Save a single selected page as a PNG.
+    val savePageImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("image/png"),
+    ) { uri ->
+        val pages = pendingExportPages; pendingExportPages = emptyList()
+        val index = pages.firstOrNull()
+        if (uri != null && index != null) {
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val ok = runCatching {
+                    val png = editor.pageImagePng(index) ?: return@runCatching false
+                    resolver.openOutputStream(uri)?.use { it.write(png) } != null
+                }.getOrDefault(false)
+                if (!ok) editor.message = "Could not save the image."
+            }
+        }
+    }
+
+    // Save several selected pages as individual PNGs into a folder the user picks.
+    val savePagesImagesTreeLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        val pages = pendingExportPages; pendingExportPages = emptyList()
+        if (treeUri != null && pages.isNotEmpty()) {
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val stem = editor.title
+                val saved = runCatching {
+                    val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri, android.provider.DocumentsContract.getTreeDocumentId(treeUri),
+                    )
+                    var n = 0
+                    for (index in pages) {
+                        val png = editor.pageImagePng(index) ?: continue
+                        val name = "%s-p%02d.png".format(stem, index + 1)
+                        val file = android.provider.DocumentsContract.createDocument(resolver, parent, "image/png", name) ?: continue
+                        resolver.openOutputStream(file)?.use { it.write(png) }
+                        n++
+                    }
+                    n
+                }.getOrDefault(0)
+                editor.message = if (saved > 0) "Saved $saved image${if (saved == 1) "" else "s"}." else "Could not save the images."
+            }
         }
     }
 
@@ -278,6 +340,55 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         }.onFailure { editor.message = "Could not share the note." }
     }
 
+    // Share the selected side-panel pages: as one PDF, or as one/many PNGs (ACTION_SEND_MULTIPLE).
+    fun sharePages(pages: List<Int>, asPdf: Boolean) {
+        if (pages.isEmpty()) return
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val stem = editor.title
+            val auth = "${context.packageName}.fileprovider"
+            val intent = runCatching {
+                val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
+                dir.listFiles()?.forEach { it.delete() }
+                if (asPdf) {
+                    val file = java.io.File(dir, "$stem.pdf")
+                    java.io.FileOutputStream(file).use { o -> editor.exportPagesToPdf(pages, o) }
+                    val uri = androidx.core.content.FileProvider.getUriForFile(context, auth, file)
+                    Intent(Intent.ACTION_SEND).apply { type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                } else {
+                    val uris = ArrayList<Uri>()
+                    for (index in pages) {
+                        val png = editor.pageImagePng(index) ?: continue
+                        val file = java.io.File(dir, "%s-p%02d.png".format(stem, index + 1))
+                        java.io.FileOutputStream(file).use { it.write(png) }
+                        uris.add(androidx.core.content.FileProvider.getUriForFile(context, auth, file))
+                    }
+                    when {
+                        uris.isEmpty() -> null
+                        uris.size == 1 -> Intent(Intent.ACTION_SEND).apply { type = "image/png"; putExtra(Intent.EXTRA_STREAM, uris[0]); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                        else -> Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "image/png"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                    }
+                }
+            }.getOrNull()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (intent != null) context.startActivity(Intent.createChooser(intent, "Share $stem")) else editor.message = "Could not share the pages."
+            }
+        }
+    }
+
+    fun savePagesAsPdf(pages: List<Int>) {
+        if (pages.isEmpty()) return
+        pendingExportPages = pages
+        savePagesPdfLauncher.launch("${editor.title}.pdf")
+    }
+
+    // One page -> a single PNG (CreateDocument); several -> a folder the user picks (one PNG per page).
+    fun savePagesAsImages(pages: List<Int>) {
+        if (pages.isEmpty()) return
+        pendingExportPages = pages
+        if (pages.size == 1) savePageImageLauncher.launch("%s-p%02d.png".format(editor.title, pages[0] + 1))
+        else savePagesImagesTreeLauncher.launch(null)
+    }
+
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     editor.keyActions = remember {
@@ -331,7 +442,12 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             )
             Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (editor.sidebarVisible) {
-                    com.xnotes.ui.SidePanel(editor)
+                    com.xnotes.ui.SidePanel(
+                        editor,
+                        onSharePages = { pages, asPdf -> sharePages(pages, asPdf) },
+                        onSavePagesAsPdf = { pages -> savePagesAsPdf(pages) },
+                        onSavePagesAsImages = { pages -> savePagesAsImages(pages) },
+                    )
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
                     AndroidView(factory = { editor.view }, modifier = Modifier.fillMaxSize())

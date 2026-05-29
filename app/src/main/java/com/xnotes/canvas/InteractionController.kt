@@ -17,6 +17,7 @@ import com.xnotes.core.history.ReorderItems
 import com.xnotes.core.history.ResizeItem
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
+import com.xnotes.core.model.deepCopy
 import com.xnotes.core.model.GeoHandle
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Page
@@ -938,13 +939,7 @@ class InteractionController(
         onContentChanged()
     }
 
-    private fun cloneItem(item: CanvasItem): CanvasItem = when (item) {
-        is Stroke -> Stroke(item.tool, item.config, item.samples.toMutableList(), item.speedScale)
-        is ImageItem -> ImageItem(item.raster, item.rect)
-        is TextItem -> TextItem(item.pos, item.width, item.text, item.rgba, item.pointSize, textMeasurer)
-        is ShapeItem -> ShapeItem(item.shape, item.start, item.end, item.strokeRgba, item.strokeWidth, item.fillRgba, item.neon, item.neonStrength)
-        else -> item
-    }
+    private fun cloneItem(item: CanvasItem): CanvasItem = item.deepCopy(textMeasurer)
 
     // --- selection menu ---
 

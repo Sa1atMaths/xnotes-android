@@ -1,9 +1,11 @@
 package com.xnotes.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,17 +23,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,22 +46,37 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xnotes.core.model.Page
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * The side panel. The Pages tab shows page thumbnails with a per-page three-dot menu (add / copy /
+ * cut / paste / delete / erase / share / save as) and supports multi-select (long-press, then tap
+ * more pages) with a bottom action bar. Share/Save-as need the activity's SAF launchers, so they're
+ * passed in as callbacks; everything else acts on [editor] directly.
+ */
 @Composable
-fun SidePanel(editor: Editor) {
+fun SidePanel(
+    editor: Editor,
+    onSharePages: (indices: List<Int>, asPdf: Boolean) -> Unit = { _, _ -> },
+    onSavePagesAsPdf: (indices: List<Int>) -> Unit = {},
+    onSavePagesAsImages: (indices: List<Int>) -> Unit = {},
+) {
     val palette = LocalPalette.current
     var tab by remember { mutableStateOf(0) }
     Column(
@@ -69,12 +90,15 @@ fun SidePanel(editor: Editor) {
             SegIcon(XnotesIcons.contents, "Contents", tab == 1) { tab = 1 }
             SegIcon(XnotesIcons.bookmark, "Bookmarks", tab == 2) { tab = 2 }
         }
-        Box(Modifier.fillMaxWidth().width(224.dp)) {
+        Box(Modifier.fillMaxWidth().weight(1f)) {
             when (tab) {
-                0 -> PagesTab(editor)
+                0 -> PagesTab(editor, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
                 1 -> EmptyHint("— no table of contents —")
                 else -> BookmarksTab(editor)
             }
+        }
+        if (tab == 0 && editor.inPageSelectionMode) {
+            PageSelectionBar(editor, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
         }
     }
 }
@@ -93,9 +117,17 @@ private fun SegIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, desc:
 }
 
 @Composable
-private fun PagesTab(editor: Editor) {
-    val palette = LocalPalette.current
+private fun PagesTab(
+    editor: Editor,
+    onSharePages: (List<Int>, Boolean) -> Unit,
+    onSavePagesAsPdf: (List<Int>) -> Unit,
+    onSavePagesAsImages: (List<Int>) -> Unit,
+) {
     val listState = rememberLazyListState()
+    // Keyed by page identity so a reorder animates rows to new spots (and keeps their thumbnails)
+    // rather than re-rendering by index; pagesVersion/contentVersion drive a fresh read of the order.
+    val pages = remember(editor.pagesVersion, editor.contentVersion) { editor.pagesSnapshot() }
+    val selecting = editor.inPageSelectionMode
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize().padding(8.dp),
@@ -103,45 +135,182 @@ private fun PagesTab(editor: Editor) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            items(editor.pageCount) { index ->
-                val current = index == editor.pageIndex
-                val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-                    editor.cachedPageThumbnail(index), index, editor.contentVersion,
-                ) {
-                    val cached = editor.cachedPageThumbnail(index)
-                    if (cached != null) {
-                        value = cached
-                    } else {
-                        // Don't render pages that are flicked past: this settle delay is cancelled
-                        // (the row leaves composition) before it elapses unless the page lingers
-                        // long enough to actually be seen.
-                        delay(150)
-                        value = editor.pageThumbnail(index, 300)
-                    }
-                }
-                // Reserve the row's height from the page's aspect ratio so it stays put whether or
-                // not the thumbnail has rendered yet (a stable layout keeps the scrollbar steady).
-                val aspect = editor.pageAspectRatio(index) ?: 1.4f
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        Modifier
-                            .width(150.dp)
-                            .height(150.dp * aspect)
-                            .border(if (current) 2.dp else 1.dp, (if (current) palette.accent else palette.border).toComposeColor())
-                            .clickable { editor.goToPage(index) },
-                    ) {
-                        bitmap?.let { Image(it, contentDescription = "Page ${index + 1}", modifier = Modifier.fillMaxSize()) }
-                    }
-                    Text(
-                        "%02d".format(index + 1),
-                        color = (if (current) palette.accent else palette.textDim).toComposeColor(),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
+            itemsIndexed(pages, key = { _, page -> page }) { index, page ->
+                PageThumb(editor, index, page, selecting, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
             }
         }
         VerticalScrollbar(listState, Modifier.align(Alignment.CenterEnd))
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PageThumb(
+    editor: Editor,
+    index: Int,
+    page: Page,
+    selecting: Boolean,
+    onSharePages: (List<Int>, Boolean) -> Unit,
+    onSavePagesAsPdf: (List<Int>) -> Unit,
+    onSavePagesAsImages: (List<Int>) -> Unit,
+) {
+    val palette = LocalPalette.current
+    val current = index == editor.pageIndex
+    val selected = editor.isPageSelected(index)
+    var menuOpen by remember { mutableStateOf(false) }
+    val bitmap by produceState<ImageBitmap?>(editor.cachedPageThumbnail(page), page, editor.contentVersion) {
+        val cached = editor.cachedPageThumbnail(page)
+        if (cached != null) {
+            value = cached
+        } else {
+            // Don't render pages flicked past: this settle delay is cancelled (the row leaves
+            // composition) before it elapses unless the page lingers long enough to be seen.
+            delay(150)
+            value = editor.pageThumbnail(page, 300)
+        }
+    }
+    // Reserve the row's height from the aspect ratio so it stays put before the bitmap loads.
+    val aspect = editor.pageAspectRatio(page)
+    val borderColor = if (selected || current) palette.accent else palette.border
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .width(150.dp)
+                .height(150.dp * aspect)
+                .border(if (selected || current) 2.dp else 1.dp, borderColor.toComposeColor())
+                .combinedClickable(
+                    onClick = { if (selecting) editor.togglePageSelection(index) else editor.goToPage(index) },
+                    onLongClick = { editor.togglePageSelection(index) },
+                ),
+        ) {
+            bitmap?.let { Image(it, contentDescription = "Page ${index + 1}", modifier = Modifier.fillMaxSize()) }
+
+            if (selected) {
+                Box(Modifier.matchParentSize().background(palette.accent.toComposeColor().copy(alpha = 0.18f)))
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(4.dp).size(20.dp)
+                        .clip(CircleShape).background(palette.accent.toComposeColor()),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(XnotesIcons.check, "Selected", tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(13.dp))
+                }
+            } else if (!selecting) {
+                // Three-dot menu, on a faint scrim so it reads over any thumbnail.
+                Box(Modifier.align(Alignment.TopEnd).padding(2.dp)) {
+                    Box(
+                        Modifier.size(26.dp).clip(CircleShape)
+                            .background(palette.panel.toComposeColor().copy(alpha = 0.7f))
+                            .clickable { menuOpen = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(XnotesIcons.more, "Page options", tint = palette.text.toComposeColor(), modifier = Modifier.size(16.dp))
+                    }
+                    PageContextMenu(editor, index, menuOpen, { menuOpen = false }, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
+                }
+            }
+        }
+        Text(
+            "%02d".format(index + 1),
+            color = (if (current || selected) palette.accent else palette.textDim).toComposeColor(),
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+        )
+    }
+}
+
+/** Page sub-pages of the three-dot menu (main / share-format / save-format). */
+private const val MENU_MAIN = 0
+private const val MENU_SHARE = 1
+private const val MENU_SAVE = 2
+
+@Composable
+private fun PageContextMenu(
+    editor: Editor,
+    index: Int,
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    onSharePages: (List<Int>, Boolean) -> Unit,
+    onSavePagesAsPdf: (List<Int>) -> Unit,
+    onSavePagesAsImages: (List<Int>) -> Unit,
+) {
+    val palette = LocalPalette.current
+    var sub by remember { mutableStateOf(MENU_MAIN) }
+    LaunchedEffect(expanded) { if (!expanded) sub = MENU_MAIN } // always reopen on the main page
+    val one = listOf(index)
+    fun menuIcon(icon: ImageVector) = @Composable { Icon(icon, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp)) }
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        when (sub) {
+            MENU_SHARE -> {
+                DropdownMenuItem(text = { Text("‹  Share as") }, onClick = { sub = MENU_MAIN })
+                DropdownMenuItem(text = { Text("Image (PNG)") }, leadingIcon = menuIcon(XnotesIcons.image), onClick = { onSharePages(one, false); onDismiss() })
+                DropdownMenuItem(text = { Text("PDF") }, leadingIcon = menuIcon(XnotesIcons.exportDoc), onClick = { onSharePages(one, true); onDismiss() })
+            }
+            MENU_SAVE -> {
+                DropdownMenuItem(text = { Text("‹  Save as") }, onClick = { sub = MENU_MAIN })
+                DropdownMenuItem(text = { Text("Image (PNG)") }, leadingIcon = menuIcon(XnotesIcons.image), onClick = { onSavePagesAsImages(one); onDismiss() })
+                DropdownMenuItem(text = { Text("PDF") }, leadingIcon = menuIcon(XnotesIcons.exportDoc), onClick = { onSavePagesAsPdf(one); onDismiss() })
+            }
+            else -> {
+                DropdownMenuItem(text = { Text("Add page") }, leadingIcon = menuIcon(XnotesIcons.plus), onClick = { editor.insertPageAfter(index); onDismiss() })
+                DropdownMenuItem(text = { Text("Copy") }, leadingIcon = menuIcon(XnotesIcons.copy), onClick = { editor.copyPages(one); onDismiss() })
+                DropdownMenuItem(text = { Text("Cut") }, leadingIcon = menuIcon(XnotesIcons.cut), onClick = { editor.cutPages(one); onDismiss() })
+                if (editor.canPastePages) {
+                    DropdownMenuItem(text = { Text("Paste") }, leadingIcon = menuIcon(XnotesIcons.paste), onClick = { editor.pastePagesAfter(index); onDismiss() })
+                }
+                DropdownMenuItem(text = { Text("Delete") }, leadingIcon = menuIcon(XnotesIcons.trash), onClick = { editor.deletePages(one); onDismiss() })
+                DropdownMenuItem(text = { Text("Erase page") }, leadingIcon = menuIcon(XnotesIcons.eraser), onClick = { editor.erasePage(index); onDismiss() })
+                DropdownMenuItem(text = { Text("Share…") }, leadingIcon = menuIcon(XnotesIcons.share), onClick = { sub = MENU_SHARE })
+                DropdownMenuItem(text = { Text("Save as…") }, leadingIcon = menuIcon(XnotesIcons.exportDoc), onClick = { sub = MENU_SAVE })
+            }
+        }
+    }
+}
+
+/** Bottom action bar shown while pages are multi-selected. */
+@Composable
+private fun PageSelectionBar(
+    editor: Editor,
+    onSharePages: (List<Int>, Boolean) -> Unit,
+    onSavePagesAsPdf: (List<Int>) -> Unit,
+    onSavePagesAsImages: (List<Int>) -> Unit,
+) {
+    val palette = LocalPalette.current
+    Row(
+        Modifier.fillMaxWidth().height(52.dp).background(palette.surface.toComposeColor()).padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { editor.clearPageSelection() }) {
+            Icon(XnotesIcons.close, "Clear selection", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
+        }
+        Text("${editor.pageSelectionCount}", color = palette.text.toComposeColor(), fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+        Spacer(Modifier.weight(1f))
+        BarAction(XnotesIcons.copy, "Copy") { editor.copyPages(editor.selectedPageIndices()) }
+        BarAction(XnotesIcons.cut, "Cut") { editor.cutPages(editor.selectedPageIndices()) }
+        BarAction(XnotesIcons.trash, "Delete") { editor.deletePages(editor.selectedPageIndices()) }
+        FormatMenu(XnotesIcons.exportDoc, "Save as", { onSavePagesAsImages(editor.selectedPageIndices()) }, { onSavePagesAsPdf(editor.selectedPageIndices()) })
+        FormatMenu(XnotesIcons.share, "Share", { onSharePages(editor.selectedPageIndices(), false) }, { onSharePages(editor.selectedPageIndices(), true) })
+    }
+}
+
+@Composable
+private fun BarAction(icon: ImageVector, desc: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
+        Icon(icon, desc, tint = LocalPalette.current.textDim.toComposeColor(), modifier = Modifier.size(19.dp))
+    }
+}
+
+/** An action that opens a small Image/PDF chooser (used by the bottom bar's Save as / Share). */
+@Composable
+private fun FormatMenu(icon: ImageVector, desc: String, onImage: () -> Unit, onPdf: () -> Unit) {
+    val palette = LocalPalette.current
+    var open by remember { mutableStateOf(false) }
+    fun menuIcon(i: ImageVector) = @Composable { Icon(i, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp)) }
+    Box {
+        BarAction(icon, desc) { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Image (PNG)") }, leadingIcon = menuIcon(XnotesIcons.image), onClick = { open = false; onImage() })
+            DropdownMenuItem(text = { Text("PDF") }, leadingIcon = menuIcon(XnotesIcons.exportDoc), onClick = { open = false; onPdf() })
+        }
     }
 }
 
