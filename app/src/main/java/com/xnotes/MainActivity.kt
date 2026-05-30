@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,6 +62,7 @@ import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.XnotesTheme
 import com.xnotes.ui.theme.toComposeColor
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -150,7 +152,12 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     var pendingInsertContent by remember { mutableStateOf<com.xnotes.core.geometry.Pt?>(null) }
     var pendingShareUri by remember { mutableStateOf<String?>(null) }
     var pendingSaveCopyUri by remember { mutableStateOf<String?>(null) }
-    var pendingExportUri by remember { mutableStateOf<String?>(null) }
+    // A finished PDF render awaiting a SAF "Save as" destination (open-note / file / pages export).
+    var pendingExportTemp by remember { mutableStateOf<java.io.File?>(null) }
+    // In-flight PDF render: (pagesDone, totalPages) drives the progress dialog; null hides it.
+    var exportProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    // Flipped by the dialog's Cancel/dismiss so the background render aborts at the next page.
+    val exportCancelled = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     // Page indices awaiting a SAF "Save as" destination (side-panel page export).
     var pendingExportPages by remember { mutableStateOf<List<Int>>(emptyList()) }
     val scope = rememberCoroutineScope()
@@ -197,16 +204,23 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             }.onFailure { editor.message = "Could not import the PDF." }
         }
     }
-    val exportPdfLauncher = rememberLauncherForActivityResult(
+    // A PDF "Save as" destination. The note is already rendered into [pendingExportTemp]
+    // (off-thread, behind the progress dialog), so the picker just chooses where to copy it —
+    // shared by the open-note export, the explorer-file export, and side-panel page saves.
+    val savePdfLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/pdf"),
     ) { uri ->
-        uri?.let {
-            runCatching { resolver.openOutputStream(it)?.use { o -> editor.exportPdf(o) } }
-                .onFailure { editor.message = "Could not export to PDF." }
+        val temp = pendingExportTemp; pendingExportTemp = null
+        if (temp != null) {
+            if (uri != null) {
+                val ok = runCatching { resolver.openOutputStream(uri)?.use { o -> temp.inputStream().use { it.copyTo(o) } } != null }.getOrDefault(false)
+                editor.message = if (ok) "Exported to PDF." else "Could not export to PDF."
+            }
+            temp.delete() // discard the temp whether saved or the picker was dismissed
         }
     }
 
-    // Save a copy of an explorer file (.xnote) elsewhere, and export an explorer file to PDF.
+    // Save a copy of an explorer file (.xnote) elsewhere.
     val saveCopyLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
@@ -214,28 +228,6 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         if (uri != null && src != null) {
             runCatching { resolver.openOutputStream(uri)?.use { o -> editor.copyFileTo(src, o) } }
                 .onFailure { editor.message = "Could not save a copy." }
-        }
-    }
-    val exportFilePdfLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/pdf"),
-    ) { uri ->
-        val src = pendingExportUri; pendingExportUri = null
-        if (uri != null && src != null) {
-            runCatching { resolver.openOutputStream(uri)?.use { o -> editor.exportFileToPdf(src, o) } }
-                .onFailure { editor.message = "Could not export to PDF." }
-        }
-    }
-
-    // Save the selected side-panel pages as one PDF.
-    val savePagesPdfLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/pdf"),
-    ) { uri ->
-        val pages = pendingExportPages; pendingExportPages = emptyList()
-        if (uri != null && pages.isNotEmpty()) {
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val ok = runCatching { resolver.openOutputStream(uri)?.use { o -> editor.exportPagesToPdf(pages, o) } != null }.getOrDefault(false)
-                if (!ok) editor.message = "Could not save the PDF."
-            }
         }
     }
 
@@ -342,53 +334,95 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     fun stemOf(uriStr: String): String =
         com.xnotes.core.util.Paths.stem(displayNameOf(resolver, Uri.parse(uriStr)) ?: "Note")
 
+    // Render a PDF off the main thread into a temp file behind a cancellable progress dialog;
+    // only once it reaches 100% does [onReady] run — opening the SAF picker or a share sheet.
+    // Dismissing the dialog flips [exportCancelled], so the render aborts at the next page and
+    // the half-written temp is discarded. [shareDir] picks the cache subdir: FileProvider only
+    // exposes cache/share, so shares render there; plain "save" exports use cache/export.
+    fun runPdfExport(
+        stem: String,
+        shareDir: Boolean,
+        render: (java.io.OutputStream, (Int, Int) -> Unit, () -> Boolean) -> Unit,
+        onReady: (java.io.File) -> Unit,
+    ) {
+        exportCancelled.set(false)
+        exportProgress = 0 to 0 // show the dialog at once; the render fills in the real total
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val dir = java.io.File(context.cacheDir, if (shareDir) "share" else "export").apply { mkdirs() }
+            dir.listFiles()?.forEach { it.delete() } // keep only the file this export produces
+            val temp = java.io.File(dir, "$stem.pdf")
+            val ok = runCatching {
+                java.io.FileOutputStream(temp).use { o ->
+                    // Ignore a late progress tick after Cancel, so the just-hidden dialog can't flash back.
+                    render(o, { done, total -> if (!exportCancelled.get()) exportProgress = done to total }, { exportCancelled.get() })
+                }
+            }.isSuccess
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                exportProgress = null // hide the dialog
+                when {
+                    exportCancelled.get() -> temp.delete()
+                    ok -> onReady(temp)
+                    else -> { temp.delete(); editor.message = "Could not export to PDF." }
+                }
+            }
+        }
+    }
+
+    fun launchShare(file: java.io.File, stem: String, mime: String) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(send, "Share $stem"))
+    }
+
     fun shareFile(uriStr: String, asPdf: Boolean) {
-        runCatching {
-            val stem = stemOf(uriStr)
-            val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
-            dir.listFiles()?.forEach { it.delete() } // keep only the file we're about to share
-            val ext = if (asPdf) "pdf" else "xnote"
-            val file = java.io.File(dir, "$stem.$ext")
-            java.io.FileOutputStream(file).use { o ->
-                if (asPdf) editor.exportFileToPdf(uriStr, o) else editor.copyFileTo(uriStr, o)
-            }
-            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            val send = Intent(Intent.ACTION_SEND).apply {
-                type = if (asPdf) "application/pdf" else "application/octet-stream"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(Intent.createChooser(send, "Share $stem"))
-        }.onFailure { editor.message = "Could not share the note." }
+        val stem = stemOf(uriStr)
+        if (asPdf) {
+            // Render with progress, then share the finished PDF (writes into cache/share for FileProvider).
+            runPdfExport(stem, shareDir = true,
+                render = { o, prog, cancel -> editor.exportFileToPdf(uriStr, o, prog, cancel) },
+                onReady = { temp -> runCatching { launchShare(temp, stem, "application/pdf") }.onFailure { editor.message = "Could not share the note." } })
+        } else {
+            // A plain .xnote share is just a fast byte copy — no render, no dialog needed.
+            runCatching {
+                val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
+                dir.listFiles()?.forEach { it.delete() } // keep only the file we're about to share
+                val file = java.io.File(dir, "$stem.xnote")
+                java.io.FileOutputStream(file).use { o -> editor.copyFileTo(uriStr, o) }
+                launchShare(file, stem, "application/octet-stream")
+            }.onFailure { editor.message = "Could not share the note." }
+        }
     }
 
     // Share the selected side-panel pages: as one PDF, or as one/many PNGs (ACTION_SEND_MULTIPLE).
     fun sharePages(pages: List<Int>, asPdf: Boolean) {
         if (pages.isEmpty()) return
+        val stem = editor.title
+        if (asPdf) {
+            runPdfExport(stem, shareDir = true,
+                render = { o, prog, cancel -> editor.exportPagesToPdf(pages, o, prog, cancel) },
+                onReady = { temp -> runCatching { launchShare(temp, stem, "application/pdf") }.onFailure { editor.message = "Could not share the pages." } })
+            return
+        }
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val stem = editor.title
             val auth = "${context.packageName}.fileprovider"
             val intent = runCatching {
                 val dir = java.io.File(context.cacheDir, "share").apply { mkdirs() }
                 dir.listFiles()?.forEach { it.delete() }
-                if (asPdf) {
-                    val file = java.io.File(dir, "$stem.pdf")
-                    java.io.FileOutputStream(file).use { o -> editor.exportPagesToPdf(pages, o) }
-                    val uri = androidx.core.content.FileProvider.getUriForFile(context, auth, file)
-                    Intent(Intent.ACTION_SEND).apply { type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                } else {
-                    val uris = ArrayList<Uri>()
-                    for (index in pages) {
-                        val png = editor.pageImagePng(index) ?: continue
-                        val file = java.io.File(dir, "%s-p%02d.png".format(stem, index + 1))
-                        java.io.FileOutputStream(file).use { it.write(png) }
-                        uris.add(androidx.core.content.FileProvider.getUriForFile(context, auth, file))
-                    }
-                    when {
-                        uris.isEmpty() -> null
-                        uris.size == 1 -> Intent(Intent.ACTION_SEND).apply { type = "image/png"; putExtra(Intent.EXTRA_STREAM, uris[0]); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                        else -> Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "image/png"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                    }
+                val uris = ArrayList<Uri>()
+                for (index in pages) {
+                    val png = editor.pageImagePng(index) ?: continue
+                    val file = java.io.File(dir, "%s-p%02d.png".format(stem, index + 1))
+                    java.io.FileOutputStream(file).use { it.write(png) }
+                    uris.add(androidx.core.content.FileProvider.getUriForFile(context, auth, file))
+                }
+                when {
+                    uris.isEmpty() -> null
+                    uris.size == 1 -> Intent(Intent.ACTION_SEND).apply { type = "image/png"; putExtra(Intent.EXTRA_STREAM, uris[0]); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                    else -> Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "image/png"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                 }
             }.getOrNull()
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -399,8 +433,9 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
 
     fun savePagesAsPdf(pages: List<Int>) {
         if (pages.isEmpty()) return
-        pendingExportPages = pages
-        savePagesPdfLauncher.launch("${editor.title}.pdf")
+        runPdfExport(editor.title, shareDir = false,
+            render = { o, prog, cancel -> editor.exportPagesToPdf(pages, o, prog, cancel) },
+            onReady = { temp -> pendingExportTemp = temp; savePdfLauncher.launch("${editor.title}.pdf") })
     }
 
     // One page -> a single PNG (CreateDocument); several -> a folder the user picks (one PNG per page).
@@ -422,7 +457,11 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             },
             save = { saveOrPrompt() },
             saveAs = { createLauncher.launch("${editor.title}.xnote") },
-            exportPdf = { exportPdfLauncher.launch("${editor.title}.pdf") },
+            exportPdf = {
+                runPdfExport(editor.title, shareDir = false,
+                    render = { o, prog, cancel -> editor.exportPdf(o, prog, cancel) },
+                    onReady = { temp -> pendingExportTemp = temp; savePdfLauncher.launch("${editor.title}.pdf") })
+            },
             preferences = { backstageView = com.xnotes.ui.BackstageView.PREFERENCES; showHome = true },
             fullscreen = onToggleFullscreen,
         )
@@ -501,7 +540,11 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             onPickRoot = { pickRootLauncher.launch(null) },
             onShareFile = { uri -> pendingShareUri = uri; showShareChooser = true },
             onSaveCopyFile = { uri -> pendingSaveCopyUri = uri; saveCopyLauncher.launch("${stemOf(uri)}.xnote") },
-            onExportFilePdf = { uri -> pendingExportUri = uri; exportFilePdfLauncher.launch("${stemOf(uri)}.pdf") },
+            onExportFilePdf = { uri ->
+                runPdfExport(stemOf(uri), shareDir = false,
+                    render = { o, prog, cancel -> editor.exportFileToPdf(uri, o, prog, cancel) },
+                    onReady = { temp -> pendingExportTemp = temp; savePdfLauncher.launch("${stemOf(uri)}.pdf") })
+            },
             onDismiss = { showHome = false },
         )
     }
@@ -560,6 +603,83 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                 }
             },
         )
+    }
+    exportProgress?.let { (done, total) ->
+        PdfExportDialog(done = done, total = total, onCancel = {
+            exportCancelled.set(true) // the background render stops at its next page boundary
+            exportProgress = null     // hide at once; runPdfExport then discards the temp file
+        })
+    }
+}
+
+/**
+ * Determinate "Exporting to PDF…" dialog shown while a (possibly large) note is flattened to a PDF
+ * off the main thread. The ring fills 0→100% by page; dismissing it (Cancel, back, or tapping
+ * outside) aborts the render via [onCancel]. Styled to match the app's monospace surfaces.
+ */
+@Composable
+private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
+    val palette = LocalPalette.current
+    // Once every page is rendered, PdfDocument.writeTo() serializes the whole file in one opaque,
+    // unmeasurable step — slow for a big PDF. Show an animated spinner for it instead of a frozen
+    // 100% ring, so it reads as "still working", not stuck.
+    val finalizing = total > 0 && done >= total
+    val fraction = if (total > 0) done.toFloat() / total else 0f
+    androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(palette.surface.toComposeColor())
+                .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(14.dp))
+                .padding(horizontal = 32.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                if (finalizing) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.fillMaxSize(),
+                        color = palette.accent.toComposeColor(),
+                        strokeWidth = 4.dp,
+                    )
+                } else {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxSize(),
+                        color = palette.accent.toComposeColor(),
+                        trackColor = palette.border.toComposeColor(),
+                        strokeWidth = 4.dp,
+                    )
+                    Text(
+                        "${(fraction * 100).roundToInt()}%",
+                        color = palette.text.toComposeColor(),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 15.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "Exporting to PDF…",
+                color = palette.text.toComposeColor(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 15.sp,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                when {
+                    total <= 0 -> "Preparing…"
+                    done < total -> "page $done / $total"
+                    else -> "Writing $total page${if (total == 1) "" else "s"}…"
+                },
+                color = palette.textDim.toComposeColor(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            androidx.compose.material3.TextButton(onClick = onCancel) {
+                Text("Cancel", color = palette.accent.toComposeColor(), fontFamily = FontFamily.Monospace)
+            }
+        }
     }
 }
 

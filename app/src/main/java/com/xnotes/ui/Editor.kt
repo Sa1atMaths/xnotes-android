@@ -427,12 +427,26 @@ class Editor(context: Context) {
             ?: run { message = "The clipboard has no image to paste." }
     }
 
-    fun exportPdf(output: OutputStream) {
+    /**
+     * Flatten the open note to a PDF written to [out], reporting per-page progress and
+     * polling [isCancelled] so a long export can show a dialog and be aborted. The caller
+     * runs this off the main thread; it throws on failure (no message side-effects) so the
+     * caller can tell success / failure / cancel apart.
+     */
+    fun exportPdf(
+        out: OutputStream,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        isCancelled: () -> Boolean = { false },
+    ) {
+        // Render against a private PdfSource built from the document's own bytes, not the
+        // live [pdfSource]: export now runs off the main thread, and Android's PdfRenderer
+        // is single-threaded — sharing it with the canvas's background cache builder would
+        // crash. A plain note has null bytes and renders identically.
+        val src = state.document.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         try {
-            com.xnotes.platform.PdfExporter.export(state.document, pdfSource, output, state::paperColor)
-            message = "Exported to PDF."
-        } catch (e: Exception) {
-            message = "Could not export to PDF."
+            com.xnotes.platform.PdfExporter.export(state.document, src, out, state::paperColor, onProgress, isCancelled)
+        } finally {
+            src?.close()
         }
     }
 
@@ -1292,11 +1306,16 @@ class Editor(context: Context) {
     }
 
     /** Loads the note at [srcUri] and writes it flattened to a PDF in [out] (share-as-PDF / export). */
-    fun exportFileToPdf(srcUri: String, out: OutputStream) {
+    fun exportFileToPdf(
+        srcUri: String,
+        out: OutputStream,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        isCancelled: () -> Boolean = { false },
+    ) {
         val doc = appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { codec.read(it) } ?: return
         val src = doc.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         try {
-            com.xnotes.platform.PdfExporter.export(doc, src, out) { page -> state.paperColor(page) }
+            com.xnotes.platform.PdfExporter.export(doc, src, out, { page -> state.paperColor(page) }, onProgress, isCancelled)
         } finally {
             src?.close()
         }
@@ -1576,12 +1595,24 @@ class Editor(context: Context) {
     // --- export a subset of pages (side-panel Share / Save as) ---
 
     /** Flatten the pages at [indices] (document order) into a PDF written to [out]. */
-    fun exportPagesToPdf(indices: List<Int>, out: OutputStream) {
+    fun exportPagesToPdf(
+        indices: List<Int>,
+        out: OutputStream,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        isCancelled: () -> Boolean = { false },
+    ) {
         val pages = indices.distinct().sorted().mapNotNull { pageAt(it) }
         if (pages.isEmpty()) return
         val sub = Document(dpi = state.document.dpi, pdfBytes = state.document.pdfBytes)
         sub.pages.addAll(pages) // share the page objects; export only reads them
-        com.xnotes.platform.PdfExporter.export(sub, pdfSource, out, state::paperColor)
+        // A private source per export — see [exportPdf]: the canvas's cache thread may be
+        // touching the live [pdfSource], and PdfRenderer can't be shared across threads.
+        val src = sub.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
+        try {
+            com.xnotes.platform.PdfExporter.export(sub, src, out, state::paperColor, onProgress, isCancelled)
+        } finally {
+            src?.close()
+        }
     }
 
     /** PNG bytes for page [index], rendered at full page resolution (paper + background + items), or null. */

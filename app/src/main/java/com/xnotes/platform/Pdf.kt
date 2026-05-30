@@ -32,37 +32,59 @@ object PdfExporter {
      * [paperColor] gives each page's background fill (the on-screen paper colour,
      * e.g. dark-theme `#161616`); without it the page would keep the PDF canvas's
      * default white, exporting dark-mode notes on a white background.
+     *
+     * Rendering a large imported PDF is slow, so the caller drives it off the main
+     * thread: [onProgress] reports `(pagesDone, totalPages)` — emitted once as
+     * `(0, total)` before any work and again after each finished page — so a dialog
+     * can show real 0→100% progress, and [isCancelled] is polled per page so a
+     * dismissed dialog aborts promptly. On cancel we return before [out] is written,
+     * so the caller's half-built temp file is simply discarded.
      */
-    fun export(doc: Document, source: PdfSource?, out: OutputStream, paperColor: (Page) -> Rgba) {
+    fun export(
+        doc: Document,
+        source: PdfSource?,
+        out: OutputStream,
+        paperColor: (Page) -> Rgba,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+        isCancelled: () -> Boolean = { false },
+    ) {
         val pdf = PdfDocument()
         val scale = (72.0 / doc.dpi).toFloat()
         val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-        doc.pages.forEachIndexed { index, page ->
-            val wPts = (page.width / doc.dpi * 72).roundToInt().coerceAtLeast(1)
-            val hPts = (page.height / doc.dpi * 72).roundToInt().coerceAtLeast(1)
-            val info = PdfDocument.PageInfo.Builder(wPts, hPts, index + 1).create()
-            val pdfPage = pdf.startPage(info)
-            val canvas = pdfPage.canvas
-            // Paint the paper colour over the whole page first (drawColor ignores the
-            // matrix); an embedded PDF page then covers it, but a plain note keeps it
-            // instead of falling through to the canvas's default white.
-            canvas.drawColor(paperColor(page).toArgb())
-            // Draw in page-pixel coordinates; the canvas maps them to points.
-            canvas.scale(scale, scale)
+        val total = doc.pages.size
+        try {
+            onProgress(0, total)
+            doc.pages.forEachIndexed { index, page ->
+                if (isCancelled()) return
+                val wPts = (page.width / doc.dpi * 72).roundToInt().coerceAtLeast(1)
+                val hPts = (page.height / doc.dpi * 72).roundToInt().coerceAtLeast(1)
+                val info = PdfDocument.PageInfo.Builder(wPts, hPts, index + 1).create()
+                val pdfPage = pdf.startPage(info)
+                val canvas = pdfPage.canvas
+                // Paint the paper colour over the whole page first (drawColor ignores the
+                // matrix); an embedded PDF page then covers it, but a plain note keeps it
+                // instead of falling through to the canvas's default white.
+                canvas.drawColor(paperColor(page).toArgb())
+                // Draw in page-pixel coordinates; the canvas maps them to points.
+                canvas.scale(scale, scale)
 
-            val src = page.pdfPage
-            if (src != null && source != null) {
-                val bg = source.renderPage(src, page.width.toInt(), page.height.toInt(), invert = false)
-                if (bg != null) {
-                    canvas.drawBitmap(bg.bitmap, null, RectF(0f, 0f, page.width.toFloat(), page.height.toFloat()), bitmapPaint)
-                    bg.recycle()
+                val src = page.pdfPage
+                if (src != null && source != null) {
+                    val bg = source.renderPage(src, page.width.toInt(), page.height.toInt(), invert = false)
+                    if (bg != null) {
+                        canvas.drawBitmap(bg.bitmap, null, RectF(0f, 0f, page.width.toFloat(), page.height.toFloat()), bitmapPaint)
+                        bg.recycle()
+                    }
                 }
+                val renderer = AndroidRenderer(canvas)
+                for (item in page.items) item.paint(renderer)
+                pdf.finishPage(pdfPage)
+                onProgress(index + 1, total)
             }
-            val renderer = AndroidRenderer(canvas)
-            for (item in page.items) item.paint(renderer)
-            pdf.finishPage(pdfPage)
+            if (isCancelled()) return
+            pdf.writeTo(out)
+        } finally {
+            pdf.close()
         }
-        pdf.writeTo(out)
-        pdf.close()
     }
 }
