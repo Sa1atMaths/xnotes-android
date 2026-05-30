@@ -20,6 +20,15 @@ enum class Tool(val id: String) {
     val isStroke: Boolean get() = this == PEN || this == DASHED || this == CALLIGRAPHY ||
         this == SPEED || this == TAPER || this == HIGHLIGHTER
 
+    /**
+     * Tools the "draw with finger" gate covers: when finger-draw is off, a finger pans
+     * instead of activating these (the stroke tools plus select/lasso/shape/eraser). The
+     * stylus always uses the armed tool (its eraser tip still erases); text and pan stay
+     * usable by finger either way.
+     */
+    val fingerPansWhenOff: Boolean get() = isStroke ||
+        this == SELECT || this == LASSO || this == SHAPE || this == ERASER
+
     /** Render-time ink alpha scale: the highlighter is translucent (spec 03 §3). */
     val alphaScale: Double get() = if (this == HIGHLIGHTER) 0.35 else 1.0
 

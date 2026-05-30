@@ -253,8 +253,8 @@ class InteractionController(
         val effectiveTool: Tool = when {
             toolType == MotionEvent.TOOL_TYPE_ERASER -> Tool.ERASER
             buttonHeld && penButtonTool != null -> penButtonTool!!
-            // A finger pans instead of drawing freehand ink (other tools stay usable by finger).
-            toolType == MotionEvent.TOOL_TYPE_FINGER && !fingerDraws && tool.isStroke -> Tool.PAN
+            // A finger pans instead of drawing/selecting/shaping/erasing (text stays usable by finger).
+            toolType == MotionEvent.TOOL_TYPE_FINGER && !fingerDraws && tool.fingerPansWhenOff -> Tool.PAN
             else -> tool
         }
 
