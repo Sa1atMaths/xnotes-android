@@ -983,13 +983,13 @@ class InteractionController(
         val beforeY = state.scrollY
         state.scrollBy(dx, dy)
         val leftoverY = dy - (state.scrollY - beforeY)
-        // Only feed the elastic when the pull is genuinely past the document's end. If the document
-        // is taller than the viewport, hitting the bottom clamp already means the last page's bottom.
-        // If the whole document fits on screen (maxScrollY == 0) the clamp is trivially satisfied, so
-        // additionally require the last page to be the one centred in the viewport — otherwise a
-        // downward drag on an early page of a zoomed-out multi-page document would spuriously arm it.
-        val atDocEnd = state.maxScrollY() > 0.0 || state.currentPageIndex() == state.pageRects.lastIndex
-        if (leftoverY > 0.0 && atDocEnd) {
+        // Only feed the elastic when the document's end is actually on screen. Inferring "at the end"
+        // from a rejected downward scroll alone is unsafe: a transient bad scroll/layout state right
+        // after a document opens can make the clamp fire while there is still document below the fold,
+        // spuriously arming add-page (seen on first open, even on long PDFs). isDocumentEndVisible()
+        // checks the last page's bottom against the viewport through the same transform that draws the
+        // frame, so the affordance can never appear while the user can still see more document below.
+        if (leftoverY > 0.0 && state.isDocumentEndVisible()) {
             state.overscrollY = (state.overscrollY + leftoverY * OVERSCROLL_RESIST).coerceAtMost(OVERSCROLL_MAX)
             updateOverscrollArmed()
         }
@@ -1077,6 +1077,20 @@ class InteractionController(
         overscrollSettling = false
         overscrollArmed = false
         state.overscrollY = 0.0
+    }
+
+    /**
+     * Drop any in-flight scroll/zoom physics and partial gesture so the previous document's fling,
+     * elastic stretch or half-finished pan can't bleed into a freshly opened one. The editor calls
+     * this whenever it swaps the open document — otherwise a stale fling/overscroll could leave the
+     * new document at (or believing it is at) its bottom, spuriously arming add-page on first scroll.
+     */
+    fun resetGestureState() {
+        stopFling()
+        clearOverscroll()
+        mode = PointerMode.IDLE
+        lastPan = Pt.ZERO
+        panVel = Pt.ZERO
     }
 
     private fun stepOverscrollSettle(frameTimeNanos: Long) {

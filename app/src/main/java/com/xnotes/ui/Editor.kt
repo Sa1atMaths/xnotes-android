@@ -531,6 +531,7 @@ class Editor(context: Context) {
             state.document = snap.document
             rebuildPdfSource()
             history.clear()
+            controller.resetGestureState()
             state.invalidateAllCaches()
             // Prefer this note's own remembered view (folder notes); fall back to the session's
             // saved view for a non-folder/unsaved note; otherwise fit width.
@@ -1298,6 +1299,7 @@ class Editor(context: Context) {
         autosaveUri = null
         controller.commitTextEdit()
         controller.clearSelection()
+        controller.resetGestureState() // drop the outgoing note's fling/elastic so it can't bleed in
         clearPageSelection()
         pageClipboard.clear() // clones reference the outgoing document; don't paste them into another
         state.document = doc
@@ -1695,6 +1697,7 @@ class Editor(context: Context) {
         )
         history.clear()
         controller.clearSelection()
+        controller.resetGestureState() // drop the outgoing note's fling/elastic so it can't bleed in
         clearPageSelection()
         pageClipboard.clear()
         state.invalidateAllCaches()

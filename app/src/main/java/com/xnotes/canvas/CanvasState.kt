@@ -261,6 +261,19 @@ class CanvasState(
         return pageRects.size - 1
     }
 
+    /**
+     * True when the bottom edge of the last page is at or above the viewport's bottom — i.e. the
+     * document's end is genuinely on screen. The pull-past-the-end (add-page) elastic keys off this
+     * rather than inferring "at the end" from a rejected downward scroll, so it can never arm while
+     * there is still document below the fold — even when a transient bad scroll/layout state right
+     * after a document opens would make the bottom scroll clamp fire. Computed through the same
+     * [origin]/transform that draws the frame, so it can never disagree with what the user sees.
+     */
+    fun isDocumentEndVisible(): Boolean {
+        val lastBottom = pageRects.lastOrNull()?.bottom ?: return false
+        return contentToViewport(Pt(0.0, lastBottom)).y <= viewportH + 1.0
+    }
+
     fun goToPage(index: Int) {
         if (pageRects.isEmpty()) return
         val i = index.coerceIn(0, pageRects.size - 1)
