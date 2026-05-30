@@ -67,6 +67,10 @@ class InteractionController(
     private val requestRender: () -> Unit,
     private val onContentChanged: () -> Unit = {},
     private val onViewChanged: () -> Unit = {},
+    /** A pinch just snapped the view to fit-to-width (newly): surface the lock hint. */
+    private val onFitWidthSnapped: () -> Unit = {},
+    /** A pinch broke past the fit-to-width magnet: dismiss the lock hint. */
+    private val onFitWidthReleased: () -> Unit = {},
     private val onSelectionChanged: (Boolean) -> Unit = {},
     private val onToolChanged: (Tool) -> Unit = {},
     private val onTextEditStart: (EditingField?) -> Unit = {},
@@ -1113,9 +1117,17 @@ class InteractionController(
         val mid = (a + b) * 0.5
         trackVelocity(mid.x, mid.y)
         // Zoom lock: pan only (keep the initial zoom).
-        val z = if (state.zoomLocked) pinchInitZoom
-        else (pinchInitZoom * (dist / pinchInitDist)).coerceIn(CanvasState.MIN_ZOOM, CanvasState.MAX_ZOOM)
+        val raw = (pinchInitZoom * (dist / pinchInitDist)).coerceIn(CanvasState.MIN_ZOOM, CanvasState.MAX_ZOOM)
+        val wasFit = state.fitWidthActive
+        // Magnetic fit-to-width: the live zoom sticks to fit-width while within the band (pinch past
+        // it to break free). The lock hint surfaces the moment it grabs and is dismissed the moment
+        // it breaks free. A locked pinch is pan-only, so it never snaps.
+        val z = if (state.zoomLocked) pinchInitZoom else state.snapZoomToFitWidth(raw)
         state.zoom = z
+        if (!state.zoomLocked) {
+            if (!wasFit && state.fitWidthActive) onFitWidthSnapped()
+            else if (wasFit && !state.fitWidthActive) onFitWidthReleased()
+        }
         state.scrollX = pinchAnchorContent.x * z - mid.x
         state.scrollY = pinchAnchorContent.y * z - mid.y
         state.clampScroll()

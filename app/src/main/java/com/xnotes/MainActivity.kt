@@ -8,16 +8,29 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,9 +38,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.KeyEventType
@@ -39,7 +57,11 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.xnotes.ui.Editor
 import com.xnotes.ui.Toolbar
+import com.xnotes.ui.icons.XnotesIcons
+import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.XnotesTheme
+import com.xnotes.ui.theme.toComposeColor
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Minimum time the launch loader stays up, so its animation is briefly seen even
@@ -459,6 +481,7 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                         pendingInsertContent = c
                         insertImageLauncher.launch(arrayOf("image/*"))
                     })
+                    ZoomLockHint(editor)
                 }
             }
         }
@@ -536,6 +559,69 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
                 }
             },
         )
+    }
+}
+
+/**
+ * Transient "lock zoom" affordance, centred just below the toolbar. Appears when a pinch snaps to
+ * fit-to-width ([Editor.zoomLockHint] bumps), auto-dismisses after a moment, and locks the zoom on
+ * tap. Only ever shown while unlocked, since a locked pinch can't reach fit-width to trigger it.
+ */
+@Composable
+private fun BoxScope.ZoomLockHint(editor: Editor) {
+    val palette = LocalPalette.current
+    var visible by remember { mutableStateOf(false) }
+    var justLocked by remember { mutableStateOf(false) }
+    LaunchedEffect(editor.zoomLockHint) {
+        if (editor.zoomLockHint > 0) {
+            justLocked = false // a fresh snap shows the open "tap to lock" affordance again
+            visible = true
+            delay(2500)
+            visible = false
+        }
+    }
+    // After tapping, briefly hold the closed+accent padlock as confirmation, then dismiss.
+    LaunchedEffect(justLocked) {
+        if (justLocked) {
+            delay(700)
+            visible = false
+            justLocked = false
+        }
+    }
+    // Breaking past the magnet dismisses the hint at once (unless mid lock-confirmation).
+    LaunchedEffect(editor.zoomLockHintDismiss) {
+        if (editor.zoomLockHintDismiss > 0 && !justLocked) visible = false
+    }
+    val locked = editor.zoomLocked
+    AnimatedVisibility(
+        visible = visible,
+        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(palette.surface.toComposeColor())
+                .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(6.dp))
+                .clickable(enabled = !locked) { editor.toggleZoomLock(); justLocked = true }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (locked) XnotesIcons.lock else XnotesIcons.unlock,
+                contentDescription = "Lock zoom at fit width",
+                tint = (if (locked) palette.accent else palette.textDim).toComposeColor(),
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Lock zoom",
+                color = palette.text.toComposeColor(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+            )
+        }
     }
 }
 

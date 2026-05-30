@@ -142,6 +142,16 @@ class Editor(context: Context) {
         private set
     var zoomPercent by mutableStateOf(100)
         private set
+
+    /** Bumped each time a pinch snaps to fit-to-width; the toolbar's transient lock hint observes
+     *  this to (re)show itself and re-arm its auto-dismiss timer. */
+    var zoomLockHint by mutableStateOf(0)
+        private set
+
+    /** Bumped when a pinch breaks past the fit-to-width magnet; the lock hint observes this to
+     *  dismiss itself immediately. */
+    var zoomLockHintDismiss by mutableStateOf(0)
+        private set
     var pageIndex by mutableStateOf(0)
         private set
     var pageCount by mutableStateOf(state.document.pages.size)
@@ -219,6 +229,8 @@ class Editor(context: Context) {
         requestRender = { onRender() },
         onContentChanged = { refreshContent() },
         onViewChanged = { refreshView() },
+        onFitWidthSnapped = { showZoomLockHint() },
+        onFitWidthReleased = { hideZoomLockHint() },
         onSelectionChanged = { selected -> hasSelection = selected },
         onToolChanged = { t -> tool = t },
         onTextEditStart = { field -> editingField = field },
@@ -1331,6 +1343,12 @@ class Editor(context: Context) {
         zoomLocked = !zoomLocked
         state.zoomLocked = zoomLocked
     }
+
+    /** Show (or re-arm) the transient "lock zoom" hint after a pinch snaps to fit-to-width. */
+    fun showZoomLockHint() { zoomLockHint += 1 }
+
+    /** Dismiss the "lock zoom" hint when a pinch breaks past the fit-to-width magnet. */
+    fun hideZoomLockHint() { zoomLockHintDismiss += 1 }
 
     // --- pages ---
 

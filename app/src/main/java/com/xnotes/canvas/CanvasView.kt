@@ -206,6 +206,8 @@ class CanvasView @JvmOverloads constructor(
         st.relayout()
         if (!st.didInitialFit && w > 0 && h > 0) {
             st.establishInitialView()
+        } else if (w != oldw && w > 0) {
+            st.reflowFitWidthForResize() // sidebar opened/closed: re-fit to the new width
         }
         st.clampScroll()
         afterLayout?.invoke()

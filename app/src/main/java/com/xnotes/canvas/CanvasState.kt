@@ -89,6 +89,14 @@ class CanvasState(
     /** When true, zoom is fixed (pinch pans only, zoom buttons/fit are no-ops). */
     var zoomLocked: Boolean = false
 
+    /**
+     * True while the view is sitting at fit-to-width. Set when a pinch snaps to fit-width (or
+     * [fitWidth]/[resetViewToFitWidth] land there), cleared whenever the zoom moves off it. Drives
+     * [reflowFitWidthForResize] so the page re-fits when the usable width changes (e.g. the sidebar
+     * opens) — independent of [zoomLocked], which only freezes user zoom gestures.
+     */
+    var fitWidthActive: Boolean = false
+
     /** Items excluded from the cache (lifted for selection/editing); set by the interaction layer. */
     var isLiftedItem: (CanvasItem) -> Boolean = { false }
 
@@ -270,6 +278,7 @@ class CanvasState(
         if (zoomLocked) return
         val z = newZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
         if (abs(z - zoom) < 1e-9) return
+        fitWidthActive = false // an explicit zoom step leaves fit-to-width
         val anchor = viewportToContent(focusViewport)
         zoom = z
         scrollX = anchor.x * z - focusViewport.x
@@ -286,7 +295,8 @@ class CanvasState(
     fun fitWidth() {
         if (zoomLocked || contentW <= 0.0 || viewportW == 0) return
         val cur = currentPageIndex()
-        zoom = (viewportW / contentW).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        zoom = fitWidthZoom()
+        fitWidthActive = true
         invalidateCachesForZoom()
         goToPage(cur)
     }
@@ -296,6 +306,7 @@ class CanvasState(
         if (zoomLocked || pages.isEmpty() || viewportH == 0) return
         val cur = currentPageIndex()
         zoom = ((viewportH - 60.0) / pages[cur].height).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        fitWidthActive = false
         invalidateCachesForZoom()
         goToPage(cur)
     }
@@ -306,8 +317,50 @@ class CanvasState(
         val cur = currentPageIndex()
         val page = pages[cur]
         zoom = min((viewportW - 60.0) / page.width, (viewportH - 60.0) / page.height).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        fitWidthActive = false
         invalidateCachesForZoom()
         goToPage(cur)
+    }
+
+    // --- fit-to-width snapping (spec 05) ---
+
+    /** The zoom at which the page column exactly fills the viewport width, or 0 if not measurable. */
+    fun fitWidthZoom(): Double =
+        if (contentW <= 0.0 || viewportW == 0) 0.0
+        else (viewportW / contentW).coerceIn(MIN_ZOOM, MAX_ZOOM)
+
+    /**
+     * Live magnetic fit-to-width for a pinch: if [raw] (the gesture's unconstrained zoom) is within
+     * [SNAP_TO_FIT_WIDTH] of fit-to-width, it sticks to exactly fit-width and sets [fitWidthActive];
+     * otherwise it returns [raw] and clears [fitWidthActive]. Returns the zoom the caller applies.
+     * The false→true transition of [fitWidthActive] is when the caller surfaces the lock hint.
+     */
+    fun snapZoomToFitWidth(raw: Double): Double {
+        val fit = fitWidthZoom()
+        return if (fit > 0.0 && abs(raw - fit) <= fit * SNAP_TO_FIT_WIDTH) {
+            fitWidthActive = true
+            fit
+        } else {
+            fitWidthActive = false
+            raw
+        }
+    }
+
+    /**
+     * Re-fit to the available width after a viewport resize (e.g. the sidebar opened/closed), but
+     * only while [fitWidthActive]. Deliberately ignores [zoomLocked]: when the usable width changes,
+     * staying fit to the visible width matters more than holding the exact zoom number.
+     */
+    fun reflowFitWidthForResize() {
+        if (!fitWidthActive || contentW <= 0.0 || viewportW == 0) return
+        // Keep the content under the viewport's vertical centre put (don't jump to the page top) and
+        // re-centre horizontally; only the width-driven zoom changes.
+        val centerContentY = viewportToContent(Pt(viewportW / 2.0, viewportH / 2.0)).y
+        zoom = fitWidthZoom()
+        scrollX = 0.0
+        scrollY = centerContentY * zoom - viewportH / 2.0
+        invalidateCachesForZoom()
+        clampScroll()
     }
 
     // --- initial view (on opening a document) ---
@@ -321,6 +374,9 @@ class CanvasState(
         zoom = newZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
         scrollX = sx
         scrollY = sy
+        // A restored view that lands at fit-width should still auto-refit on resize.
+        val target = fitWidthZoom()
+        fitWidthActive = target > 0.0 && abs(zoom - target) <= target * SNAP_TO_FIT_WIDTH
         invalidateCachesForZoom()
         clampScroll()
     }
@@ -328,7 +384,8 @@ class CanvasState(
     /** Fit page width and scroll to the first page, ignoring the zoom lock (document open). */
     fun resetViewToFitWidth() {
         if (contentW <= 0.0 || viewportW == 0) return
-        zoom = (viewportW / contentW).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        zoom = fitWidthZoom()
+        fitWidthActive = true
         invalidateCachesForZoom()
         goToPage(0)
     }
@@ -754,6 +811,9 @@ class CanvasState(
         const val MIN_ZOOM = 0.12
         const val MAX_ZOOM = 8.0
         const val ZOOM_STEP = 1.25
+
+        /** While a pinch's zoom is within this fraction of [fitWidthZoom] it sticks to fit-to-width. */
+        const val SNAP_TO_FIT_WIDTH = 0.05
         const val CTRL_WHEEL_BASE = 1.01
         const val MAX_CACHE_PX = 2048.0
 
