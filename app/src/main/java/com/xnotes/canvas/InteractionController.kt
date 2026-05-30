@@ -983,7 +983,13 @@ class InteractionController(
         val beforeY = state.scrollY
         state.scrollBy(dx, dy)
         val leftoverY = dy - (state.scrollY - beforeY)
-        if (leftoverY > 0.0) {
+        // Only feed the elastic when the pull is genuinely past the document's end. If the document
+        // is taller than the viewport, hitting the bottom clamp already means the last page's bottom.
+        // If the whole document fits on screen (maxScrollY == 0) the clamp is trivially satisfied, so
+        // additionally require the last page to be the one centred in the viewport — otherwise a
+        // downward drag on an early page of a zoomed-out multi-page document would spuriously arm it.
+        val atDocEnd = state.maxScrollY() > 0.0 || state.currentPageIndex() == state.pageRects.lastIndex
+        if (leftoverY > 0.0 && atDocEnd) {
             state.overscrollY = (state.overscrollY + leftoverY * OVERSCROLL_RESIST).coerceAtMost(OVERSCROLL_MAX)
             updateOverscrollArmed()
         }
@@ -1250,8 +1256,8 @@ class InteractionController(
 
         // Elastic overscroll tuning (pull past the bottom end to add a page).
         const val OVERSCROLL_RESIST = 0.45 // fraction of past-end finger travel that becomes visible stretch
-        const val OVERSCROLL_MAX = 240.0 // hard cap on the visible stretch (viewport px)
-        const val OVERSCROLL_TRIGGER = 130.0 // stretch at which releasing appends a page
+        const val OVERSCROLL_MAX = 400.0 // hard cap on the visible stretch (viewport px)
+        const val OVERSCROLL_TRIGGER = 300.0 // stretch at which releasing appends a page
         const val OVERSCROLL_SPRING = 11.0 // spring-back rate toward rest (1/s; higher = snappier)
     }
 }

@@ -1390,10 +1390,12 @@ class Editor(context: Context) {
         goToPage(at)
     }
 
-    /** Append a blank page at the very end and reveal it — used by the pull-past-the-end gesture. */
+    /**
+     * Append a blank page at the very end — used by the pull-past-the-end gesture. Stays at the
+     * current scroll position so the user is not yanked to the new page; they can scroll to it.
+     */
     fun addPageAtEnd() {
-        val at = insertBlankPageAt(state.document.pages.size, state.document.pages.lastIndex)
-        goToPage(at)
+        insertBlankPageAt(state.document.pages.size, state.document.pages.lastIndex)
     }
 
     fun deleteCurrentPage() {
