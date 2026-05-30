@@ -7,7 +7,7 @@ data class Bookmark(var page: Int, var label: String)
 
 /**
  * An ordered collection of pages plus on-disk identity (spec 02 §3). New notes
- * open with three blank pages at the user's default page size/orientation.
+ * open with one blank page at the user's default page size/orientation.
  */
 class Document(
     val pages: MutableList<Page> = mutableListOf(),
@@ -40,7 +40,7 @@ class Document(
     }
 
     companion object {
-        const val DEFAULT_NEW_PAGES = 3
+        const val DEFAULT_NEW_PAGES = 1
 
         /** A blank document of [count] pages of the given size/orientation. */
         fun blank(

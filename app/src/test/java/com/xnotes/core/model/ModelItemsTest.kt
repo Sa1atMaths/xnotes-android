@@ -116,7 +116,7 @@ class ModelItemsTest {
 
     @Test fun documentBlankAndTitle() {
         val d = Document.blank()
-        assertEquals(3, d.pages.size)
+        assertEquals(1, d.pages.size)
         assertEquals("Untitled", d.title)
         d.path = "/home/user/notes/Meeting.xnote"
         assertEquals("Meeting", d.title)
