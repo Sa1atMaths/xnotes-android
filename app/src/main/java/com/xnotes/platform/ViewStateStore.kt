@@ -36,6 +36,11 @@ class ViewStateStore(private val store: JsonStore) {
         if (views.remove(key) != null) store.write(toJson())
     }
 
+    /** Forget the remembered view for every note whose key matches [predicate] — a deleted file, or a deleted folder's whole subtree. */
+    fun removeMatching(predicate: (String) -> Boolean) {
+        if (views.keys.removeAll(predicate)) store.write(toJson())
+    }
+
     /** Forget every remembered view (e.g. when the granted folder is released). */
     fun clear() {
         views.clear()

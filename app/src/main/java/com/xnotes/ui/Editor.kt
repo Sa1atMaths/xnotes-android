@@ -1101,15 +1101,22 @@ class Editor(context: Context) {
             return u.authority == auth && (rid == delId || rid.startsWith("$delId/"))
         }
 
-        // The note on screen was just deleted. Detach it at once — cancel autosave, drop its path
-        // and remembered view, mark it clean — so nothing can rewrite the file or prompt to "save"
-        // it back, then drop the document itself for a fresh blank note on the main thread. The
-        // identity guard skips that reset if the user has meanwhile opened another note.
+        // Forget the deleted note's remembered zoom/scroll — and every note's under a deleted folder.
+        // View-state keys are document identities ("$auth|$id", see recentKey), so match them the same
+        // way as recents. This runs whether or not the note is on screen, so a same-named file later
+        // created in this folder (the local provider reuses the path-derived id) starts at fit-width
+        // instead of inheriting the dead note's view.
+        val keyPrefix = "$auth|$delId"
+        viewStates.removeMatching { it == keyPrefix || it.startsWith("$keyPrefix/") }
+
+        // The note on screen was just deleted. Detach it at once — cancel autosave, drop its path,
+        // mark it clean — so nothing can rewrite the file or prompt to "save" it back, then drop the
+        // document itself for a fresh blank note on the main thread. The identity guard skips that
+        // reset if the user has meanwhile opened another note.
         if (currentUri?.let { matches(it) } == true) {
             val deleted = state.document
             autosaveJob?.cancel()
             autosaveUri = null
-            viewKey(currentUri)?.let { viewStates.remove(it) }
             deleted.path = null
             deleted.dirty = false
             dirty = false
