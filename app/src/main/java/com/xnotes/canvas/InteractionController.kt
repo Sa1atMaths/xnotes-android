@@ -116,7 +116,9 @@ class InteractionController(
     private var lastPan = Pt.ZERO
     private var lastMoveMs = 0L
     private var panVel = Pt.ZERO // smoothed finger velocity, viewport px/s
-    private val choreographer = Choreographer.getInstance()
+    // Framework singletons, created lazily on first use (always a gesture on the main thread) so
+    // the controller's selection/edit logic stays constructible — and unit-testable — off-device.
+    private val choreographer by lazy { Choreographer.getInstance() }
     private var flinging = false
     private var flingVel = Pt.ZERO // scroll-space velocity, viewport px/s
     private var lastFlingMs = 0L
@@ -167,7 +169,7 @@ class InteractionController(
     private var resizePageIndex: Int = -1
 
     // LONG-PRESS GRAB
-    private val handler = Handler(Looper.getMainLooper())
+    private val handler by lazy { Handler(Looper.getMainLooper()) } // lazy: see [choreographer]
     private var longPressRunnable: Runnable? = null
     private var longPressStart = Pt.ZERO
     private var longPressContent = Pt.ZERO
@@ -569,7 +571,9 @@ class InteractionController(
             lassoPolygon = lassoPolygon?.map { Pt(it.x + moveOffset.x, it.y + moveOffset.y) }
             history.push(MoveItems(items, moveOffset.x, moveOffset.y))
             state.document.dirty = true
-            invalidateSelectionPages()
+            // Moved items stay lifted (drawn live in the overlay), so the ink cache — which
+            // already excludes them — needs no repair; it is repainted at their final spot
+            // when the selection is later cleared.
             onContentChanged()
         }
         moveOffset = Pt.ZERO
@@ -620,7 +624,8 @@ class InteractionController(
             if (new != old) {
                 history.push(ResizeItem(item, old, new))
                 state.document.dirty = true
-                state.document.pages.getOrNull(resizePageIndex)?.let(state::invalidatePage)
+                // The resized item stays lifted (overlay-drawn); the ink cache it was already
+                // lifted out of needs no repair — it is repainted at its new size on deselect.
                 onContentChanged()
             }
         }
@@ -807,13 +812,14 @@ class InteractionController(
     // --- selection management ---
 
     private fun setSelection(items: List<Selected>) {
-        val affected = HashSet<Int>()
-        selection.forEach { affected.add(it.pageIndex) }
+        // Items whose lifted state flips: those leaving the old selection (repainted back
+        // into the cache) and those entering it (lifted out of it). Update the selection
+        // first so the in-place repair below sees the new lifted set.
+        val touched = selection + items
         selection.clear()
         selection.addAll(items)
-        selection.forEach { affected.add(it.pageIndex) }
         lassoPolygon = null
-        affected.forEach { idx -> state.document.pages.getOrNull(idx)?.let(state::invalidatePage) }
+        repairRegions(dirtyRegions(touched))
         onSelectionChanged(selection.isNotEmpty())
         requestRender()
     }
@@ -827,17 +833,38 @@ class InteractionController(
         }
         onSelectionMenu(null)
         if (selection.isEmpty() && lassoPolygon == null) return
-        val affected = selection.map { it.pageIndex }.toSet()
+        val regions = dirtyRegions(selection) // where the now-unlifted items sit (before clearing)
         selection.clear()
         lassoPolygon = null
-        affected.forEach { state.document.pages.getOrNull(it)?.let(state::invalidatePage) }
+        repairRegions(regions) // repaint them back into the cache in place — no full rebuild
         onSelectionChanged(false)
         requestRender()
     }
 
-    private fun invalidateSelectionPages() {
-        selection.map { it.pageIndex }.toSet().forEach {
-            state.document.pages.getOrNull(it)?.let(state::invalidatePage)
+    /**
+     * Page-local dirty rects keyed by page index, unioning each item's paint extent (incl.
+     * soft overflow such as neon glow) — the regions whose cached ink must be repaired when
+     * these items' lifted state changes (lifting clears them out, unlifting repaints them).
+     */
+    private fun dirtyRegions(items: List<Selected>): Map<Int, Rect> {
+        val regions = HashMap<Int, Rect>()
+        for (s in items) {
+            val b = s.item.paintBounds()
+            regions[s.pageIndex] = regions[s.pageIndex]?.union(b) ?: b
+        }
+        return regions
+    }
+
+    /**
+     * Repaint just [regions] of each page's ink cache in place — the eraser's smart path
+     * ([CanvasState.repairRegion]), which keeps the cache entry and the (PDF/template)
+     * background layer intact, so a selection edit no longer blanks the whole ink layer.
+     * Falls back to a full page rebuild only where there is no live cache to repair.
+     */
+    private fun repairRegions(regions: Map<Int, Rect>) {
+        for ((pageIndex, rect) in regions) {
+            val page = state.document.pages.getOrNull(pageIndex) ?: continue
+            if (!state.repairRegion(page, rect.outset(REPAIR_PAD))) state.invalidatePage(page)
         }
     }
 
@@ -860,8 +887,10 @@ class InteractionController(
         for ((page, item) in removals) page.items.remove(item)
         history.push(EraseItems(removals))
         state.document.dirty = true
+        // clearSelection repairs the vacated regions in place; the removed items were lifted
+        // (already out of the ink cache) so they simply stop being drawn. The background/PDF
+        // cache is left untouched — no full flush, no flicker.
         clearSelection()
-        state.invalidateAllCaches()
         onContentChanged()
     }
 
@@ -885,7 +914,9 @@ class InteractionController(
                 history.push(ReorderItems(page, old, new))
                 page.items.clear()
                 page.items.addAll(new)
-                state.invalidatePage(page)
+                // Selected items are lifted (excluded from the cache); the reorder moves only
+                // those, leaving the cached non-lifted items' order unchanged. The new z-order
+                // bakes into the cache when the selection is next cleared — no rebuild here.
             }
         }
         state.document.dirty = true
@@ -942,7 +973,8 @@ class InteractionController(
         page.items.addAll(clones)
         history.push(AddItems(page, clones))
         state.document.dirty = true
-        state.invalidatePage(page)
+        // The clones are immediately selected (lifted) below; setSelection repairs their
+        // region in place, so no separate page rebuild is needed here.
         setSelection(clones.map { Selected(pageIndex, it) })
         refreshSelectionMenu()
         onContentChanged()
