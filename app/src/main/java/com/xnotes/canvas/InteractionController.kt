@@ -116,6 +116,8 @@ class InteractionController(
     private var lastPan = Pt.ZERO
     private var lastMoveMs = 0L
     private var panVel = Pt.ZERO // smoothed finger velocity, viewport px/s
+    private var panDownViewport = Pt.ZERO // where the current pan began (viewport px), for tap-to-dismiss
+    private var downStoppedFling = false // this touch landed on a moving glide, so its lift isn't a dismiss tap
     // Framework singletons, created lazily on first use (always a gesture on the main thread) so
     // the controller's selection/edit logic stays constructible — and unit-testable — off-device.
     private val choreographer by lazy { Choreographer.getInstance() }
@@ -243,6 +245,7 @@ class InteractionController(
     }
 
     private fun handleDown(e: MotionEvent) {
+        downStoppedFling = flinging // captured before stopping: a tap that only halts a glide must not dismiss
         stopFling() // a new touch halts any in-progress glide
         stopOverscrollSettle() // ...and lets a re-grab take over the elastic mid-spring
         val toolType = e.getToolType(0)
@@ -279,7 +282,7 @@ class InteractionController(
             effectiveTool == Tool.TEXT -> beginText(content)
             else -> Unit
         }
-        armLongPress(Pt(vx, vy), content)
+        armLongPress(Pt(vx, vy), content, toolType == MotionEvent.TOOL_TYPE_FINGER)
     }
 
     private fun handlePointerDown(e: MotionEvent) {
@@ -321,7 +324,15 @@ class InteractionController(
             PointerMode.DRAW -> endDraw(e)
             PointerMode.PAN -> {
                 mode = PointerMode.IDLE
-                if (state.overscrollY > 0.0) releaseOverscroll() else startFling(panVel)
+                val upViewport = Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble())
+                // A finger tap (no drag) that didn't just halt a glide, landing off the current
+                // selection, dismisses it — the finger's counterpart to the stylus's empty-tap clear.
+                val tap = !downStoppedFling && upViewport.distanceTo(panDownViewport) <= TAP_SLOP
+                when {
+                    state.overscrollY > 0.0 -> releaseOverscroll()
+                    tap && hasSelection && selectionBoundsContent()?.contains(content) != true -> clearSelection()
+                    else -> startFling(panVel)
+                }
             }
             PointerMode.PINCH -> endPinch()
             PointerMode.ERASE -> endErase()
@@ -750,9 +761,13 @@ class InteractionController(
 
     // --- LONG-PRESS GRAB ---
 
-    private fun armLongPress(viewport: Pt, content: Pt) {
+    private fun armLongPress(viewport: Pt, content: Pt, isFinger: Boolean) {
         cancelLongPress()
-        val grabEligible = tool.isStroke || tool == Tool.PAN || tool == Tool.LASSO || tool == Tool.SHAPE || tool == Tool.TEXT
+        // Long-press (grab an item, or the paste menu on empty space) is a finger-only gesture:
+        // the stylus always draws, so resting it never grabs or pops a menu.
+        if (!isFinger) return
+        val grabEligible = tool.isStroke || tool == Tool.PAN || tool == Tool.SELECT ||
+            tool == Tool.LASSO || tool == Tool.SHAPE || tool == Tool.TEXT
         val pageIndex = state.pageIndexAtContent(content)
         val hit = if (pageIndex != null) {
             val pr = state.pageRects[pageIndex]
@@ -1000,6 +1015,7 @@ class InteractionController(
 
     private fun beginPan(vx: Double, vy: Double) {
         mode = PointerMode.PAN
+        panDownViewport = Pt(vx, vy)
         startTrackingVelocity(vx, vy)
     }
 
@@ -1317,6 +1333,9 @@ class InteractionController(
     companion object {
         const val MIN_SAMPLE_DIST = 1.0
         const val MOVE_EPS = 0.01
+
+        /** Max finger drift (viewport px) from touch-down still counted as a tap (e.g. tap-to-dismiss). */
+        const val TAP_SLOP = 12.0
 
         /** Padding (content px) added around erased items' bounds when repairing
          *  the cache, to cover stroke anti-aliasing at the dirty-rect edge. */
