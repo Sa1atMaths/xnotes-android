@@ -14,7 +14,7 @@ import org.junit.Test
 class InitialViewTest {
 
     private fun state(pages: Int): CanvasState =
-        CanvasState(Document.blank(pages), FakeSurfaceFactory(), Palette.forAppearance(true, Rgba(0, 230, 118))).apply {
+        CanvasState(Document.blank(pages), FakeSurfaceFactory(), Palette.forAppearance("dark", Rgba(0, 230, 118))).apply {
             viewportW = 1000
             viewportH = 1400
             relayout()

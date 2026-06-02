@@ -13,7 +13,7 @@ data class Preferences(
     val pdfDarkMode: Boolean = false,
     /** When dark mode is on, keep embedded PDF images in their original colours instead of inverting them. */
     val pdfKeepImageColors: Boolean = false,
-    val uiAppearance: String = "dark", // "dark" | "light"
+    val uiAppearance: String = "dark", // "dark" | "light" | "oled"
     val accentColor: Rgba = DEFAULT_ACCENT,
     val hideWindowDecoration: Boolean = false,
     val pageColor: Rgba? = null, // null ⇒ follow theme paper
@@ -50,7 +50,7 @@ data class Preferences(
 
         fun fromJson(o: JSONObject?): Preferences {
             if (o == null) return Preferences()
-            val appearance = o.optString("ui_appearance", "dark").let { if (it == "light") "light" else "dark" }
+            val appearance = o.optString("ui_appearance", "dark").let { if (it == "light" || it == "oled") it else "dark" }
             val template = o.optString("default_template", "color").let { if (it == "pdf") "pdf" else "color" }
             return Preferences(
                 pdfDarkMode = o.optBoolean("pdf_dark_mode", false),

@@ -94,7 +94,7 @@ class Editor(context: Context) {
     val state = CanvasState(
         Document.blank(Document.DEFAULT_NEW_PAGES, settings.prefs.defaultPageSize, settings.prefs.defaultPageOrientation),
         AndroidSurfaceFactory(),
-        Palette.forAppearance(settings.prefs.isDark, settings.prefs.accentColor),
+        Palette.forAppearance(settings.prefs.uiAppearance, settings.prefs.accentColor),
     )
     val history = History()
     val view = CanvasView(context).also { it.state = state }
@@ -483,7 +483,7 @@ class Editor(context: Context) {
     }
 
     private fun applyPagePrefsToState(p: Preferences) {
-        palette = Palette.forAppearance(p.isDark, p.accentColor)
+        palette = Palette.forAppearance(p.uiAppearance, p.accentColor)
         state.palette = palette
         state.pageColorOverride = if (p.defaultTemplate == "color") p.pageColor else null
         controller.fingerDraws = p.fingerDraws

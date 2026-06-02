@@ -13,7 +13,7 @@ import org.junit.Test
 class FitWidthSnapTest {
 
     private fun state(pages: Int = 1, viewportW: Int = 1000): CanvasState =
-        CanvasState(Document.blank(pages), FakeSurfaceFactory(), Palette.forAppearance(true, Rgba(0, 230, 118))).apply {
+        CanvasState(Document.blank(pages), FakeSurfaceFactory(), Palette.forAppearance("dark", Rgba(0, 230, 118))).apply {
             this.viewportW = viewportW
             viewportH = 1400
             relayout()

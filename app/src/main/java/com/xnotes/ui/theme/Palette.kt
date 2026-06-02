@@ -68,8 +68,33 @@ data class Palette(
             )
         }
 
-        fun forAppearance(dark: Boolean, accent: Rgba): Palette =
-            if (dark) dark(accent) else light(accent)
+        /**
+         * OLED: pitch-black ([bg]/[panel]/[paper]/[menuBg] = #000000) for power saving
+         * and true black on OLED panels. Counts as a dark variant ([isDark] = true).
+         * Big surfaces are pure black; small controls keep a micro-lift so tap targets
+         * stay visible, and the page is located only by a faint [paperBorder].
+         */
+        fun oled(accent: Rgba = DEFAULT_ACCENT): Palette = Palette(
+            bg = hex(0x000000),
+            panel = hex(0x000000),
+            paper = hex(0x000000),
+            paperBorder = hex(0x242424),
+            accent = accent,
+            accentDim = ColorMath.dim(accent),
+            border = hex(0x242424),
+            text = hex(0xc8c8c8),
+            textDim = hex(0x6f6f6f),
+            surface = hex(0x0d0d0d),
+            surfaceHi = hex(0x161616),
+            menuBg = hex(0x000000),
+            isDark = true,
+        )
+
+        fun forAppearance(appearance: String, accent: Rgba): Palette = when (appearance) {
+            "light" -> light(accent)
+            "oled" -> oled(accent)
+            else -> dark(accent)
+        }
 
         private fun hex(rgb: Int): Rgba =
             Rgba((rgb shr 16) and 0xFF, (rgb shr 8) and 0xFF, rgb and 0xFF, 255)

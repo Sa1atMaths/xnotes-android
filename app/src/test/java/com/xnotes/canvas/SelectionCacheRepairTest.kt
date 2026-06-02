@@ -29,7 +29,7 @@ class SelectionCacheRepairTest {
     private fun state(background: Boolean = false): CanvasState {
         val page = Page(200.0, 200.0, mutableListOf(dot(20.0, 20.0), dot(120.0, 120.0)))
         val doc = Document(mutableListOf(page))
-        return CanvasState(doc, FakeSurfaceFactory(), Palette.forAppearance(true, Rgba(0, 230, 118))).apply {
+        return CanvasState(doc, FakeSurfaceFactory(), Palette.forAppearance("dark", Rgba(0, 230, 118))).apply {
             viewportW = 800
             viewportH = 1000
             relayout()

@@ -96,6 +96,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("Dark", prefs.uiAppearance == "dark") { update(prefs.copy(uiAppearance = "dark")) }
                 Chip("Light", prefs.uiAppearance == "light") { update(prefs.copy(uiAppearance = "light")) }
+                Chip("OLED", prefs.uiAppearance == "oled") { update(prefs.copy(uiAppearance = "oled")) }
             }
             FieldLabel("Accent colour")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
