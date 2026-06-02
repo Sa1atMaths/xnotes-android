@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -47,6 +48,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -385,6 +387,19 @@ private fun HomePane(
                 editor, onOpenFile, onPickRoot, onImportPdf,
                 onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode,
             )
+            // A round quick-create button for a new note in the current folder. Only when a folder is
+            // granted — otherwise the explorer shows the folder-picker prompt and there's nowhere to create.
+            if (editor.browseRoot != null) {
+                FloatingActionButton(
+                    onClick = { onCreateMode(CreateMode.FILE) },
+                    shape = CircleShape,
+                    containerColor = palette.accent.toComposeColor(),
+                    contentColor = palette.bg.toComposeColor(),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                ) {
+                    Icon(XnotesIcons.edit, "New note", modifier = Modifier.size(24.dp))
+                }
+            }
         }
     }
 }
@@ -531,6 +546,10 @@ private fun ExplorerSection(
         // browseChildren returns grid order: folders (ascending by creation), then files (descending).
         val folders = entries?.filter { it.isDir }.orEmpty()
         val files = entries?.filterNot { it.isDir }.orEmpty()
+        // A fixed column count per orientation, derived from the full screen width (not the pane), so
+        // toggling the sidebar never changes how many tiles are in a row — closing it just widens the
+        // pane and enlarges the tiles.
+        val gridColumns = (LocalConfiguration.current.screenWidthDp / 190).coerceIn(2, 8)
         Box(
             Modifier.weight(1f).fillMaxWidth().then(
                 // In select mode, tapping empty space (not a tile) clears the selection.
@@ -541,11 +560,11 @@ private fun ExplorerSection(
                 entries == null -> EmptyPane("Loading…")
                 entries!!.isEmpty() -> EmptyPane("This folder has no notes.")
                 else -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 132.dp),
+                    columns = GridCells.Fixed(gridColumns),
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(bottom = 88.dp), // clear the quick-create FAB
                 ) {
                     // Folders: a full-width wrapping row of compact chips above the file tiles.
                     if (folders.isNotEmpty()) {
@@ -565,6 +584,7 @@ private fun ExplorerSection(
                                         onCopy = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, false) }) else null,
                                         onCut = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, true) }) else null,
                                         onDelete = if (selection.isEmpty()) ({ pendingDelete = listOf(entry) }) else null,
+                                        onDismissSelection = { selection.clear() },
                                         onClick = {
                                             opError = null
                                             if (selection.isNotEmpty()) toggleSelect(entry)
@@ -770,6 +790,7 @@ private fun FolderChip(
     onCopy: (() -> Unit)?,
     onCut: (() -> Unit)?,
     onDelete: (() -> Unit)?,
+    onDismissSelection: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -779,10 +800,12 @@ private fun FolderChip(
         Modifier
             .widthIn(max = 220.dp)
             .clip(RoundedCornerShape(8.dp))
+            // Selected: accent border AND accent transparent fill (matching the file tiles).
             .background((if (selected) palette.accentAlpha(38) else palette.panel).toComposeColor())
+            .then(if (selected) Modifier.border(1.5.dp, palette.accent.toComposeColor(), RoundedCornerShape(8.dp)) else Modifier)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .alpha(if (dimmed) 0.4f else 1f)
-            .padding(start = 10.dp, end = if (inSelectMode) 12.dp else 2.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(XnotesIcons.folder, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(20.dp))
@@ -791,13 +814,16 @@ private fun FolderChip(
             entryLabel(entry), color = palette.text.toComposeColor(), fontSize = 14.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
         )
-        if (!inSelectMode && onRename != null) {
-            Box {
-                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
-                    Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
-                }
-                EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete)
+        // The overflow button is kept in select mode too, so the chip width (and the row layout) never
+        // shifts when selection starts; there a tap dismisses the selection instead of opening the menu.
+        Box {
+            IconButton(
+                onClick = { if (inSelectMode) onDismissSelection() else menuOpen = true },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
             }
+            if (!inSelectMode) EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete)
         }
     }
 }
@@ -851,6 +877,8 @@ private fun FileTile(
             } else {
                 Icon(XnotesIcons.file, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(32.dp).align(Alignment.Center))
             }
+            // Selected: accent transparent fill over the thumbnail, on top of the accent border below.
+            if (selected) Box(Modifier.matchParentSize().background(palette.accentAlpha(38).toComposeColor()))
             if (!inSelectMode && onRename != null) {
                 Box(Modifier.align(Alignment.TopEnd)) {
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
