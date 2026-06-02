@@ -87,7 +87,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Which pane the backstage shows on the right. */
-enum class BackstageView { RECENT, PREFERENCES }
+enum class BackstageView { RECENT, PREFERENCES, ABOUT }
 
 /** Whether the Home explorer is awaiting a new file/folder name. */
 private enum class CreateMode { NONE, FILE, FOLDER }
@@ -217,7 +217,8 @@ private fun BackstageContent(
     BackHandler {
         when {
             compact && sidebarOpen -> sidebarOpen = false
-            view == BackstageView.PREFERENCES -> selectView(BackstageView.RECENT)
+            // Preferences and About are sub-pages of Home: back lands on Home rather than leaving the app.
+            view == BackstageView.PREFERENCES || view == BackstageView.ABOUT -> selectView(BackstageView.RECENT)
             createMode != CreateMode.NONE -> createMode = CreateMode.NONE
             else -> onExitApp()
         }
@@ -290,6 +291,7 @@ private fun BackstageSidebar(
         Command(XnotesIcons.folder, "Open…") { onOpenSystem() }
         RailDivider()
         Command(XnotesIcons.sliders, "Preferences", selected = view == BackstageView.PREFERENCES) { onSelectView(BackstageView.PREFERENCES) }
+        Command(XnotesIcons.info, "About", selected = view == BackstageView.ABOUT) { onSelectView(BackstageView.ABOUT) }
     }
 }
 
@@ -313,8 +315,8 @@ private fun BackstageMain(
 ) {
     val palette = LocalPalette.current
     Column(modifier) {
-        // Preferences gets its own hamburger bar; on Home the hamburger sits inline with "Recent notes".
-        if (!sidebarOpen && view == BackstageView.PREFERENCES) {
+        // Preferences and About get their own hamburger bar; on Home the hamburger sits inline with "Recent notes".
+        if (!sidebarOpen && (view == BackstageView.PREFERENCES || view == BackstageView.ABOUT)) {
             Row(Modifier.fillMaxWidth().padding(start = 6.dp, top = 8.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onShowSidebar) {
                     Icon(XnotesIcons.menu, "Show sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(24.dp))
@@ -328,6 +330,7 @@ private fun BackstageMain(
                     onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode, sidebarOpen, onShowSidebar,
                 )
                 BackstageView.PREFERENCES -> PreferencesPane(editor)
+                BackstageView.ABOUT -> AboutPane()
             }
         }
     }
