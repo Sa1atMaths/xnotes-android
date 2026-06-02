@@ -792,8 +792,9 @@ class InteractionController(
         // The style bar / next new box follow the box being edited.
         textFace = item.face
         textPointSize = item.pointSize
-        // An existing box is lifted out of the cache (isLiftedItem) while edited, so only the field shows it.
-        if (!isNew) state.invalidatePage(state.document.pages[pi])
+        // An existing box is lifted out of the cache (isLiftedItem) while edited, so only the field
+        // shows it. Repair just its region in place — a full invalidatePage flickered the ink layer.
+        if (!isNew) repairTextRegion(state.document.pages[pi], item)
         onTextEditStart(editingField())
         requestRender()
     }
@@ -855,9 +856,21 @@ class InteractionController(
         editingIsNew = false
         editingPageIndex = -1
         editingOldText = ""
-        page?.let(state::invalidatePage)
+        // Repaint just the box's region in place (it is now unlifted, so it bakes back in) rather
+        // than rebuilding the whole page — the same smart path selection uses, so no ink flicker.
+        page?.let { repairTextRegion(it, item) }
         onTextEditEnd()
         requestRender()
+    }
+
+    /**
+     * Repaint only the text box's region of the ink cache in place — the eraser/selection smart
+     * path ([CanvasState.repairRegion]) — instead of a full-page rebuild, which flickered the whole
+     * ink layer on every edit start/commit. The box is excluded while lifted (editing) and painted
+     * back once unlifted, per isLiftedItem. Falls back to a rebuild only when there is no live cache.
+     */
+    private fun repairTextRegion(page: Page, box: TextItem) {
+        if (!state.repairRegion(page, box.paintBounds().outset(REPAIR_PAD))) state.invalidatePage(page)
     }
 
     // --- text styling (driven by the floating style bar + the toolbar colour swatches) ---
