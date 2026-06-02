@@ -1,6 +1,5 @@
 package com.xnotes.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
@@ -66,8 +65,10 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
             .offset(xDp, yDp)
             .widthIn(min = widthDp, max = widthDp)
             .heightIn(min = heightDp)
+            // No fill: the edited box is lifted out of the ink cache, so a transparent field lets
+            // the page/PDF underneath show through while typing (true WYSIWYG). The border still
+            // marks the box bounds.
             .border(1.dp, palette.accent.toComposeColor())
-            .background(palette.menuBg.toComposeColor().copy(alpha = 0.85f))
             .focusRequester(focusRequester),
         textStyle = TextStyle(
             color = field.rgba.toComposeColor(),
