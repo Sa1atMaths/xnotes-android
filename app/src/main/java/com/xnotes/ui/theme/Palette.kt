@@ -89,7 +89,7 @@ object ColorMath {
      * than [maxLuminance] are scaled down in place (hue and saturation kept),
      * so a bright yellow deepens to gold; colours already dark enough pass through.
      */
-    fun darkenForLight(c: Rgba, maxLuminance: Double = 0.45): Rgba {
+    fun darkenForLight(c: Rgba, maxLuminance: Double = 0.35): Rgba {
         val lum = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255.0
         if (lum <= maxLuminance) return c
         val k = maxLuminance / lum
