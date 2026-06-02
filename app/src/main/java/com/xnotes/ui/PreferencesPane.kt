@@ -131,21 +131,19 @@ fun PreferencesPane(editor: Editor) {
                 valueRange = 0f..64f,
                 modifier = Modifier.width(280.dp),
             )
+            FieldLabel("Page colour")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pageColorPresets.forEach { c ->
+                    ColorDot(c.toComposeColor(), prefs.pageColor == c) { update(prefs.copy(pageColor = c)) }
+                }
+                ColorPickerDot(
+                    prefs.pageColor,
+                    custom = prefs.pageColor != null && prefs.pageColor !in pageColorPresets,
+                    onPick = { update(prefs.copy(pageColor = it)) },
+                ) { onDismiss, onPick -> PageColorGridPopup(onDismiss, onPick) }
+            }
             CheckRow("Page colour follows the theme", prefs.pageColor == null) {
                 update(prefs.copy(pageColor = if (it) null else pageColorPresets.first()))
-            }
-            val pageColor = prefs.pageColor
-            if (pageColor != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    pageColorPresets.forEach { c ->
-                        ColorDot(c.toComposeColor(), pageColor == c) { update(prefs.copy(pageColor = c)) }
-                    }
-                    ColorPickerDot(
-                        pageColor,
-                        custom = pageColor !in pageColorPresets,
-                        onPick = { update(prefs.copy(pageColor = it)) },
-                    ) { onDismiss, onPick -> PageColorGridPopup(onDismiss, onPick) }
-                }
             }
             Spacer(Modifier.size(8.dp))
         }
@@ -207,7 +205,7 @@ private val spectrumBrush = Brush.sweepGradient(
  */
 @Composable
 private fun ColorPickerDot(
-    current: Rgba,
+    current: Rgba?,
     custom: Boolean,
     onPick: (Rgba) -> Unit,
     grid: @Composable (onDismiss: () -> Unit, onPick: (Rgba) -> Unit) -> Unit,
@@ -221,7 +219,7 @@ private fun ColorPickerDot(
                 .then(if (custom) Modifier.border(2.dp, palette.accent.toComposeColor(), CircleShape) else Modifier)
                 .padding(4.dp)
                 .clip(CircleShape)
-                .then(if (custom) Modifier.background(current.toComposeColor()) else Modifier.background(spectrumBrush))
+                .then(if (custom && current != null) Modifier.background(current.toComposeColor()) else Modifier.background(spectrumBrush))
                 .border(1.dp, palette.border.toComposeColor(), CircleShape)
                 .clickable { open = true },
         )
