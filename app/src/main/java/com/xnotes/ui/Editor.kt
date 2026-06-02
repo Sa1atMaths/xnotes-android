@@ -1089,14 +1089,100 @@ class Editor(context: Context) {
         invalidateThumb(docUri)
     }
 
-    /** Copies [sourceUri] into the folder [targetParentDocId] within [treeUri]. IO, call off-thread. */
+    /**
+     * Copies [sourceUri] into the folder [targetParentDocId] within [treeUri]. On a name clash — most
+     * often pasting a copy into the same folder — a file is duplicated under a free "… copy" name
+     * rather than failing. (A folder can't be byte-streamed, so a folder name clash still fails.)
+     * IO, call off-thread.
+     */
     fun copyDocumentInto(treeUri: String, sourceUri: String, targetParentDocId: String): Boolean = runCatching {
-        val target = android.provider.DocumentsContract.buildDocumentUriUsingTree(android.net.Uri.parse(treeUri), targetParentDocId)
-        android.provider.DocumentsContract.copyDocument(appContext.contentResolver, android.net.Uri.parse(sourceUri), target) != null
+        val tree = android.net.Uri.parse(treeUri)
+        val target = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, targetParentDocId)
+        val src = android.net.Uri.parse(sourceUri)
+        // Native copy first: it succeeds outright when there's no name clash (e.g. a different folder).
+        // Wrapped on its own, because providers *throw* (rather than return null) on a same-name clash —
+        // we must catch that here so it falls through to making a renamed duplicate below instead of
+        // failing the whole paste.
+        val direct = runCatching {
+            android.provider.DocumentsContract.copyDocument(appContext.contentResolver, src, target)
+        }.getOrNull()
+        if (direct != null) return@runCatching true
+        // The clash case (usually pasting into the same folder): duplicate under a free "… copy" name.
+        val isDir = appContext.contentResolver.getType(src) == android.provider.DocumentsContract.Document.MIME_TYPE_DIR
+        val srcName = queryDisplayName(src) ?: return@runCatching false
+        val taken = browseChildren(treeUri, targetParentDocId).mapTo(HashSet()) { it.name.lowercase() }
+        val newName = uniqueCopyName(srcName, taken, splitExtension = !isDir)
+        if (isDir) {
+            copyFolderAs(treeUri, src, target, newName)
+        } else {
+            val newUri = android.provider.DocumentsContract.createDocument(
+                appContext.contentResolver, target, "application/octet-stream", newName,
+            ) ?: return@runCatching false
+            val copied = runCatching {
+                appContext.contentResolver.openInputStream(src)?.use { input ->
+                    appContext.contentResolver.openOutputStream(newUri, "wt")?.use { output -> input.copyTo(output); true } ?: false
+                } ?: false
+            }.getOrDefault(false)
+            if (!copied) { runCatching { android.provider.DocumentsContract.deleteDocument(appContext.contentResolver, newUri) }; return@runCatching false }
+            true
+        }
     }.getOrDefault(false)
+
+    /**
+     * Duplicates folder [srcFolder] into [targetParent] under [newName]. The new folder starts empty, so
+     * each child copies in with no name clash and the provider's native copy recurses into subfolders.
+     * Best-effort: returns false if any child failed (a partial copy is left in place). IO, call off-thread.
+     */
+    private fun copyFolderAs(treeUri: String, srcFolder: android.net.Uri, targetParent: android.net.Uri, newName: String): Boolean {
+        val dest = android.provider.DocumentsContract.createDocument(
+            appContext.contentResolver, targetParent, android.provider.DocumentsContract.Document.MIME_TYPE_DIR, newName,
+        ) ?: return false
+        val srcDocId = android.provider.DocumentsContract.getDocumentId(srcFolder)
+        var ok = true
+        for (child in childDocumentUris(treeUri, srcDocId)) {
+            val copied = runCatching {
+                android.provider.DocumentsContract.copyDocument(appContext.contentResolver, child, dest)
+            }.getOrNull()
+            if (copied == null) ok = false
+        }
+        return ok
+    }
+
+    /** Every child document URI under [folderDocId] in tree [treeUri] (all kinds, not just notes/folders). */
+    private fun childDocumentUris(treeUri: String, folderDocId: String): List<android.net.Uri> {
+        val tree = android.net.Uri.parse(treeUri)
+        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, folderDocId)
+        val out = ArrayList<android.net.Uri>()
+        runCatching {
+            appContext.contentResolver.query(
+                childrenUri, arrayOf(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getString(0) ?: continue
+                    out.add(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id))
+                }
+            }
+        }
+        return out
+    }
+
+    /** A free name for a duplicate: the original if it's free, else "<stem> copy<.ext>" then "copy 2", "copy 3", … */
+    private fun uniqueCopyName(name: String, taken: Set<String>, splitExtension: Boolean): String {
+        if (name.lowercase() !in taken) return name
+        val dot = if (splitExtension) name.lastIndexOf('.') else -1
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var candidate = "$stem copy$ext"
+        var n = 2
+        while (candidate.lowercase() in taken) { candidate = "$stem copy $n$ext"; n++ }
+        return candidate
+    }
 
     /** Moves [sourceUri] from [sourceParentDocId] into [targetParentDocId] within [treeUri]; follows the open note. IO. */
     fun moveDocumentInto(treeUri: String, sourceUri: String, sourceParentDocId: String, targetParentDocId: String): Boolean = runCatching {
+        // Pasting a cut into the folder the items already live in is a no-op (and SAF would reject the
+        // same-parent move), so report success without touching anything.
+        if (sourceParentDocId == targetParentDocId) return@runCatching true
         val tree = android.net.Uri.parse(treeUri)
         val sourceParent = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, sourceParentDocId)
         val target = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, targetParentDocId)
