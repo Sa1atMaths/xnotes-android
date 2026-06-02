@@ -32,10 +32,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -64,11 +64,17 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -491,10 +497,8 @@ private fun ExplorerSection(
     val stack = remember(root) { mutableStateListOf<Pair<String, String>>() }
     val currentDocId = if (stack.isEmpty()) rootDocId else stack.last().first
     var refreshKey by remember(root) { mutableStateOf(0) }
-    var fieldValue by remember(root) { mutableStateOf(TextFieldValue("")) }
     var fieldError by remember(root) { mutableStateOf<String?>(null) }
-    var renaming by remember(root) { mutableStateOf<String?>(null) }
-    var renameText by remember(root) { mutableStateOf("") }
+    var renaming by remember(root) { mutableStateOf<BrowseEntry?>(null) }
     val selection = remember(root) { mutableStateListOf<BrowseEntry>() }
     var clipboard by remember(root) { mutableStateOf<ClipItem?>(null) }
     var pendingDelete by remember(root) { mutableStateOf<List<BrowseEntry>?>(null) }
@@ -513,24 +517,10 @@ private fun ExplorerSection(
     var menuOpen by remember(root) { mutableStateOf(false) }
     var newMenuOpen by remember(root) { mutableStateOf(false) }
     val rootName by produceState(editor.cachedRootName(root), root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
-    val fieldFocus = remember { FocusRequester() }
-    val fieldBring = remember { BringIntoViewRequester() }
     val dismissInteraction = remember { MutableInteractionSource() }
     val pendingImport = editor.pendingImport
-    LaunchedEffect(createMode, pendingImport) {
-        val active = createMode != CreateMode.NONE || pendingImport != null
-        if (active) {
-            val default = when {
-                pendingImport != null -> pendingImport.defaultName // import names default to the source file
-                createMode == CreateMode.FILE -> nextUntitled(editor.cachedChildren(root, currentDocId))
-                else -> "" // new folder
-            }
-            fieldValue = TextFieldValue(default, selection = TextRange(0, default.length)) // select the whole word so typing replaces it
-            fieldError = null
-            runCatching { fieldFocus.requestFocus() }
-            runCatching { fieldBring.bringIntoView() }
-        }
-    }
+    // Clear any stale error when a fresh name dialog opens for a new operation.
+    LaunchedEffect(createMode, pendingImport) { fieldError = null }
 
     Column(Modifier.fillMaxSize()) {
         // Path (breadcrumb, with "/" separators) + context actions, all on one line.
@@ -594,8 +584,7 @@ private fun ExplorerSection(
                 if (selection.size == 1) {
                     val sel = selection.first()
                     IconAction(XnotesIcons.edit, "Rename") {
-                        renaming = sel.documentUri
-                        renameText = if (sel.isDir) sel.name else sel.name.removeSuffix(".xnote").removeSuffix(".XNOTE")
+                        renaming = sel
                         selection.clear()
                     }
                 }
@@ -607,45 +596,6 @@ private fun ExplorerSection(
         }
         opError?.let { Text(it, color = Color(0xFFE5534B), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) }
         Spacer(Modifier.height(10.dp))
-        // Inline name field: new note, new folder, or naming a pending PDF/Open import.
-        if (createMode != CreateMode.NONE || pendingImport != null) {
-            val isFolder = pendingImport == null && createMode == CreateMode.FOLDER
-            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp).bringIntoViewRequester(fieldBring), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = fieldValue,
-                    onValueChange = { fieldValue = it; fieldError = null },
-                    singleLine = true,
-                    placeholder = if (isFolder) ({ Text("Folder name") }) else null,
-                    modifier = Modifier.weight(1f).focusRequester(fieldFocus),
-                )
-                IconButton(onClick = {
-                    val n = fieldValue.text.trim()
-                    when {
-                        pendingImport != null -> scope.launch {
-                            // Land the import in the current folder; it opens only when the user taps it.
-                            val uri = withContext(Dispatchers.IO) { editor.commitImport(root, currentDocId, n) }
-                            if (uri != null) refreshKey++ else fieldError = "Couldn’t save that note."
-                        }
-                        isFolder -> {
-                            if (n.isEmpty()) fieldError = "Enter a folder name."
-                            else scope.launch {
-                                val ok = withContext(Dispatchers.IO) { editor.createFolder(root, currentDocId, n) }
-                                if (ok) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create that folder."
-                            }
-                        }
-                        else -> scope.launch {
-                            // Just create the note in the explorer — it opens only when the user taps it.
-                            val uri = withContext(Dispatchers.IO) { editor.createBlankNoteFile(root, currentDocId, n) }
-                            if (uri != null) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create the note."
-                        }
-                    }
-                }) { Icon(XnotesIcons.check, "Create", tint = palette.accent.toComposeColor(), modifier = Modifier.size(22.dp)) }
-                IconButton(onClick = { if (pendingImport != null) editor.cancelImport() else onCreateMode(CreateMode.NONE) }) {
-                    Icon(XnotesIcons.close, "Cancel", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp))
-                }
-            }
-            fieldError?.let { Text(it, color = Color(0xFFE5534B), fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)) }
-        }
         // Listing.
         val entries by produceState(editor.cachedChildren(root, currentDocId), root, currentDocId, refreshKey) {
             value = withContext(Dispatchers.IO) { editor.browseChildren(root, currentDocId) }
@@ -669,16 +619,10 @@ private fun ExplorerSection(
                             entry = entry,
                             selected = selection.any { it.documentUri == entry.documentUri },
                             dimmed = clipboard?.let { c -> c.isCut && c.entries.any { it.documentUri == entry.documentUri } } == true,
-                            isRenaming = renaming == entry.documentUri,
-                            renameText = renameText,
-                            onRenameTextChange = { renameText = it },
                             onShare = if (fileActions) ({ onShareFile(entry.documentUri) }) else null,
                             onSaveCopy = if (fileActions) ({ onSaveCopyFile(entry.documentUri) }) else null,
                             onExportPdf = if (fileActions) ({ onExportFilePdf(entry.documentUri) }) else null,
-                            onRename = if (manageActions) ({
-                                renaming = entry.documentUri
-                                renameText = entryLabel(entry)
-                            }) else null,
+                            onRename = if (manageActions) ({ renaming = entry }) else null,
                             onCopy = if (manageActions) ({ clipboard = ClipItem(listOf(entry), currentDocId, false) }) else null,
                             onCut = if (manageActions) ({ clipboard = ClipItem(listOf(entry), currentDocId, true) }) else null,
                             onDelete = if (manageActions) ({ pendingDelete = listOf(entry) }) else null,
@@ -694,22 +638,69 @@ private fun ExplorerSection(
                                 renaming = null; opError = null
                                 if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
                             },
-                            onConfirmRename = {
-                                val raw = renameText.trim()
-                                if (raw.isNotEmpty()) {
-                                    val newName = if (entry.isDir || raw.endsWith(".xnote", ignoreCase = true)) raw else "$raw.xnote"
-                                    // Renames touch the open-note binding (Compose state) so run on the main thread.
-                                    val ok = editor.renameDocument(entry.documentUri, newName)
-                                    renaming = null
-                                    if (ok) refreshKey++
-                                } else renaming = null
-                            },
-                            onCancelRename = { renaming = null },
                         )
                     }
                 }
             }
         }
+    }
+
+    // Name entry for a new note, new folder, or a pending PDF/Open import.
+    if (createMode != CreateMode.NONE || pendingImport != null) {
+        val isFolder = pendingImport == null && createMode == CreateMode.FOLDER
+        val default = when {
+            pendingImport != null -> pendingImport.defaultName // import names default to the source file
+            createMode == CreateMode.FILE -> nextUntitled(editor.cachedChildren(root, currentDocId))
+            else -> "" // new folder
+        }
+        NameDialog(
+            title = when {
+                pendingImport != null -> "Import"
+                isFolder -> "New folder"
+                else -> "New note"
+            },
+            initial = default,
+            confirmLabel = if (pendingImport != null) "Save" else "Create",
+            placeholder = if (isFolder) "Folder name" else null,
+            allowEmpty = !isFolder, // a folder needs a name; a blank note name becomes "untitled_N"
+            error = fieldError,
+            onConfirm = { n ->
+                when {
+                    pendingImport != null -> scope.launch {
+                        // Land the import in the current folder; it opens only when the user taps it.
+                        val uri = withContext(Dispatchers.IO) { editor.commitImport(root, currentDocId, n) }
+                        if (uri != null) refreshKey++ else fieldError = "Couldn’t save that note."
+                    }
+                    isFolder -> scope.launch {
+                        val ok = withContext(Dispatchers.IO) { editor.createFolder(root, currentDocId, n) }
+                        if (ok) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create that folder."
+                    }
+                    else -> scope.launch {
+                        // Just create the note in the explorer — it opens only when the user taps it.
+                        val uri = withContext(Dispatchers.IO) { editor.createBlankNoteFile(root, currentDocId, n) }
+                        if (uri != null) { onCreateMode(CreateMode.NONE); refreshKey++ } else fieldError = "Couldn’t create the note."
+                    }
+                }
+            },
+            onDismiss = { fieldError = null; if (pendingImport != null) editor.cancelImport() else onCreateMode(CreateMode.NONE) },
+        )
+    }
+
+    renaming?.let { entry ->
+        NameDialog(
+            title = if (entry.isDir) "Rename folder" else "Rename note",
+            initial = entryLabel(entry),
+            confirmLabel = "Rename",
+            allowEmpty = false,
+            onConfirm = { raw ->
+                val newName = if (entry.isDir || raw.endsWith(".xnote", ignoreCase = true)) raw else "$raw.xnote"
+                // Renames touch the open-note binding (Compose state) so run on the main thread.
+                val ok = editor.renameDocument(entry.documentUri, newName)
+                renaming = null
+                if (ok) refreshKey++
+            },
+            onDismiss = { renaming = null },
+        )
     }
 
     pendingDelete?.let { targets ->
@@ -782,9 +773,6 @@ private fun EntryRow(
     entry: BrowseEntry,
     selected: Boolean,
     dimmed: Boolean,
-    isRenaming: Boolean,
-    renameText: String,
-    onRenameTextChange: (String) -> Unit,
     onShare: (() -> Unit)? = null,
     onSaveCopy: (() -> Unit)? = null,
     onExportPdf: (() -> Unit)? = null,
@@ -794,78 +782,122 @@ private fun EntryRow(
     onDelete: (() -> Unit)? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onConfirmRename: () -> Unit,
-    onCancelRename: () -> Unit,
 ) {
     val palette = LocalPalette.current
     val ctx = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
     val icon = if (entry.isDir) XnotesIcons.folder else XnotesIcons.file
     val tint = (if (entry.isDir) palette.accent else palette.textDim).toComposeColor()
-    if (isRenaming) {
-        val fr = remember { FocusRequester() }
-        val bring = remember { BringIntoViewRequester() }
-        LaunchedEffect(Unit) { runCatching { fr.requestFocus() }; runCatching { bring.bringIntoView() } }
-        Row(Modifier.fillMaxWidth().bringIntoViewRequester(bring).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(14.dp))
-            OutlinedTextField(renameText, onRenameTextChange, singleLine = true, modifier = Modifier.weight(1f).focusRequester(fr))
-            IconButton(onClick = onConfirmRename) { Icon(XnotesIcons.check, "Save name", tint = palette.accent.toComposeColor(), modifier = Modifier.size(22.dp)) }
-            IconButton(onClick = onCancelRename) { Icon(XnotesIcons.close, "Cancel", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp)) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .then(if (selected) Modifier.background(palette.accentAlpha(38).toComposeColor()) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .alpha(if (dimmed) 0.4f else 1f)
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(
+            entryLabel(entry),
+            color = palette.text.toComposeColor(),
+            fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        val details = entryDetails(ctx, entry)
+        if (details.isNotEmpty()) {
+            Spacer(Modifier.width(12.dp))
+            Text(details, color = palette.textDim.toComposeColor(), fontSize = 12.sp, maxLines = 1)
         }
-    } else {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .then(if (selected) Modifier.background(palette.accentAlpha(38).toComposeColor()) else Modifier)
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .alpha(if (dimmed) 0.4f else 1f)
-                .padding(horizontal = 10.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(14.dp))
-            Text(
-                entryLabel(entry),
-                color = palette.text.toComposeColor(),
-                fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            val details = entryDetails(ctx, entry)
-            if (details.isNotEmpty()) {
-                Spacer(Modifier.width(12.dp))
-                Text(details, color = palette.textDim.toComposeColor(), fontSize = 12.sp, maxLines = 1)
-            }
-            if (onShare != null || onRename != null) {
-                Box {
-                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
-                        Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onRename?.invoke() })
-                        DropdownMenuItem(text = { Text("Copy") }, onClick = { menuOpen = false; onCopy?.invoke() })
-                        DropdownMenuItem(text = { Text("Cut") }, onClick = { menuOpen = false; onCut?.invoke() })
-                        DropdownMenuItem(text = { Text("Delete") }, onClick = { menuOpen = false; onDelete?.invoke() })
-                        if (onShare != null) {
-                            HorizontalDivider(color = palette.border.toComposeColor())
-                            DropdownMenuItem(text = { Text("Share") }, onClick = { menuOpen = false; onShare() })
-                            DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { menuOpen = false; onSaveCopy?.invoke() })
-                            DropdownMenuItem(text = { Text("Export to PDF") }, onClick = { menuOpen = false; onExportPdf?.invoke() })
-                        }
+        if (onShare != null || onRename != null) {
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onRename?.invoke() })
+                    DropdownMenuItem(text = { Text("Copy") }, onClick = { menuOpen = false; onCopy?.invoke() })
+                    DropdownMenuItem(text = { Text("Cut") }, onClick = { menuOpen = false; onCut?.invoke() })
+                    DropdownMenuItem(text = { Text("Delete") }, onClick = { menuOpen = false; onDelete?.invoke() })
+                    if (onShare != null) {
+                        HorizontalDivider(color = palette.border.toComposeColor())
+                        DropdownMenuItem(text = { Text("Share") }, onClick = { menuOpen = false; onShare() })
+                        DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { menuOpen = false; onSaveCopy?.invoke() })
+                        DropdownMenuItem(text = { Text("Export to PDF") }, onClick = { menuOpen = false; onExportPdf?.invoke() })
                     }
                 }
-            } else {
-                // Select mode drops the overflow button (its actions don't apply). Reserve its
-                // footprint so the row keeps the same height — and the trailing details stay put —
-                // instead of collapsing to the icon/label height and shifting the whole list.
-                Spacer(Modifier.size(36.dp))
             }
+        } else {
+            // Select mode drops the overflow button (its actions don't apply). Reserve its
+            // footprint so the row keeps the same height — and the trailing details stay put —
+            // instead of collapsing to the icon/label height and shifting the whole list.
+            Spacer(Modifier.size(36.dp))
         }
     }
 }
 
 // --- shared bits ---
+
+/**
+ * A small modal that asks for a single name, used for new notes, new folders, renames, and
+ * naming a pending import. Pre-fills [initial] (fully selected so typing replaces it), confirms
+ * on the keyboard's Done action or hardware Enter, and dismisses on Cancel, the scrim, or Esc.
+ * When [allowEmpty] is false the confirm button stays disabled until something is typed; a
+ * non-null [error] shows under the field and keeps the dialog open after a failed operation.
+ */
+@Composable
+private fun NameDialog(
+    title: String,
+    initial: String,
+    confirmLabel: String,
+    placeholder: String? = null,
+    allowEmpty: Boolean,
+    error: String? = null,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val palette = LocalPalette.current
+    var text by remember { mutableStateOf(TextFieldValue(initial, selection = TextRange(0, initial.length))) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val confirm = {
+        val n = text.text.trim()
+        if (allowEmpty || n.isNotEmpty()) onConfirm(n)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                isError = error != null,
+                placeholder = placeholder?.let { { Text(it) } },
+                supportingText = error?.let { { Text(it, color = Color(0xFFE5534B)) } },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { confirm() }),
+                modifier = Modifier
+                    .focusRequester(focus)
+                    .onPreviewKeyEvent { ev ->
+                        when {
+                            ev.type != KeyEventType.KeyDown -> false
+                            ev.key == Key.Enter || ev.key == Key.NumPadEnter -> { confirm(); true }
+                            ev.key == Key.Escape -> { onDismiss(); true }
+                            else -> false
+                        }
+                    },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { confirm() }, enabled = allowEmpty || text.text.isNotBlank()) { Text(confirmLabel) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        containerColor = palette.menuBg.toComposeColor(),
+    )
+}
 
 @Composable
 private fun PrimaryButton(label: String, onClick: () -> Unit) {
