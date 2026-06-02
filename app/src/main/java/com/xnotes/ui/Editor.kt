@@ -1318,6 +1318,35 @@ class Editor(context: Context) {
     /** Last-listed children for a folder, to seed the explorer instantly before the refresh. */
     fun cachedChildren(treeUri: String, parentDocId: String): List<BrowseEntry>? = browseCache["$treeUri|$parentDocId"]
 
+    /**
+     * Recursively finds notes at or below [startDocId] in tree [treeUri] whose name (sans `.xnote`)
+     * contains [query], case-insensitively. Folders are descended into but not themselves returned;
+     * results are ordered newest-first like the grid. Does one provider query per folder, so it's IO
+     * and can be slow on deep trees — call off-thread (and debounce the keystrokes that drive it).
+     */
+    fun searchNotes(treeUri: String, startDocId: String, query: String): List<BrowseEntry> {
+        val needle = query.trim()
+        if (needle.isEmpty()) return emptyList()
+        val out = ArrayList<BrowseEntry>()
+        val seen = HashSet<String>()
+        val stack = ArrayDeque<String>().apply { addLast(startDocId) }
+        while (stack.isNotEmpty()) {
+            val docId = stack.removeLast()
+            if (!seen.add(docId)) continue // guard against any cyclic SAF links
+            for (e in browseChildren(treeUri, docId)) {
+                if (e.isDir) {
+                    stack.addLast(browseDocId(e.documentUri))
+                } else {
+                    val display = if (e.name.endsWith(".xnote", ignoreCase = true)) e.name.dropLast(6) else e.name
+                    if (display.contains(needle, ignoreCase = true)) out.add(e)
+                }
+            }
+        }
+        return out.sortedWith(
+            compareByDescending<BrowseEntry> { it.created }.thenByDescending { it.modified }.thenBy { it.name.lowercase() },
+        )
+    }
+
     /** Warm the backstage caches off-thread (after launch) so its first open paints instantly. */
     fun prewarmBackstage() {
         autosaveScope.launch {

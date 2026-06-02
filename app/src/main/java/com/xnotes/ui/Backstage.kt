@@ -6,6 +6,9 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -14,10 +17,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -42,6 +47,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -70,8 +76,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -79,18 +87,23 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -368,17 +381,34 @@ private fun HomePane(
     onShowSidebar: () -> Unit,
 ) {
     val palette = LocalPalette.current
-    Column(Modifier.fillMaxSize()) {
+    val focusManager = LocalFocusManager.current
+    // Recursive name filter; lives here so the search pill can fill the constant-height header strip
+    // that would otherwise sit empty on wide layouts (where the sidebar, not a hamburger, occupies
+    // this row). Cleared when the user changes folders (see ExplorerSection).
+    var query by remember { mutableStateOf("") }
+    // A tap on empty space anywhere in the pane drops focus from the search field, dismissing it
+    // (children like tiles and buttons consume their own taps, so this only fires "outside").
+    Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } }) {
         // Constant-height header so toggling the sidebar never shifts the explorer below it. The
-        // hamburger shows only when the sidebar is hidden; the wordmark then titles the row so the
-        // menu button isn't stranded alone (the persistent sidebar already brands wide layouts).
+        // hamburger shows only when the sidebar is hidden. With a folder granted, a small centered
+        // search pill anchors the row (it expands on focus); without one there's nothing to search,
+        // so the wordmark titles it instead (and the menu button isn't stranded — the persistent
+        // sidebar brands wide layouts).
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            val hasRoot = editor.browseRoot != null
             if (!sidebarOpen) {
                 IconButton(onClick = onShowSidebar) {
                     Icon(XnotesIcons.menu, "Show sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(24.dp))
                 }
                 Spacer(Modifier.width(4.dp))
-                Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                if (!hasRoot) Text("xnotes", color = palette.text.toComposeColor(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            }
+            if (hasRoot) {
+                BoxWithConstraints(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    // Comfortable width, with margin left for the spring's overshoot not to clip.
+                    val expandedWidth = (maxWidth - 40.dp).coerceIn(180.dp, 440.dp)
+                    ExplorerSearchField(query, { query = it }, expandedWidth)
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -386,6 +416,7 @@ private fun HomePane(
             ExplorerSection(
                 editor, onOpenFile, onPickRoot, onImportPdf,
                 onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode,
+                searchQuery = query, onSearchChange = { query = it },
             )
             // A round quick-create button for a new note in the current folder. Only when a folder is
             // granted — otherwise the explorer shows the folder-picker prompt and there's nowhere to create.
@@ -418,6 +449,8 @@ private fun ExplorerSection(
     onExportFilePdf: (String) -> Unit,
     createMode: CreateMode,
     onCreateMode: (CreateMode) -> Unit,
+    searchQuery: String = "",
+    onSearchChange: (String) -> Unit = {},
 ) {
     val palette = LocalPalette.current
     val root = editor.browseRoot
@@ -543,9 +576,21 @@ private fun ExplorerSection(
         val entries by produceState(editor.cachedChildren(root, currentDocId), root, currentDocId, refreshKey, editor.noteOpen) {
             value = withContext(Dispatchers.IO) { editor.browseChildren(root, currentDocId) }
         }
+        // Changing folders drops a stale query so it can't carry into a folder the user just opened.
+        LaunchedEffect(currentDocId) { onSearchChange("") }
+        val query = searchQuery.trim()
+        val searching = query.isNotEmpty()
+        // When searching, recurse the whole subtree (debounced) and show only the matching notes — no
+        // folder chips, since a deep hit doesn't belong to the folder the breadcrumb is sitting in.
+        val results by produceState<List<BrowseEntry>?>(emptyList(), root, currentDocId, query, refreshKey, editor.noteOpen) {
+            if (!searching) { value = emptyList(); return@produceState }
+            value = null
+            delay(250) // debounce keystrokes before walking the tree
+            value = withContext(Dispatchers.IO) { editor.searchNotes(root, currentDocId, query) }
+        }
         // browseChildren returns grid order: folders (ascending by creation), then files (descending).
-        val folders = entries?.filter { it.isDir }.orEmpty()
-        val files = entries?.filterNot { it.isDir }.orEmpty()
+        val folders = if (searching) emptyList() else entries?.filter { it.isDir }.orEmpty()
+        val files = if (searching) results.orEmpty() else entries?.filterNot { it.isDir }.orEmpty()
         // A fixed column count per orientation, derived from the full screen width (not the pane), so
         // toggling the sidebar never changes how many tiles are in a row — closing it just widens the
         // pane and enlarges the tiles.
@@ -557,8 +602,10 @@ private fun ExplorerSection(
             ),
         ) {
             when {
-                entries == null -> EmptyPane("Loading…")
-                entries!!.isEmpty() -> EmptyPane("This folder has no notes.")
+                searching && results == null -> EmptyPane("Searching…")
+                searching && results!!.isEmpty() -> EmptyPane("No notes match “$query”.")
+                !searching && entries == null -> EmptyPane("Loading…")
+                !searching && entries!!.isEmpty() -> EmptyPane("This folder has no notes.")
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(gridColumns),
                     modifier = Modifier.fillMaxSize(),
@@ -716,6 +763,80 @@ private fun ExplorerSection(
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
             containerColor = palette.menuBg.toComposeColor(),
         )
+    }
+}
+
+/** Height of the search pill (also its rounded-end radius via CircleShape). */
+private val SEARCH_HEIGHT = 40.dp
+
+/**
+ * The explorer's recursive name filter, shaped as a rounded pill with a left-aligned magnifier (no
+ * placeholder text). Idle it's a shorter pill; tapped, it eases out to [expandedWidth] and stops
+ * (no overshoot), revealing the field. Tapping outside drops focus, which clears the query and lets
+ * it ease back. A trailing ✕ does the same by hand.
+ */
+@Composable
+private fun ExplorerSearchField(query: String, onQueryChange: (String) -> Unit, expandedWidth: Dp) {
+    val palette = LocalPalette.current
+    val focus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    // `active` bootstraps the field into composition on tap so its FocusRequester can grab focus;
+    // `focused` is the real focus state. Either keeps the pill expanded.
+    var active by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val expanded = active || focused
+    // Idle pill is a little shorter than the active one (not a circle) so the grow stays subtle.
+    val collapsedWidth = (expandedWidth * 0.7f).coerceAtLeast(150.dp)
+    val width by animateDpAsState(
+        if (expanded) expandedWidth else collapsedWidth,
+        // Eased grow that decelerates into its target and holds — no spring overshoot or rebound.
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "searchWidth",
+    )
+    LaunchedEffect(active) { if (active) runCatching { focus.requestFocus() } }
+    Row(
+        Modifier
+            .width(width)
+            .height(SEARCH_HEIGHT)
+            .clip(CircleShape)
+            .background(palette.surface.toComposeColor())
+            .border(1.dp, palette.border.toComposeColor(), CircleShape)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { active = true }
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(XnotesIcons.search, "Search notes", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
+        if (expanded) {
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(color = palette.text.toComposeColor(), fontSize = 14.sp),
+                cursorBrush = SolidColor(palette.accent.toComposeColor()),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                modifier = Modifier.weight(1f)
+                    .focusRequester(focus)
+                    .onFocusChanged {
+                        if (it.isFocused) {
+                            focused = true
+                            active = false // bootstrap done; `focused` holds it open now
+                        } else {
+                            if (focused) onQueryChange("") // a real blur (tap outside) ends the search
+                            focused = false
+                        }
+                    },
+            )
+            if (query.isNotEmpty()) {
+                Icon(
+                    XnotesIcons.close, "Clear search",
+                    tint = palette.textDim.toComposeColor(),
+                    modifier = Modifier.size(16.dp).clip(CircleShape)
+                        .clickable { onQueryChange(""); focusManager.clearFocus() },
+                )
+            }
+        }
     }
 }
 
