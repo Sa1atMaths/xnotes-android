@@ -6,6 +6,7 @@ import com.xnotes.core.model.GeoHandle
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.Resizable
 import com.xnotes.core.model.TextItem
+import com.xnotes.core.model.TextStyle
 
 /**
  * A reversible edit (spec 07). A command is pushed onto the history **after**
@@ -88,6 +89,16 @@ class EditText(
     override fun undo() {
         item.text = oldText
     }
+}
+
+/** Restyle a text box (colour, point size, face) — geometry and text are untouched. */
+class RestyleText(
+    private val item: TextItem,
+    private val oldStyle: TextStyle,
+    private val newStyle: TextStyle,
+) : Command {
+    override fun redo() = newStyle.applyTo(item)
+    override fun undo() = oldStyle.applyTo(item)
 }
 
 /** Replace a page's item list (bring-to-front), via full before/after snapshots. */

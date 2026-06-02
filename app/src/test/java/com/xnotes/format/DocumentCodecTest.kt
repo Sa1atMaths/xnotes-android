@@ -49,7 +49,7 @@ class DocumentCodecTest {
             ),
         )
         page.items.add(ImageItem(FakeRasterSurface(64, 48), Rect(5.0, 6.0, 64.0, 48.0)))
-        page.items.add(TextItem(Pt(100.0, 110.0), 250.0, "hello\nworld", Rgba(236, 236, 236, 255), 13.0, FakeTextMeasurer()))
+        page.items.add(TextItem(Pt(100.0, 110.0), width = 250.0, text = "hello\nworld", rgba = Rgba(236, 236, 236, 255), pointSize = 13.0, measurer = FakeTextMeasurer()))
         page.items.add(ShapeItem(ShapeKind.RECTANGLE, Pt(0.0, 0.0), Pt(50.0, 30.0), Rgba(255, 92, 92, 255), 3.0, Rgba(255, 92, 92, 64)))
         doc.pages.add(page)
         doc.bookmarks.add(Bookmark(0, "Intro"))

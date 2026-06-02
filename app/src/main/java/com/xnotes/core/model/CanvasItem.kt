@@ -45,7 +45,7 @@ interface CanvasItem {
 sealed interface GeoHandle
 
 data class RectHandle(val rect: Rect) : GeoHandle
-data class TextHandle(val pos: Pt, val width: Double) : GeoHandle
+data class TextHandle(val pos: Pt, val width: Double, val height: Double) : GeoHandle
 data class ShapeHandle(val start: Pt, val end: Pt) : GeoHandle
 
 /** A resizable item exchanges its geometry through a [GeoHandle]. */

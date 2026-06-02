@@ -613,7 +613,7 @@ class InteractionController(
             is ImageItem -> item.setGeometry(RectHandle(ResizeMath.resizeImage(item.rect, handle, local)))
             is TextItem -> {
                 val (pos, w) = ResizeMath.resizeText(item.pos, item.width, handle, local.x)
-                item.setGeometry(TextHandle(pos, w))
+                item.setGeometry(TextHandle(pos, w, item.height))
             }
             is ShapeItem -> {
                 val (s, en) = if (item.shape.isClosed) {
@@ -703,7 +703,7 @@ class InteractionController(
             state.invalidatePage(page)
         } else {
             val width = (page.width - local.x - 14.0).coerceIn(80.0, 300.0)
-            editingText = TextItem(local, width, "", measurer = textMeasurer)
+            editingText = TextItem(local, width, text = "", measurer = textMeasurer)
             editingIsNew = true
             editingOldText = ""
             editingPageIndex = pi

@@ -13,6 +13,7 @@ import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextItem
+import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.ImageCodec
 import com.xnotes.core.pal.TextMeasurer
 import com.xnotes.core.stroke.Sample
@@ -201,14 +202,20 @@ class DocumentCodec(
             .put("asset", assetName)
             .put("rect", JSONArray().put(item.rect.x).put(item.rect.y).put(item.rect.w).put(item.rect.h))
 
-    private fun textToJson(t: TextItem): JSONObject =
-        JSONObject()
+    private fun textToJson(t: TextItem): JSONObject {
+        val o = JSONObject()
             .put("kind", TextItem.KIND)
             .put("pos", JSONArray().put(t.pos.x).put(t.pos.y))
             .put("width", t.width)
             .put("text", t.text)
             .put("rgba", rgbaToJson(t.rgba))
             .put("point_size", t.pointSize)
+        // Additive fields: written only when set, so older readers stay compatible
+        // and notes that use neither serialize exactly as before.
+        if (t.height > 0.0) o.put("height", t.height)
+        if (t.face != TextItem.DEFAULT_FACE) o.put("font_face", t.face.id)
+        return o
+    }
 
     private fun shapeToJson(s: ShapeItem): JSONObject {
         val obj = JSONObject()
@@ -279,9 +286,11 @@ class DocumentCodec(
         return TextItem(
             pos = pos,
             width = o.optDouble("width", TextItem.DEFAULT_WIDTH),
+            height = o.optDouble("height", 0.0),
             text = o.optString("text", ""),
             rgba = readRgba(o.optJSONArray("rgba")) ?: TextItem.DEFAULT_COLOR,
             pointSize = o.optDouble("point_size", TextItem.DEFAULT_POINT_SIZE),
+            face = FontFace.fromId(o.optString("font_face", "")),
             measurer = textMeasurer,
         )
     }
