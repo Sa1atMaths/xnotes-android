@@ -131,6 +131,7 @@ data class Settings(
             .put("neon_strength", c.neonStrength)
             .put("dash_length", c.dashLength)
             .put("dash_gap", c.dashGap)
+            .put("smoothing_alpha", c.smoothingAlpha)
             .put("rgba", rgbaArr(c.rgba))
 
         private fun toolConfig(o: JSONObject, tool: Tool): ToolConfig {
@@ -147,6 +148,7 @@ data class Settings(
                 neonStrength = o.optDouble("neon_strength", d.neonStrength),
                 dashLength = o.optDouble("dash_length", d.dashLength),
                 dashGap = o.optDouble("dash_gap", d.dashGap),
+                smoothingAlpha = o.optDouble("smoothing_alpha", d.smoothingAlpha),
             )
         }
 

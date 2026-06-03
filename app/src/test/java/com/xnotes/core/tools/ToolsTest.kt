@@ -32,6 +32,15 @@ class ToolsTest {
         assertEquals(0.0, ToolConversions.minFactorToSensitivity(1.0), 1e-9)
     }
 
+    @Test fun smoothingRoundTrip() {
+        assertEquals(1.0, ToolConversions.smoothingToAlpha(0.0), 1e-9)    // 0 = raw, no smoothing
+        assertEquals(0.1, ToolConversions.smoothingToAlpha(100.0), 1e-9)  // max smoothing
+        assertEquals(0.55, ToolConversions.smoothingToAlpha(50.0), 1e-9)
+        // inverse
+        assertEquals(50.0, ToolConversions.alphaToSmoothing(0.55), 1e-9)
+        assertEquals(0.0, ToolConversions.alphaToSmoothing(1.0), 1e-9)
+    }
+
     @Test fun multiplierRoundTrip() {
         // M = 4.0  <->  ds = 0.60 (calligraphy default)
         assertEquals(0.60, ToolConversions.multiplierToDirectionStrength(4.0), 1e-9)
