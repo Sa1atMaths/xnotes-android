@@ -16,8 +16,13 @@ class Document(
     /** Real file name from the storage provider, when known (overrides [path]-derived title). */
     var displayName: String? = null,
     var dirty: Boolean = false,
-    /** Embedded source PDF (for PDF-imported notes), so the note stays self-contained. */
-    var pdfBytes: ByteArray? = null,
+    /**
+     * Embedded source PDF (for PDF-imported notes), so the note stays self-contained. Held as a
+     * **file** on disk, not bytes in RAM: the file is memory-mapped by the renderer and streamed
+     * into/out of the `.xnote` bundle, so even a very large PDF never has to fit in the heap. The
+     * file lives in a private cache dir owned by the platform layer (which manages its lifetime).
+     */
+    var pdfFile: java.io.File? = null,
     val bookmarks: MutableList<Bookmark> = mutableListOf(),
 ) {
     /** Derived: the storage display name (or path) base name without extension, or "Untitled". */
@@ -26,7 +31,7 @@ class Document(
             ?: path?.let { Paths.stem(it) }
             ?: "Untitled"
 
-    val hasPdf: Boolean get() = pdfBytes != null
+    val hasPdf: Boolean get() = pdfFile != null
 
     /**
      * Appends a blank page sized [width] × [height] and marks the document

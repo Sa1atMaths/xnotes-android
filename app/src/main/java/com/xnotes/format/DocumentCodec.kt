@@ -23,6 +23,9 @@ import com.xnotes.core.tools.ToolConfig
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.CRC32
@@ -45,7 +48,10 @@ class DocumentCodec(
     private val textMeasurer: TextMeasurer,
 ) {
 
-    fun write(doc: Document, out: OutputStream) {
+    /** Thrown out of [write] when [isCancelled] turns true mid-copy, so the caller can discard the partial file. */
+    class WriteCancelled : Exception()
+
+    fun write(doc: Document, out: OutputStream, isCancelled: () -> Boolean = { false }) {
         val assets = ArrayList<Pair<String, ByteArray>>()
         var imageIndex = 0
 
@@ -84,23 +90,43 @@ class DocumentCodec(
             .put("format", FORMAT)
             .put("version", VERSION)
             .put("dpi", doc.dpi)
-            .put("has_pdf", doc.pdfBytes != null)
+            .put("has_pdf", doc.pdfFile != null)
             .put("bookmarks", bookmarksArr)
             .put("pages", pagesArr)
 
         ZipOutputStream(out).use { zos ->
             zos.putDeflated("manifest.json", manifest.toString().toByteArray(Charsets.UTF_8))
             for ((name, bytes) in assets) zos.putStored(name, bytes)
-            doc.pdfBytes?.let { zos.putStored("assets/source.pdf", it) }
+            // Stream the source PDF straight from disk into the bundle so a big PDF is never
+            // materialized as a byte[]. [isCancelled] lets a long copy abort (e.g. import cancel).
+            doc.pdfFile?.let { zos.putStored("assets/source.pdf", it, isCancelled) }
         }
     }
 
-    fun read(input: InputStream): Document {
+    /**
+     * Read a `.xnote` from [input]. When [pdfDir] is non-null, an embedded source PDF is streamed
+     * out to a fresh temp file in it (set as [Document.pdfFile]) instead of being held in RAM —
+     * the caller owns that file's lifetime. When [pdfDir] is null the PDF is skipped entirely
+     * (so [Document.pdfFile] stays null), which is what validation-only reads want.
+     */
+    fun read(input: InputStream, pdfDir: File? = null): Document {
         val entries = HashMap<String, ByteArray>()
+        var pdfFile: File? = null
         ZipInputStream(input).use { zis ->
             var entry: ZipEntry? = zis.nextEntry
             while (entry != null) {
-                if (!entry.isDirectory) entries[entry.name] = zis.readBytes()
+                if (!entry.isDirectory) {
+                    if (entry.name == "assets/source.pdf") {
+                        // Never slurp the PDF into memory: stream it to disk (or skip it).
+                        if (pdfDir != null) {
+                            val f = File.createTempFile("src", ".pdf", pdfDir)
+                            FileOutputStream(f).use { zis.copyTo(it) }
+                            pdfFile = f
+                        }
+                    } else {
+                        entries[entry.name] = zis.readBytes()
+                    }
+                }
                 zis.closeEntry()
                 entry = zis.nextEntry
             }
@@ -118,7 +144,9 @@ class DocumentCodec(
         val doc = Document(dpi = dpi)
 
         if (manifest.optBoolean("has_pdf", false)) {
-            entries["assets/source.pdf"]?.let { doc.pdfBytes = it }
+            doc.pdfFile = pdfFile
+        } else {
+            pdfFile?.delete() // a stray PDF with no manifest flag: don't leak the temp file
         }
 
         manifest.optJSONArray("bookmarks")?.let { bm ->
@@ -354,5 +382,40 @@ private fun ZipOutputStream.putStored(name: String, data: ByteArray) {
     }
     putNextEntry(entry)
     write(data)
+    closeEntry()
+}
+
+/**
+ * Stream [file] into a STORED (uncompressed) zip entry without ever holding it whole in memory.
+ * STORED entries need size+CRC up front, so the file is read twice — once to checksum, once to
+ * copy — both in small buffers. [isCancelled] is polled per buffer so a long copy can abort by
+ * throwing [DocumentCodec.WriteCancelled] (the entry is left unfinished for the caller to discard).
+ */
+private fun ZipOutputStream.putStored(name: String, file: File, isCancelled: () -> Boolean) {
+    val crc = CRC32()
+    val buf = ByteArray(64 * 1024)
+    FileInputStream(file).use { input ->
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            crc.update(buf, 0, n)
+        }
+    }
+    val size = file.length()
+    val entry = ZipEntry(name).apply {
+        method = ZipEntry.STORED
+        this.size = size
+        compressedSize = size
+        this.crc = crc.value
+    }
+    putNextEntry(entry)
+    FileInputStream(file).use { input ->
+        while (true) {
+            if (isCancelled()) throw DocumentCodec.WriteCancelled()
+            val n = input.read(buf)
+            if (n < 0) break
+            write(buf, 0, n)
+        }
+    }
     closeEntry()
 }

@@ -40,7 +40,9 @@ import java.util.concurrent.Executors
  */
 class PdfSource private constructor(
     private val appContext: Context,
-    private val tempFile: File,
+    /** The on-disk PDF this source reads (memory-mapped by the renderer). Owned by the caller, **not**
+     *  by this PdfSource — [close] never deletes it, so several sources can read one file safely. */
+    val file: File,
     private val pfd: ParcelFileDescriptor,
     private val renderer: PdfRenderer,
 ) {
@@ -265,7 +267,7 @@ class PdfSource private constructor(
         if (pdfBoxDoc == null && !pdfBoxLoadFailed) {
             pdfBoxDoc = runCatching {
                 PDFBoxResourceLoader.init(appContext)
-                PDDocument.load(tempFile)
+                PDDocument.load(file)
             }.getOrElse { pdfBoxLoadFailed = true; null }
         }
         return pdfBoxDoc
@@ -278,7 +280,7 @@ class PdfSource private constructor(
         runCatching { pdfBoxDoc?.close() }
         runCatching { renderer.close() }
         runCatching { pfd.close() }
-        runCatching { tempFile.delete() }
+        // [file] is owned by the caller (Document / import staging); deleting it here is not our job.
     }
 
     /**
@@ -341,14 +343,16 @@ class PdfSource private constructor(
             ),
         )
 
-        /** Opens a PDF from raw bytes, or null if it cannot be opened. */
-        fun create(context: Context, bytes: ByteArray): PdfSource? = try {
-            val file = File.createTempFile("xnote_src", ".pdf", context.cacheDir)
-            file.writeBytes(bytes)
+        /**
+         * Opens [file] as a PDF (memory-mapped, never read whole into RAM), or null if it cannot be
+         * opened. The file is **not** copied or owned: the caller keeps it alive for the source's
+         * lifetime and deletes it afterwards.
+         */
+        fun create(context: Context, file: File): PdfSource? = try {
             val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
             val renderer = PdfRenderer(pfd)
             if (renderer.pageCount == 0) {
-                renderer.close(); pfd.close(); file.delete(); null
+                renderer.close(); pfd.close(); null
             } else {
                 PdfSource(context.applicationContext, file, pfd, renderer)
             }

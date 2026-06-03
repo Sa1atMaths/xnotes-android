@@ -81,7 +81,7 @@ data class BrowseEntry(
 enum class ImportKind { PDF, OPEN }
 
 /** A picked file awaiting a name before it's saved into the explorer's current folder. */
-data class PendingImport(val kind: ImportKind, val defaultName: String, val bytes: ByteArray)
+data class PendingImport(val kind: ImportKind, val defaultName: String, val file: java.io.File)
 
 @Stable
 class Editor(context: Context) {
@@ -90,6 +90,15 @@ class Editor(context: Context) {
     private val settingsRepo = SettingsRepository(context)
     private var settings = settingsRepo.load()
     private var pdfSource: com.xnotes.platform.PdfSource? = null
+
+    /** Private cache dir holding each note's source PDF as a file, so a large PDF is never held
+     *  whole in RAM (the renderer memory-maps it). Purged on launch to drop temp files orphaned
+     *  by a previous crash — safe here because no real note is open yet at construction. */
+    private val pdfDir = java.io.File(appContext.cacheDir, "pdfsrc").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+
+    /** The temp PDF file backing the currently open document, tracked so it's deleted when the note
+     *  is swapped out (transient docs used for export/thumbnails manage their own files locally). */
+    private var openPdfTemp: java.io.File? = null
 
     val state = CanvasState(
         Document.blank(Document.DEFAULT_NEW_PAGES, settings.prefs.defaultPageSize, settings.prefs.defaultPageOrientation),
@@ -101,7 +110,7 @@ class Editor(context: Context) {
     private val textMeasurer = AndroidTextMeasurer()
     private val imageCodec = AndroidImageCodec()
     private val codec = DocumentCodec(imageCodec, textMeasurer)
-    private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec)
+    private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec, pdfDir)
     private val viewStates = com.xnotes.platform.ViewStateStore(com.xnotes.platform.JsonStore.viewStates(appContext))
     private var lastSessionContentVersion = -1
     private var sessionLoaded = false
@@ -178,6 +187,11 @@ class Editor(context: Context) {
     /** A picked PDF/.xnote awaiting a name before it's saved into the explorer; drives the inline name field. */
     var pendingImport by mutableStateOf<PendingImport?>(null)
         private set
+    /** True while a committed import is being written off-thread; drives the "Importing…" dialog. */
+    var importing by mutableStateOf(false)
+        private set
+    /** Flipped by the import dialog's Cancel so the in-flight stream-copy aborts at its next buffer. */
+    private val importCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
     var zoomLocked by mutableStateOf(false)
         private set
     var hasSelection by mutableStateOf(false)
@@ -318,7 +332,7 @@ class Editor(context: Context) {
 
     private fun rebuildPdfSource() {
         pdfSource?.close()
-        pdfSource = state.document.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
+        pdfSource = state.document.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         pdfSource?.onImagesReady = { index ->
             view.post {
                 // Only the page whose embedded-image colours just parsed needs re-rendering; refresh it
@@ -332,6 +346,15 @@ class Editor(context: Context) {
         isRefiningPdf = pdfSource != null && settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors
         installPdfBackground()
         state.invalidateAllCaches()
+    }
+
+    /** Records [doc] as the open note for source-PDF temp-file lifetime: deletes the previously open
+     *  note's temp PDF (unless [doc] reuses the same file) and tracks [doc]'s. Call on every document
+     *  swap so a closed note's (possibly huge) cached PDF doesn't linger on disk. */
+    private fun adoptOpenPdf(doc: Document) {
+        val keep = doc.pdfFile
+        openPdfTemp?.let { if (it != keep) it.delete() }
+        openPdfTemp = keep
     }
 
     private fun installPdfBackground() {
@@ -441,7 +464,7 @@ class Editor(context: Context) {
         // live [pdfSource]: export now runs off the main thread, and Android's PdfRenderer
         // is single-threaded — sharing it with the canvas's background cache builder would
         // crash. A plain note has null bytes and renders identically.
-        val src = state.document.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
+        val src = state.document.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         try {
             com.xnotes.platform.PdfExporter.export(appContext, state.document, src, out, state::paperColor, onProgress, isCancelled)
         } finally {
@@ -542,6 +565,7 @@ class Editor(context: Context) {
         if (snap != null) {
             state.document = snap.document
             rebuildPdfSource()
+            adoptOpenPdf(snap.document) // track the restored note's temp PDF for later cleanup
             history.clear()
             controller.resetGestureState()
             state.invalidateAllCaches()
@@ -717,7 +741,7 @@ class Editor(context: Context) {
 
     fun open(input: InputStream, uri: String, name: String? = null) {
         try {
-            val doc = codec.read(input)
+            val doc = codec.read(input, pdfDir)
             doc.path = uri
             doc.displayName = name
             doc.dirty = false
@@ -779,9 +803,9 @@ class Editor(context: Context) {
         surface.fill(state.paperColor(page))
         val r = surface.renderer()
         r.scale(scale, scale)
-        doc.pdfBytes?.let { bytes ->
+        doc.pdfFile?.let { file ->
             runCatching {
-                com.xnotes.platform.PdfSource.create(appContext, bytes)?.let { src ->
+                com.xnotes.platform.PdfSource.create(appContext, file)?.let { src ->
                     page.pdfPage?.let { pi ->
                         src.renderPage(pi, side, side, settings.prefs.pdfDarkMode, keepImages = settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors, blockingImages = true)?.let { bg ->
                             r.drawRaster(bg, Rect(0.0, 0.0, page.width, page.height))
@@ -818,9 +842,13 @@ class Editor(context: Context) {
             val disk = thumbCache.load(uri)
             val bmp = if (disk != null && disk.second == modified) disk.first else {
                 val doc = runCatching {
-                    appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it) }
+                    appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir) }
                 }.getOrNull() ?: return@withContext null
-                renderDocThumbnailSquare(doc, tilePx)?.also { thumbCache.store(uri, it, modified) } ?: return@withContext null
+                try {
+                    renderDocThumbnailSquare(doc, tilePx)?.also { thumbCache.store(uri, it, modified) } ?: return@withContext null
+                } finally {
+                    doc.pdfFile?.delete() // transient doc loaded just for a thumbnail — drop its extracted PDF
+                }
             }
             val img = bmp.asImageBitmap()
             synchronized(noteThumbs) { noteThumbs.put(uri, img); tileMtimes[uri] = modified }
@@ -940,15 +968,22 @@ class Editor(context: Context) {
         return "${base}_$n.xnote"
     }
 
-    /** Creates a new `.xnote` named [name] under [parentDocId], written by [write]; returns its URI, or null. */
-    private fun createNoteFile(treeUri: String, parentDocId: String, name: String, write: (OutputStream) -> Unit): String? = runCatching {
+    /** Creates a new `.xnote` named [name] under [parentDocId], written by [write]; returns its URI, or null.
+     *  If [write] throws (an IO error, or a cancelled import), the half-written file is deleted so a failed
+     *  import never leaves an empty/partial note behind. */
+    private fun createNoteFile(treeUri: String, parentDocId: String, name: String, write: (OutputStream) -> Unit): String? {
         val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(android.net.Uri.parse(treeUri), parentDocId)
-        val uri = android.provider.DocumentsContract.createDocument(
-            appContext.contentResolver, parent, "application/octet-stream", name,
-        ) ?: return null
-        appContext.contentResolver.openOutputStream(uri, "wt")?.use { write(it) }
-        uri.toString()
-    }.getOrNull()
+        val uri = runCatching {
+            android.provider.DocumentsContract.createDocument(appContext.contentResolver, parent, "application/octet-stream", name)
+        }.getOrNull() ?: return null
+        return runCatching {
+            appContext.contentResolver.openOutputStream(uri, "wt")?.use { write(it) }
+            uri.toString()
+        }.getOrElse {
+            runCatching { android.provider.DocumentsContract.deleteDocument(appContext.contentResolver, uri) }
+            null
+        }
+    }
 
     /** Creates a blank `.xnote` under [parentDocId]; returns its URI, or null. IO — call off-thread. */
     fun createBlankNoteFile(treeUri: String, parentDocId: String, rawName: String): String? {
@@ -957,38 +992,73 @@ class Editor(context: Context) {
         return createNoteFile(treeUri, parentDocId, name) { codec.write(blank, it) }
     }
 
-    /** Imports [pdfBytes] into a new `.xnote` under [parentDocId] (named after [rawName]); returns its URI, or null. IO. */
-    fun createPdfNoteFile(treeUri: String, parentDocId: String, rawName: String, pdfBytes: ByteArray): String? {
-        val source = com.xnotes.platform.PdfSource.create(appContext, pdfBytes) ?: return null
-        val doc = com.xnotes.platform.PdfImporter.import(pdfBytes, source, state.document.dpi)
+    /** Imports the PDF at [pdfFile] into a new `.xnote` under [parentDocId] (named after [rawName]);
+     *  returns its URI, or null. The PDF is streamed straight into the bundle, never held in RAM. IO. */
+    fun createPdfNoteFile(treeUri: String, parentDocId: String, rawName: String, pdfFile: java.io.File): String? {
+        val source = com.xnotes.platform.PdfSource.create(appContext, pdfFile) ?: return null
+        val doc = com.xnotes.platform.PdfImporter.import(source, state.document.dpi) // doc.pdfFile = pdfFile
+        val name = uniqueNoteName(treeUri, parentDocId, rawName)
+        val uri = createNoteFile(treeUri, parentDocId, name) { codec.write(doc, it) { importCancelled.get() } }
         source.close()
+        return uri
+    }
+
+    /** Saves the picked `.xnote` at [file] into a new file under [parentDocId] (named after [rawName]);
+     *  returns its URI, or null. Streamed copy, so a big embedded PDF never loads into RAM. IO. */
+    fun createNoteFileFromFile(treeUri: String, parentDocId: String, rawName: String, file: java.io.File): String? {
+        runCatching { java.io.FileInputStream(file).use { codec.read(it) } }.getOrNull() ?: return null // validate it's a real .xnote (no PDF extraction)
         val name = uniqueNoteName(treeUri, parentDocId, rawName)
-        return createNoteFile(treeUri, parentDocId, name) { codec.write(doc, it) }
+        return createNoteFile(treeUri, parentDocId, name) { out -> copyStream(java.io.FileInputStream(file), out) { importCancelled.get() } }
     }
 
-    /** Saves picked `.xnote` [bytes] into a new file under [parentDocId] (named after [rawName]); returns its URI, or null. IO. */
-    fun createNoteFileFromBytes(treeUri: String, parentDocId: String, rawName: String, bytes: ByteArray): String? {
-        runCatching { codec.read(java.io.ByteArrayInputStream(bytes)) }.getOrNull() ?: return null // validate it's a real .xnote
-        val name = uniqueNoteName(treeUri, parentDocId, rawName)
-        return createNoteFile(treeUri, parentDocId, name) { it.write(bytes) }
+    /** Streams [input] to a private temp file for a pending import; returns it, or null. The caller
+     *  owns the file (it's handed to [requestImport]). Copies in small buffers so a large pick never
+     *  loads into RAM. IO — call off the main thread. */
+    fun stageImport(input: InputStream): java.io.File? = runCatching {
+        val f = java.io.File.createTempFile("import", ".tmp", pdfDir)
+        java.io.FileOutputStream(f).use { input.copyTo(it) }
+        f
+    }.getOrNull()
+
+    /** Copies [input] to [out] in small buffers, polling [isCancelled] so a long copy can abort
+     *  (throwing [DocumentCodec.WriteCancelled], which [createNoteFile] turns into a discarded file). */
+    private fun copyStream(input: InputStream, out: OutputStream, isCancelled: () -> Boolean) {
+        val buf = ByteArray(64 * 1024)
+        input.use {
+            while (true) {
+                if (isCancelled()) throw DocumentCodec.WriteCancelled()
+                val n = it.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+            }
+        }
     }
 
-    /** A picked PDF/.xnote now awaits a name (shown by the explorer's inline field) before being saved into the folder. */
-    fun requestImport(kind: ImportKind, defaultName: String, bytes: ByteArray) {
-        pendingImport = PendingImport(kind, defaultName, bytes)
+    /** A picked PDF/.xnote (already staged to [file]) now awaits a name before being saved into the folder. */
+    fun requestImport(kind: ImportKind, defaultName: String, file: java.io.File) {
+        pendingImport = PendingImport(kind, defaultName, file)
     }
 
-    /** Discards a pending import (the user cancelled the name prompt). */
-    fun cancelImport() { pendingImport = null }
+    /** Discards a pending import (the user cancelled the name prompt) and deletes its staged file. */
+    fun cancelImport() {
+        pendingImport?.file?.delete()
+        pendingImport = null
+    }
 
-    /** Saves a pending import into [parentDocId] under [treeUri] as [rawName]; returns its URI, or null, then clears the request. IO. */
+    /** Saves a pending import into [parentDocId] under [treeUri] as [rawName]; returns its URI, or null.
+     *  Clears the request (and deletes the staged file) on success or cancel; keeps it on a genuine
+     *  failure so the user can retry the name. IO — call off-thread. */
     fun commitImport(treeUri: String, parentDocId: String, rawName: String): String? {
         val pending = pendingImport ?: return null
+        importCancelled.set(false)
         val uri = when (pending.kind) {
-            ImportKind.PDF -> createPdfNoteFile(treeUri, parentDocId, rawName, pending.bytes)
-            ImportKind.OPEN -> createNoteFileFromBytes(treeUri, parentDocId, rawName, pending.bytes)
+            ImportKind.PDF -> createPdfNoteFile(treeUri, parentDocId, rawName, pending.file)
+            ImportKind.OPEN -> createNoteFileFromFile(treeUri, parentDocId, rawName, pending.file)
         }
-        if (uri != null) pendingImport = null
+        if (uri != null || importCancelled.get()) {
+            pending.file.delete()
+            pendingImport = null
+        }
         return uri
     }
 
@@ -1375,12 +1445,13 @@ class Editor(context: Context) {
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         isCancelled: () -> Boolean = { false },
     ) {
-        val doc = appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { codec.read(it) } ?: return
-        val src = doc.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
+        val doc = appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { codec.read(it, pdfDir) } ?: return
+        val src = doc.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         try {
             com.xnotes.platform.PdfExporter.export(appContext, doc, src, out, { page -> state.paperColor(page) }, onProgress, isCancelled)
         } finally {
             src?.close()
+            doc.pdfFile?.delete() // transient doc loaded just for export — drop its extracted PDF
         }
     }
 
@@ -1395,6 +1466,7 @@ class Editor(context: Context) {
         pageClipboard.clear() // clones reference the outgoing document; don't paste them into another
         state.document = doc
         rebuildPdfSource()
+        adoptOpenPdf(doc) // outgoing note's PDF source is now closed; delete its temp file
         history.clear()
         state.invalidateAllCaches()
         state.relayout()
@@ -1669,11 +1741,12 @@ class Editor(context: Context) {
     ) {
         val pages = indices.distinct().sorted().mapNotNull { pageAt(it) }
         if (pages.isEmpty()) return
-        val sub = Document(dpi = state.document.dpi, pdfBytes = state.document.pdfBytes)
+        val sub = Document(dpi = state.document.dpi, pdfFile = state.document.pdfFile)
         sub.pages.addAll(pages) // share the page objects; export only reads them
         // A private source per export — see [exportPdf]: the canvas's cache thread may be
-        // touching the live [pdfSource], and PdfRenderer can't be shared across threads.
-        val src = sub.pdfBytes?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
+        // touching the live [pdfSource], and PdfRenderer can't be shared across threads. The
+        // shared PDF file is read-only and owned by the open document, so closing src won't delete it.
+        val src = sub.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         try {
             com.xnotes.platform.PdfExporter.export(appContext, sub, src, out, state::paperColor, onProgress, isCancelled)
         } finally {
@@ -1801,6 +1874,8 @@ class Editor(context: Context) {
             settings.prefs.defaultPageSize,
             settings.prefs.defaultPageOrientation,
         )
+        rebuildPdfSource() // close the outgoing note's PDF source (a blank note has none)
+        adoptOpenPdf(state.document) // and reclaim its temp PDF file now it's released
         history.clear()
         controller.clearSelection()
         controller.resetGestureState() // drop the outgoing note's fling/elastic so it can't bleed in

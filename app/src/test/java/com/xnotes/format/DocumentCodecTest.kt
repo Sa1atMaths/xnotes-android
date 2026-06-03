@@ -18,6 +18,7 @@ import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConfig
 import com.xnotes.core.tools.ToolDefaults
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -142,14 +143,27 @@ class DocumentCodecTest {
         assertTrue(doc.pages[0].items[0] is TextItem)
     }
 
-    @Test fun pdfBytesRoundTrip() {
-        val doc = Document.blank(count = 1)
-        doc.pages[0].pdfPage = 0
-        doc.pdfBytes = byteArrayOf(37, 80, 68, 70) // "%PDF"
-        val back = roundTrip(doc)
-        assertNotNull(back.pdfBytes)
-        assertEquals(0, back.pages[0].pdfPage)
-        assertEquals(4, back.pdfBytes!!.size)
+    @Test fun pdfFileRoundTrip() {
+        val srcDir = java.nio.file.Files.createTempDirectory("xnote-src").toFile()
+        val outDir = java.nio.file.Files.createTempDirectory("xnote-out").toFile()
+        try {
+            val pdf = java.io.File(srcDir, "in.pdf").apply { writeBytes(byteArrayOf(37, 80, 68, 70)) } // "%PDF"
+            val doc = Document.blank(count = 1)
+            doc.pages[0].pdfPage = 0
+            doc.pdfFile = pdf
+            val out = ByteArrayOutputStream()
+            codec.write(doc, out)
+            // Reading with a pdfDir streams the embedded PDF back out to a fresh file (never into RAM).
+            val back = codec.read(ByteArrayInputStream(out.toByteArray()), outDir)
+            assertNotNull(back.pdfFile)
+            assertEquals(0, back.pages[0].pdfPage)
+            assertArrayEquals(byteArrayOf(37, 80, 68, 70), back.pdfFile!!.readBytes())
+            // Reading without a pdfDir skips the PDF entirely (validation-only reads).
+            val noPdf = codec.read(ByteArrayInputStream(out.toByteArray()))
+            assertNull(noPdf.pdfFile)
+        } finally {
+            srcDir.deleteRecursively(); outDir.deleteRecursively()
+        }
     }
 
     @Test fun speedStrokeTimestampsRoundTrip() {
@@ -202,6 +216,6 @@ class DocumentCodecTest {
         val doc = codec.read(ByteArrayInputStream(out.toByteArray()))
         val stroke = doc.pages[0].items[0] as Stroke
         assertEquals(ToolConfig().baseWidth, stroke.config.baseWidth, 1e-9)
-        assertNull(doc.pdfBytes)
+        assertNull(doc.pdfFile)
     }
 }

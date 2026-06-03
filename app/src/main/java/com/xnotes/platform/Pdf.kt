@@ -22,15 +22,16 @@ import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.tools.Tool
+import java.io.File
 import java.io.OutputStream
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /** Turns a loaded [PdfSource] into a paged note to annotate (spec 08 §5). */
 object PdfImporter {
-    fun import(bytes: ByteArray, source: PdfSource, dpi: Int = PageSize.DEFAULT_DPI): Document {
+    fun import(source: PdfSource, dpi: Int = PageSize.DEFAULT_DPI): Document {
         val doc = Document(dpi = dpi)
-        doc.pdfBytes = bytes
+        doc.pdfFile = source.file
         for (i in 0 until source.pageCount) {
             val (wPts, hPts) = source.pageSizePoints(i)
             val w = wPts / 72.0 * dpi
@@ -78,10 +79,10 @@ object PdfExporter {
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
         isCancelled: () -> Boolean = { false },
     ) {
-        val bytes = doc.pdfBytes
-        val srcDoc = if (bytes != null) loadSource(context, bytes) else null
+        val file = doc.pdfFile
+        val srcDoc = if (file != null) loadSource(context, file) else null
         // A PDF background we can't parse with PdfBox: keep the working framework rasterizer.
-        if (bytes != null && srcDoc == null) {
+        if (file != null && srcDoc == null) {
             exportRasterized(doc, source, out, paperColor, onProgress, isCancelled)
             return
         }
@@ -92,9 +93,9 @@ object PdfExporter {
         }
     }
 
-    private fun loadSource(context: Context, bytes: ByteArray): PDDocument? = try {
+    private fun loadSource(context: Context, file: File): PDDocument? = try {
         PDFBoxResourceLoader.init(context.applicationContext)
-        PDDocument.load(bytes)
+        PDDocument.load(file) // file-backed: PdfBox reads it via random access, not a full in-RAM load
     } catch (_: Throwable) {
         null
     }

@@ -18,7 +18,7 @@ import java.io.FileOutputStream
  * Best-effort: failures are swallowed, and a missing or corrupt session restores
  * nothing.
  */
-class SessionStore(private val dir: File, private val codec: DocumentCodec) {
+class SessionStore(private val dir: File, private val codec: DocumentCodec, private val pdfDir: File) {
 
     private val docFile = File(dir, "document.xnote")
     private val meta = JsonStore(File(dir, "session.json"))
@@ -79,7 +79,7 @@ class SessionStore(private val dir: File, private val codec: DocumentCodec) {
     /** Load the saved session, or null when there is none or it can't be read. */
     fun load(): Snapshot? {
         if (!docFile.exists()) return null
-        val doc = runCatching { FileInputStream(docFile).use { codec.read(it) } }.getOrNull() ?: return null
+        val doc = runCatching { FileInputStream(docFile).use { codec.read(it, pdfDir) } }.getOrNull() ?: return null
         val m = meta.read()
         doc.path = m.optString("path", "").ifEmpty { null }
         doc.displayName = m.optString("displayName", "").ifEmpty { null }
