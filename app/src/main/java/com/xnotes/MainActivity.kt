@@ -613,6 +613,13 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             exportProgress = null     // hide at once; runPdfExport then discards the temp file
         })
     }
+    if (editor.importing) {
+        // OPEN imports an .xnote; everything else is the PDF import the loader is named for.
+        PdfImportDialog(
+            isPdf = editor.pendingImport?.kind != com.xnotes.ui.ImportKind.OPEN,
+            onCancel = { editor.cancelImportInProgress() }, // the stream-copy stops at its next buffer
+        )
+    }
 }
 
 /**
@@ -674,6 +681,54 @@ private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
                     done < total -> "page $done / $total"
                     else -> "Writing $total page${if (total == 1) "" else "s"}…"
                 },
+                color = palette.textDim.toComposeColor(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(14.dp))
+            androidx.compose.material3.TextButton(onClick = onCancel) {
+                Text("Cancel", color = palette.accent.toComposeColor(), fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
+}
+
+/**
+ * Indeterminate "Importing PDF…" dialog shown while a picked PDF (or `.xnote`) is streamed into a
+ * new note off the main thread. Import has no natural page-by-page progress — the cost is copying
+ * the (possibly large) source bytes — so it shows an animated spinner rather than a percentage.
+ * Dismissing it (Cancel, back, or tapping outside) aborts the copy via [onCancel]. Styled to match
+ * [PdfExportDialog].
+ */
+@Composable
+private fun PdfImportDialog(isPdf: Boolean, onCancel: () -> Unit) {
+    val palette = LocalPalette.current
+    androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(palette.surface.toComposeColor())
+                .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(14.dp))
+                .padding(horizontal = 32.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.fillMaxSize(),
+                    color = palette.accent.toComposeColor(),
+                    strokeWidth = 4.dp,
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                if (isPdf) "Importing PDF…" else "Importing note…",
+                color = palette.text.toComposeColor(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 15.sp,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "This can take a moment for a large file.",
                 color = palette.textDim.toComposeColor(),
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,

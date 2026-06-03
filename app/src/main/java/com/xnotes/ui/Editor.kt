@@ -1062,6 +1062,24 @@ class Editor(context: Context) {
         return uri
     }
 
+    /** Commits the pending import off the main thread while driving the "Importing…" dialog via
+     *  [importing]. Returns the new note's URI, or null on failure/cancel. On cancel [pendingImport]
+     *  is cleared (dialog dismisses); on a genuine failure it's kept so the caller can show an error
+     *  and let the user retry. */
+    suspend fun commitImportAsync(treeUri: String, parentDocId: String, rawName: String): String? {
+        importing = true
+        return try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                commitImport(treeUri, parentDocId, rawName)
+            }
+        } finally {
+            importing = false
+        }
+    }
+
+    /** Aborts an in-flight import (the dialog's Cancel) so its stream-copy stops at the next buffer. */
+    fun cancelImportInProgress() { importCancelled.set(true) }
+
     /** Renames a document (file or folder) to [newName]; follows the open note. IO, call off-thread. */
     fun renameDocument(docUri: String, newName: String): Boolean {
         val result = runCatching {

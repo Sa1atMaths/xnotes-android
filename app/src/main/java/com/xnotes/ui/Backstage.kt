@@ -677,8 +677,9 @@ private fun ExplorerSection(
         }
     }
 
-    // Name entry for a new note, new folder, or a pending PDF/Open import.
-    if (createMode != CreateMode.NONE || pendingImport != null) {
+    // Name entry for a new note, new folder, or a pending PDF/Open import. Hidden while an import is
+    // actually being written, so only the "Importing…" dialog shows.
+    if ((createMode != CreateMode.NONE || pendingImport != null) && !editor.importing) {
         val isFolder = pendingImport == null && createMode == CreateMode.FOLDER
         val default = when {
             pendingImport != null -> pendingImport.defaultName // import names default to the source file
@@ -700,8 +701,13 @@ private fun ExplorerSection(
                 when {
                     pendingImport != null -> scope.launch {
                         // Land the import in the current folder; it opens only when the user taps it.
-                        val uri = withContext(Dispatchers.IO) { editor.commitImport(root, currentDocId, n) }
-                        if (uri != null) refreshKey++ else fieldError = "Couldn’t save that note."
+                        // commitImportAsync drives the "Importing…" dialog and runs the copy off-thread.
+                        val uri = editor.commitImportAsync(root, currentDocId, n)
+                        when {
+                            uri != null -> refreshKey++
+                            editor.pendingImport != null -> fieldError = "Couldn’t save that note." // genuine failure; keep the prompt
+                            // else: cancelled — the prompt already dismissed (pendingImport cleared)
+                        }
                     }
                     isFolder -> scope.launch {
                         val ok = withContext(Dispatchers.IO) { editor.createFolder(root, currentDocId, n) }
