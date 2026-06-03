@@ -156,8 +156,10 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     var pendingExportTemp by remember { mutableStateOf<java.io.File?>(null) }
     // In-flight PDF render: (pagesDone, totalPages) drives the progress dialog; null hides it.
     var exportProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    // Flipped by the dialog's Cancel/dismiss so the background render aborts at the next page.
-    val exportCancelled = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    // The running export's coroutine and its own cancel flag. Each export gets a fresh flag so a new
+    // export can abort the previous one (set its flag, then join it) without un-cancelling itself.
+    var exportJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var exportCancel by remember { mutableStateOf<java.util.concurrent.atomic.AtomicBoolean?>(null) }
     // Page indices awaiting a SAF "Save as" destination (side-panel page export).
     var pendingExportPages by remember { mutableStateOf<List<Int>>(emptyList()) }
     val scope = rememberCoroutineScope()
@@ -333,9 +335,10 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         com.xnotes.core.util.Paths.stem(displayNameOf(resolver, Uri.parse(uriStr)) ?: "Note")
 
     // Render a PDF off the main thread into a temp file behind a cancellable progress dialog;
-    // only once it reaches 100% does [onReady] run — opening the SAF picker or a share sheet.
-    // Dismissing the dialog flips [exportCancelled], so the render aborts at the next page and
-    // the half-written temp is discarded. [shareDir] picks the cache subdir: FileProvider only
+    // only once it finishes does [onReady] run — opening the SAF picker or a share sheet.
+    // Dismissing the dialog flips this export's cancel flag, which aborts the page loop AND the
+    // write stream, so the half-written temp is discarded. A fresh export first aborts and joins any
+    // previous one, so they never overlap. [shareDir] picks the cache subdir: FileProvider only
     // exposes cache/share, so shares render there; plain "save" exports use cache/export.
     fun runPdfExport(
         stem: String,
@@ -343,24 +346,32 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         render: (java.io.OutputStream, (Int, Int) -> Unit, () -> Boolean) -> Unit,
         onReady: (java.io.File) -> Unit,
     ) {
-        exportCancelled.set(false)
+        val prevJob = exportJob
+        val prevCancel = exportCancel
+        val cancel = java.util.concurrent.atomic.AtomicBoolean(false)
+        exportCancel = cancel // the dialog's Cancel flips THIS export's flag
         exportProgress = 0 to 0 // show the dialog at once; the render fills in the real total
-        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        exportJob = scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Abort any still-running previous export (its write stream throws on the next buffer) and
+            // wait for it to fully unwind before we touch the shared temp dir — no overlapping saves.
+            prevCancel?.set(true)
+            prevJob?.join()
             val dir = java.io.File(context.cacheDir, if (shareDir) "share" else "export").apply { mkdirs() }
             dir.listFiles()?.forEach { it.delete() } // keep only the file this export produces
             val temp = java.io.File(dir, "$stem.pdf")
             val ok = runCatching {
-                java.io.FileOutputStream(temp).use { o ->
-                    // Ignore a late progress tick after Cancel, so the just-hidden dialog can't flash back.
-                    render(o, { done, total -> if (!exportCancelled.get()) exportProgress = done to total }, { exportCancelled.get() })
+                java.io.FileOutputStream(temp).use { fo ->
+                    // Abort the (otherwise uninterruptible) PdfBox save the moment Cancel is tapped.
+                    val o = CancellableOutputStream(fo) { cancel.get() }
+                    render(o, { done, total -> if (!cancel.get()) exportProgress = done to total }, { cancel.get() })
                 }
             }.isSuccess
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                exportProgress = null // hide the dialog
+                if (exportCancel === cancel) exportProgress = null // only the latest export owns the dialog
                 when {
-                    exportCancelled.get() -> temp.delete()
+                    cancel.get() -> temp.delete()
                     ok -> onReady(temp)
-                    else -> { temp.delete(); editor.message = "Could not export to PDF." }
+                    else -> { temp.delete(); if (exportCancel === cancel) editor.message = "Could not export to PDF." }
                 }
             }
         }
@@ -609,8 +620,8 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     }
     exportProgress?.let { (done, total) ->
         PdfExportDialog(done = done, total = total, onCancel = {
-            exportCancelled.set(true) // the background render stops at its next page boundary
-            exportProgress = null     // hide at once; runPdfExport then discards the temp file
+            exportCancel?.set(true) // abort this export's page loop AND its write stream
+            exportProgress = null   // hide at once; the job then discards the half-written temp
         })
     }
     if (editor.importing) {
@@ -620,6 +631,24 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
             onCancel = { editor.cancelImportInProgress() }, // the stream-copy stops at its next buffer
         )
     }
+}
+
+/**
+ * Wraps a PDF export's output stream and throws the instant [cancelled] turns true, so PdfBox's
+ * otherwise-uninterruptible `save()` (which writes the whole document in one call) aborts promptly
+ * when the user taps Cancel, instead of running to completion on a background thread.
+ */
+private class CancellableOutputStream(
+    private val out: java.io.OutputStream,
+    private val cancelled: () -> Boolean,
+) : java.io.OutputStream() {
+    override fun write(b: Int) { if (cancelled()) throw java.io.InterruptedIOException(); out.write(b) }
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        if (cancelled()) throw java.io.InterruptedIOException()
+        out.write(b, off, len)
+    }
+    override fun flush() { out.flush() }
+    override fun close() { out.close() }
 }
 
 /**
