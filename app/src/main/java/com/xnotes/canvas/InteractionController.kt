@@ -439,7 +439,12 @@ class InteractionController(
         val content = state.viewportToContent(Pt(vx, vy))
         val local = Pt(content.x - pr.left, content.y - pr.top)
         val last = stroke.samples.lastOrNull()
-        if (force || last == null || Pt(last.x, last.y).manhattanTo(local) >= MIN_SAMPLE_DIST) {
+        // Decimate by on-screen spacing, not content spacing: the gate is MIN_SAMPLE_DIST
+        // viewport px (content px ÷ zoom), capped so it never coarsens past the old 1-content-px
+        // floor when zoomed out. A fixed content-px gate discarded ever-finer detail the more you
+        // zoomed in, so strokes drawn while zoomed faceted into ~zoom-px chords.
+        val gate = (MIN_SAMPLE_DIST / state.zoom).coerceAtMost(MIN_SAMPLE_DIST)
+        if (force || last == null || Pt(last.x, last.y).manhattanTo(local) >= gate) {
             stroke.addSample(Sample(local.x, local.y, pressure.coerceIn(0.0, 1.0), (timeMs - strokeStartTimeMs).toDouble()))
         }
     }
