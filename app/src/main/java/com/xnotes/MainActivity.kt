@@ -652,23 +652,20 @@ private class CancellableOutputStream(
 }
 
 /**
- * Determinate "Exporting to PDF…" dialog shown while a (possibly large) note is flattened to a PDF
- * off the main thread. The ring fills 0→100% by page; dismissing it (Cancel, back, or tapping
- * outside) aborts the render via [onCancel]. Styled to match the app's monospace surfaces.
+ * "Exporting to PDF…" dialog shown while a (possibly large) note is flattened to a PDF off the main
+ * thread. An animated spinner runs through the preparing/page phases (where there's no meaningful
+ * percentage), then a determinate ring fills 0→100% during the final write. Dismissing it (Cancel,
+ * back, or tapping outside) aborts the export via [onCancel]. Styled to match the monospace surfaces.
  */
 @Composable
 private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
     val palette = LocalPalette.current
-    // The vector export reports the slow final PDF write as byte progress with total = -1, so the
-    // ring keeps moving (done is a 0..1000 permille). The rasterized/pure-note path can't measure
-    // its one-shot serialize step, so it sits at done == total: show an animated spinner there.
+    // Only the final PDF write has a meaningful, moving percentage (reported as byte progress with
+    // total = -1, done a 0..1000 permille). Preparing and the page phase sit at 0% (the page loop is
+    // near-instant on the common path), so show an animated spinner there instead of a frozen 0% ring,
+    // and switch to the determinate ring + percentage once writing begins.
     val writing = total < 0
-    val finalizing = total > 0 && done >= total
-    val fraction = when {
-        writing -> (done / 1000f).coerceIn(0f, 1f)
-        total > 0 -> done.toFloat() / total
-        else -> 0f
-    }
+    val fraction = if (writing) (done / 1000f).coerceIn(0f, 1f) else 0f
     androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
         Column(
             modifier = Modifier
@@ -679,13 +676,7 @@ private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
-                if (finalizing) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.fillMaxSize(),
-                        color = palette.accent.toComposeColor(),
-                        strokeWidth = 4.dp,
-                    )
-                } else {
+                if (writing) {
                     androidx.compose.material3.CircularProgressIndicator(
                         progress = { fraction },
                         modifier = Modifier.fillMaxSize(),
@@ -698,6 +689,12 @@ private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
                         color = palette.text.toComposeColor(),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 15.sp,
+                    )
+                } else {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.fillMaxSize(),
+                        color = palette.accent.toComposeColor(),
+                        strokeWidth = 4.dp,
                     )
                 }
             }
