@@ -18,6 +18,12 @@ object StrokeEngine {
     /** Floor on the calligraphic direction term so width stays positive. */
     const val MIN_DIRECTION = 0.1
 
+    /** Calligraphy pen: a heavier low-pass on the direction channel (the tangent's y that
+     *  drives nib width) than [ALPHA] (position), so the width eases between thick and thin
+     *  as the stroke curves instead of snapping when the tangent turns. Mirrors [SPEED_ALPHA]
+     *  for the speed pen; only the width magnitude is smoothed, not the ribbon's orientation. */
+    const val DIR_ALPHA = 0.25
+
     /** Speed pen: dp/ms at/below which the line stays full width, and the speed
      *  at/above which it reaches its thinnest (≈1.25 and ≈5 in/s of hand travel).
      *  Measuring in dp — not page pixels — makes the effect independent of both zoom
@@ -171,13 +177,19 @@ object StrokeEngine {
         val sf = speedFactors(centers, samples, speedStrength, speedScale)
         val tf = taperFactors(centers, taperLength)
 
+        // Calligraphy: low-pass the direction channel (the tangent's y that sets nib width)
+        // so the width glides between thick and thin instead of snapping when the stroke
+        // curves. Only the width magnitude is smoothed — the ribbon's orientation still
+        // follows the true tangent. A no-op when ds = 0 (no calligraphic direction effect).
+        val dirY = if (ds > 0.0) ema(tangents.map { it.y }, DIR_ALPHA) else null
+
         // 5–7. Half-widths, normals, and the two ribbon edges.
         val left = ArrayList<Pt>(n)
         val right = ArrayList<Pt>(n)
         val halfWidths = ArrayList<Double>(n)
         for (i in 0 until n) {
             val t = tangents[i]
-            val h = hw(i, t.y) * sf[i] * tf[i]
+            val h = hw(i, dirY?.get(i) ?: t.y) * sf[i] * tf[i]
             halfWidths.add(h)
             val normal = Pt(-t.y, t.x) // tangent rotated 90°, already unit length
             left.add(centers[i] - normal * h)
@@ -189,11 +201,14 @@ object StrokeEngine {
         outline.addAll(left)
         for (i in right.indices.reversed()) outline.add(right[i])
 
-        // 9. Caps from the pure-pressure half-width at the first/last points,
-        //    carrying the same speed/taper multiplier so tapered ends come to a point.
+        // 9. Round caps sized to the ribbon's own half-width at each end, so a calligraphy
+        //    end rounds off its (thinned) ribbon instead of sprouting a fat pure-pressure
+        //    dot. Identical to the old pure-pressure cap whenever ds = 0 (pen/speed/taper),
+        //    and it inherits the speed/taper multiplier via halfWidths, so tapered ends
+        //    still come to a point.
         val caps = listOf(
-            Cap(centers[0], hw(0, 0.0) * sf[0] * tf[0]),
-            Cap(centers[n - 1], hw(n - 1, 0.0) * sf[n - 1] * tf[n - 1]),
+            Cap(centers[0], halfWidths[0]),
+            Cap(centers[n - 1], halfWidths[n - 1]),
         )
 
         return StrokeGeometry(

@@ -155,4 +155,47 @@ class StrokeEngineTest {
         assertEquals(2.0, unscaled.halfWidths.maxOrNull()!!, 1e-6)
         assertTrue(scaled.halfWidths.maxOrNull()!! < unscaled.halfWidths.maxOrNull()!!)
     }
+
+    // --- Calligraphy caps & direction smoothing ---
+    @Test fun calligraphyCapsMatchTheThinnedRibbonNotAPurePressureDot() {
+        // An upward calligraphy stroke (ty ≈ -1) is thinned by the direction term, so the
+        // end caps must shrink to the ribbon's own half-width. They used to be sized from
+        // the pure-pressure half-width (3.0 at full pressure here), which bulged past the
+        // thin ribbon as a visible dot.
+        val pts = (0..6).map { Sample(0.0, -it * 10.0, 1.0) } // straight up
+        val g = StrokeEngine.build(pts, 6.0, true, 0.40, 0.60)
+        assertEquals(g.halfWidths.first(), g.caps[0].radius, 1e-9)
+        assertEquals(g.halfWidths.last(), g.caps[1].radius, 1e-9)
+        assertTrue("cap should be the thinned ribbon width, not the 3.0 pure-pressure dot",
+            g.caps[0].radius < 1.5)
+    }
+
+    @Test fun nonCalligraphyCapsAreUnchanged() {
+        // With ds = 0 the cap is still exactly the pure-pressure half-width (× speed/taper),
+        // so the pen/speed/taper pens render identically to before.
+        val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0)
+        assertEquals(1.5, g.caps[0].radius, 1e-9) // 3.0 × 1.0 / 2
+        assertEquals(1.5, g.caps[1].radius, 1e-9)
+    }
+
+    @Test fun calligraphyWidthGlidesAcrossADirectionChange() {
+        // The nib width is low-passed, so when an L-stroke turns from a long rightward run
+        // (thick horizontal regime) into a long upward run (thin vertical regime), the width
+        // keeps easing down for several samples past the corner instead of snapping the
+        // instant the tangent flips. Without the direction low-pass the upward samples would
+        // all sit at the thin regime immediately.
+        val pts = (0..9).map { Sample(it * 10.0, 0.0, 1.0) } +
+            (1..14).map { Sample(90.0, -it * 10.0, 1.0) }
+        val g = StrokeEngine.build(pts, 6.0, true, 0.40, 0.60)
+        val corner = 10 // first sample of the upward run
+        val settled = g.halfWidths.last()
+        assertTrue("width should still be mid-transition just past the corner",
+            g.halfWidths[corner + 1] > settled + 1e-6)
+        assertTrue("width should still be easing several samples past the corner",
+            g.halfWidths[corner + 3] > settled + 1e-6)
+        assertTrue("and the transition is monotone (no snap-back)",
+            g.halfWidths[corner + 1] >= g.halfWidths[corner + 3] - 1e-9)
+        assertTrue("ends thinner than it started", settled < g.halfWidths.first())
+    }
 }
