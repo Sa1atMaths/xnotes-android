@@ -630,11 +630,16 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
 @Composable
 private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
     val palette = LocalPalette.current
-    // Once every page is rendered, PdfDocument.writeTo() serializes the whole file in one opaque,
-    // unmeasurable step — slow for a big PDF. Show an animated spinner for it instead of a frozen
-    // 100% ring, so it reads as "still working", not stuck.
+    // The vector export reports the slow final PDF write as byte progress with total = -1, so the
+    // ring keeps moving (done is a 0..1000 permille). The rasterized/pure-note path can't measure
+    // its one-shot serialize step, so it sits at done == total: show an animated spinner there.
+    val writing = total < 0
     val finalizing = total > 0 && done >= total
-    val fraction = if (total > 0) done.toFloat() / total else 0f
+    val fraction = when {
+        writing -> (done / 1000f).coerceIn(0f, 1f)
+        total > 0 -> done.toFloat() / total
+        else -> 0f
+    }
     androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
         Column(
             modifier = Modifier
@@ -677,7 +682,8 @@ private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
             Spacer(Modifier.height(4.dp))
             Text(
                 when {
-                    total <= 0 -> "Preparing…"
+                    writing -> "Writing the PDF…"
+                    total == 0 -> "Preparing…"
                     done < total -> "page $done / $total"
                     else -> "Writing $total page${if (total == 1) "" else "s"}…"
                 },

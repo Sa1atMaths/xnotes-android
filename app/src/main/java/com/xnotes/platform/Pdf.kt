@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
@@ -64,6 +65,10 @@ object PdfExporter {
     /** Supersample factor for rasterized effect/text items (×150 dpi content ⇒ ~300 dpi). */
     private const val RASTER_ITEM_SCALE = 2.0
 
+    /** Cap on PdfBox's in-RAM scratch buffers during export; the rest spills to temp files so a large
+     *  source PDF can't exhaust the heap. Small/medium exports stay fully in memory (fast). */
+    private const val SCRATCH_MAIN_MEM_BYTES = 32L * 1024 * 1024
+
     /**
      * [paperColor] gives each page's background fill (the on-screen paper colour, e.g. dark-theme
      * `#161616`) — used for plain note pages; an imported PDF page keeps its own background instead.
@@ -80,22 +85,25 @@ object PdfExporter {
         isCancelled: () -> Boolean = { false },
     ) {
         val file = doc.pdfFile
-        val srcDoc = if (file != null) loadSource(context, file) else null
+        // Cap PdfBox's in-RAM scratch to a few tens of MB and spill the rest to temp files in the
+        // cache dir, so a large source PDF can't exhaust the heap while it's parsed/written.
+        val mem = MemoryUsageSetting.setupMixed(SCRATCH_MAIN_MEM_BYTES).setTempDir(context.cacheDir)
+        val srcDoc = if (file != null) loadSource(context, file, mem) else null
         // A PDF background we can't parse with PdfBox: keep the working framework rasterizer.
         if (file != null && srcDoc == null) {
             exportRasterized(doc, source, out, paperColor, onProgress, isCancelled)
             return
         }
         try {
-            exportVector(doc, srcDoc, source, out, paperColor, onProgress, isCancelled)
+            exportVector(doc, srcDoc, source, out, paperColor, onProgress, isCancelled, mem)
         } finally {
             srcDoc?.runCatching { close() }
         }
     }
 
-    private fun loadSource(context: Context, file: File): PDDocument? = try {
+    private fun loadSource(context: Context, file: File, mem: MemoryUsageSetting): PDDocument? = try {
         PDFBoxResourceLoader.init(context.applicationContext)
-        PDDocument.load(file) // file-backed: PdfBox reads it via random access, not a full in-RAM load
+        PDDocument.load(file, mem) // file-backed + scratch-capped: never reads the whole PDF into RAM
     } catch (_: Throwable) {
         null
     }
@@ -108,12 +116,46 @@ object PdfExporter {
         paperColor: (Page) -> Rgba,
         onProgress: (Int, Int) -> Unit,
         isCancelled: () -> Boolean,
+        mem: MemoryUsageSetting,
     ) {
-        val outDoc = PDDocument()
+        val s = 72.0 / doc.dpi
+        val total = doc.pages.size
+        onProgress(0, total)
+
+        // Fast path: the note is exactly the imported PDF's pages in their original order (optionally
+        // with blank pages appended). Annotate the source document in place and save *it* — its
+        // already-compressed page/image streams are copied straight through, never decoded and
+        // re-encoded, and no second copy of the document is built. This is the case for "import a PDF
+        // and draw on it", so the common big-PDF export is both fast and low-memory.
+        if (srcDoc != null && canAnnotateSourceInPlace(doc, srcDoc)) {
+            val n = srcDoc.numberOfPages
+            doc.pages.forEachIndexed { index, page ->
+                if (isCancelled()) return
+                if (index < n) {
+                    if (page.items.isNotEmpty()) annotatePage(srcDoc, srcDoc.getPage(index), page, s)
+                } else {
+                    vectorBlankPage(srcDoc, page, s, paperColor) // a blank note page appended after the PDF
+                }
+                onProgress(index + 1, total)
+            }
+            if (isCancelled()) return
+            // Page work is near-instant on this path, so all the time is in writing the PDF — one
+            // opaque PdfBox call. Report it as byte progress (output ≈ the source PDF's size) so the
+            // dialog keeps moving instead of freezing at "done". total = -1 marks the writing phase.
+            val est = doc.pdfFile?.length() ?: 0L
+            if (est > 0) {
+                onProgress(0, -1) // enter the writing phase at 0% right away (no spinner flash)
+                srcDoc.save(ProgressOutputStream(out, est) { p -> onProgress(p, -1) })
+            } else {
+                srcDoc.save(out)
+            }
+            return
+        }
+
+        // Fallback: pages were reordered/deleted, or a source page is rotated, or it's a pure note —
+        // rebuild a fresh document. Scratch is capped (see [mem]) so this can't exhaust the heap either.
+        val outDoc = PDDocument(mem)
         try {
-            val s = 72.0 / doc.dpi
-            val total = doc.pages.size
-            onProgress(0, total)
             doc.pages.forEachIndexed { index, page ->
                 if (isCancelled()) return
                 val srcIdx = page.pdfPage
@@ -135,14 +177,33 @@ object PdfExporter {
         }
     }
 
+    /** True when the note's pages are the source's pages 0..N-1 in order (rotation-0), optionally
+     *  followed by blank note pages — the shape that lets us annotate the source in place. */
+    private fun canAnnotateSourceInPlace(doc: Document, srcDoc: PDDocument): Boolean {
+        val n = srcDoc.numberOfPages
+        if (doc.pages.size < n) return false // a source page was deleted -> rebuild
+        for (i in 0 until n) {
+            if (doc.pages[i].pdfPage != i) return false // reordered/duplicated/remapped -> rebuild
+            if (srcDoc.getPage(i).rotation % 360 != 0) return false // rotated source page -> rebuild
+        }
+        for (i in n until doc.pages.size) {
+            if (doc.pages[i].pdfPage != null) return false // a source page where a blank is expected -> rebuild
+        }
+        return true
+    }
+
     /** Copy a (rotation-0) source page in as vector, then overlay its annotations. */
     private fun vectorImportedPage(outDoc: PDDocument, srcDoc: PDDocument, srcIdx: Int, page: Page, s: Double) {
-        val imported = outDoc.importPage(srcDoc.getPage(srcIdx))
-        val crop = imported.cropBox
+        annotatePage(outDoc, outDoc.importPage(srcDoc.getPage(srcIdx)), page, s)
+    }
+
+    /** Append [page]'s annotations as a new content stream over an existing [pdfPage] of [doc]. */
+    private fun annotatePage(doc: PDDocument, pdfPage: PDPage, page: Page, s: Double) {
+        val crop = pdfPage.cropBox
         val ox = crop.lowerLeftX.toDouble()
         val oy = (crop.lowerLeftY + crop.height).toDouble()
-        PDPageContentStream(outDoc, imported, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
-            paintItems(cs, outDoc, page, ox, oy, s)
+        PDPageContentStream(doc, pdfPage, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
+            paintItems(cs, doc, page, ox, oy, s)
         }
     }
 
@@ -221,6 +282,28 @@ object PdfExporter {
     }
 
     private class RasterItem(val bmp: Bitmap, val rect: Rect, val multiply: Boolean)
+
+    /**
+     * Wraps [out] and reports write progress as a 0..999 permille of [estTotal] bytes (throttled to
+     * one call per permille step), so a long PdfBox `save` can drive a moving progress bar. Capped at
+     * 999 so it never reads "100%" before the save actually returns. Does not own [out].
+     */
+    private class ProgressOutputStream(
+        private val out: OutputStream,
+        private val estTotal: Long,
+        private val onPermille: (Int) -> Unit,
+    ) : OutputStream() {
+        private var written = 0L
+        private var last = -1
+        override fun write(b: Int) { out.write(b); written++; tick() }
+        override fun write(b: ByteArray, off: Int, len: Int) { out.write(b, off, len); written += len; tick() }
+        override fun flush() { out.flush() }
+        override fun close() { out.close() }
+        private fun tick() {
+            val p = ((written * 1000) / estTotal).toInt().coerceIn(0, 999)
+            if (p != last) { last = p; onPermille(p) }
+        }
+    }
 
     /** Render a single item, cropped to its (page-clamped) paint bounds, into a transparent bitmap. */
     private fun rasterizeItem(item: CanvasItem, page: Page): RasterItem? {
