@@ -132,7 +132,6 @@ data class Settings(
             .put("neon_strength", c.neonStrength)
             .put("dash_length", c.dashLength)
             .put("dash_gap", c.dashGap)
-            .put("smoothing_alpha", c.smoothingAlpha)
             .put("erase_mode", c.eraseMode.id)
             .put("rgba", rgbaArr(c.rgba))
 
@@ -150,7 +149,6 @@ data class Settings(
                 neonStrength = o.optDouble("neon_strength", d.neonStrength),
                 dashLength = o.optDouble("dash_length", d.dashLength),
                 dashGap = o.optDouble("dash_gap", d.dashGap),
-                smoothingAlpha = o.optDouble("smoothing_alpha", d.smoothingAlpha),
                 eraseMode = EraseMode.fromId(o.optString("erase_mode", d.eraseMode.id)),
             )
         }

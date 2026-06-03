@@ -25,7 +25,7 @@ class SettingsTest {
 
     @Test fun roundTripPreservesValues() {
         val original = Settings(
-            tools = mapOf(Tool.PEN to com.xnotes.core.tools.ToolConfig(5.0, false, 0.2, 0.1, Rgba(1, 2, 3, 255)).copy(smoothingAlpha = 0.3)),
+            tools = mapOf(Tool.PEN to com.xnotes.core.tools.ToolConfig(5.0, false, 0.2, 0.1, Rgba(1, 2, 3, 255))),
             toolbarColors = listOf(Rgba(0, 230, 118), Rgba(1, 1, 1), Rgba(2, 2, 2), Rgba(3, 3, 3), Rgba(4, 4, 4)),
             activeColor = 2,
             renderScale = 1.5,
@@ -40,7 +40,6 @@ class SettingsTest {
         )
         val back = Settings.fromJson(original.toJson())
         assertEquals(5.0, back.configFor(Tool.PEN).baseWidth, 1e-9)
-        assertEquals(0.3, back.configFor(Tool.PEN).smoothingAlpha, 1e-9)
         assertFalse(back.configFor(Tool.PEN).pressureEnabled)
         assertEquals(2, back.activeColor)
         assertEquals(1.5, back.renderScale, 1e-9)

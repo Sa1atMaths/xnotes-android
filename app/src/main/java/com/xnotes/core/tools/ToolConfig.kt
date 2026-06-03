@@ -44,10 +44,6 @@ data class ToolConfig(
     val dashLength: Double = 10.0,
     /** Dashed pen: gap between dashes, in content px. Only used by [Tool.DASHED]. */
     val dashGap: Double = 8.0,
-    /** EMA low-pass factor for the x/y/pressure channels: 1.0 = no smoothing (raw input),
-     *  lower = smoother but laggier. Default matches StrokeEngine.ALPHA, so a tool that
-     *  never sets it renders exactly as before. */
-    val smoothingAlpha: Double = 0.5,
     /** Eraser behaviour: whole-stroke (STROKE) or partial (AREA). Only used by [Tool.ERASER]. */
     val eraseMode: EraseMode = EraseMode.STROKE,
 )
@@ -81,12 +77,6 @@ object ToolConversions {
         1.0 - (sensitivity.coerceIn(0.0, 100.0) / 100.0) * 0.9
 
     fun minFactorToSensitivity(m: Double): Double = (1.0 - m) / 0.9 * 100.0
-
-    /** SMOOTHING (0..100, higher = smoother) -> EMA `alpha` in [0.1, 1.0] (1.0 = raw input). */
-    fun smoothingToAlpha(smoothing: Double): Double =
-        1.0 - smoothing.coerceIn(0.0, 100.0) / 100.0 * 0.9
-
-    fun alphaToSmoothing(alpha: Double): Double = (1.0 - alpha) / 0.9 * 100.0
 
     /** MULTIPLIER (thick:thin ratio) -> `ds`, clamped to [0, 0.95]. */
     fun multiplierToDirectionStrength(multiplier: Double): Double =

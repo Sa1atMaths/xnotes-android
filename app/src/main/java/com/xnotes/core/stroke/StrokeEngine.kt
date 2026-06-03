@@ -140,15 +140,14 @@ object StrokeEngine {
         speedStrength: Double = 0.0,
         taperLength: Double = 0.0,
         speedScale: Double = 1.0,
-        alpha: Double = ALPHA,
     ): StrokeGeometry {
         val n = samples.size
         if (n == 0) return StrokeGeometry.EMPTY
 
         // 2. Smooth each channel independently.
-        val sx = ema(samples.map { it.x }, alpha)
-        val sy = ema(samples.map { it.y }, alpha)
-        val sp = ema(samples.map { it.pressure }, alpha)
+        val sx = ema(samples.map { it.x })
+        val sy = ema(samples.map { it.y })
+        val sp = ema(samples.map { it.pressure })
         val centers = (0 until n).map { Pt(sx[it], sy[it]) }
 
         fun hw(i: Int, ty: Double) = halfWidth(baseWidth, pressureEnabled, m, ds, sp[i], ty)

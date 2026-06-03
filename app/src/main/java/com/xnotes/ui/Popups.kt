@@ -54,21 +54,16 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     var speed by remember { mutableStateOf(ToolConversions.strengthToSpeed(base.speedStrength).toFloat()) }
     var taper by remember { mutableStateOf(base.taperLength.toFloat()) }
     var width by remember { mutableStateOf(base.baseWidth.toFloat()) }
-    var smoothing by remember { mutableStateOf(ToolConversions.alphaToSmoothing(base.smoothingAlpha).toFloat()) }
     var glow by remember { mutableStateOf(base.neon) }
     var glowIntensity by remember { mutableStateOf(ToolConversions.neonStrengthToIntensity(base.neonStrength).toFloat()) }
     var dashLen by remember { mutableStateOf(base.dashLength.toFloat()) }
     var gapLen by remember { mutableStateOf(base.dashGap.toFloat()) }
-    // Smoothing rides on the pressure-style pens (pen, calligraphy, speed, taper); the
-    // dashed pen and highlighter keep the engine default.
-    val hasSmoothing = tool == Tool.PEN || tool == Tool.CALLIGRAPHY || tool == Tool.SPEED || tool == Tool.TAPER
 
     fun emit() {
         val m = ToolConversions.sensitivityToMinFactor(sensitivity.toDouble())
         val ds = if (tool == Tool.CALLIGRAPHY) ToolConversions.multiplierToDirectionStrength(multiplier.toDouble()) else 0.0
         val sp = if (tool == Tool.SPEED) ToolConversions.speedToStrength(speed.toDouble()) else 0.0
         val tp = if (tool == Tool.TAPER) taper.toDouble() else 0.0
-        val sa = if (hasSmoothing) ToolConversions.smoothingToAlpha(smoothing.toDouble()) else base.smoothingAlpha
         editor.updateToolConfig(
             tool,
             base.copy(
@@ -82,7 +77,6 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                 neonStrength = ToolConversions.intensityToNeonStrength(glowIntensity.toDouble()),
                 dashLength = dashLen.toDouble(),
                 dashGap = gapLen.toDouble(),
-                smoothingAlpha = sa,
             ),
         )
     }
@@ -106,9 +100,6 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
             }
             val range = ToolConversions.widthRange(tool)
             SliderRow("WIDTH", width, range.start.toFloat()..range.endInclusive.toFloat()) { width = it; emit() }
-            if (hasSmoothing) {
-                SliderRow("SMOOTHING", smoothing, 0f..100f) { smoothing = it; emit() }
-            }
             if (tool == Tool.DASHED) {
                 SliderRow("DASH", dashLen, 2f..40f) { dashLen = it; emit() }
                 SliderRow("GAP", gapLen, 2f..40f) { gapLen = it; emit() }

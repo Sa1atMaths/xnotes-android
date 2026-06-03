@@ -51,7 +51,6 @@ class Stroke(
             config.speedStrength,
             config.taperLength,
             speedScale,
-            config.smoothingAlpha,
         ).also { cachedGeometry = it }
     }
 

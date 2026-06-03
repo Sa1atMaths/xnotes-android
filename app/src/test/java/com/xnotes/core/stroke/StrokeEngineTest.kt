@@ -29,13 +29,6 @@ class StrokeEngineTest {
         assertEquals(emptyList<Double>(), StrokeEngine.ema(emptyList()))
     }
 
-    @Test fun lowerAlphaSmoothsMore() {
-        // alpha is the new-sample weight: a high alpha tracks the input, a low alpha lags
-        // (smooths) far more. Sample two lands at alpha*10 + (1-alpha)*0 = alpha*10.
-        assertEquals(9.0, StrokeEngine.ema(listOf(0.0, 10.0), 0.9)[1], 1e-12)
-        assertEquals(1.0, StrokeEngine.ema(listOf(0.0, 10.0), 0.1)[1], 1e-12)
-    }
-
     // --- Width formula ---
     @Test fun penWidth() {
         // base 3, pressure on, m=0.35, ds=0
