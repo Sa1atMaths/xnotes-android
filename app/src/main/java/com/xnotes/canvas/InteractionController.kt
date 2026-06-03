@@ -168,6 +168,9 @@ class InteractionController(
     // ERASE
     private val eraseRemovals = mutableListOf<Pair<Page, CanvasItem>>()
     private var eraserCursor: Pt? = null // viewport pixels
+    /** Whether the live erase is finger-driven (vs the stylus eraser tip / side button): a finger
+     *  erase yields to a two-finger pinch, a stylus erase ignores incidental finger/palm contact. */
+    private var erasingWithFinger = false
 
     // ITEM CLIPBOARD (in-app, for copy/cut/paste/duplicate)
     private val itemClipboard = mutableListOf<CanvasItem>()
@@ -309,7 +312,11 @@ class InteractionController(
         when {
             effectiveTool == Tool.PAN -> beginPan(vx, vy)
             effectiveTool.isStroke -> beginDraw(content, resolvePressure(e, 0, toolType), effectiveTool, e.eventTime)
-            effectiveTool == Tool.ERASER -> { clearSelection(); beginErase(vx, vy) }
+            effectiveTool == Tool.ERASER -> {
+                clearSelection()
+                erasingWithFinger = toolType == MotionEvent.TOOL_TYPE_FINGER
+                beginErase(vx, vy)
+            }
             effectiveTool == Tool.SELECT -> beginSelect(content)
             effectiveTool == Tool.LASSO -> beginLasso(content)
             effectiveTool == Tool.SHAPE -> beginShape(content)
@@ -323,7 +330,13 @@ class InteractionController(
     private fun handlePointerDown(e: MotionEvent) {
         cancelLongPress()
         if (mode == PointerMode.DRAW && drawingIsStylus) return
-        if (mode == PointerMode.ERASE) return
+        // A finger erase (finger-draw on) yields to a two-finger pinch: commit what was erased so
+        // far as one undo step, then start the zoom. A stylus-eraser erase keeps ignoring incidental
+        // finger/palm contact, so a resting hand never starts a zoom mid-erase.
+        if (mode == PointerMode.ERASE) {
+            if (erasingWithFinger && e.pointerCount >= 2) { endErase(); beginPinch(e) }
+            return
+        }
         if (e.pointerCount >= 2) beginPinch(e)
     }
 
