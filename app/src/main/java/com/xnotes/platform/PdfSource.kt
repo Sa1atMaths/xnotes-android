@@ -17,6 +17,7 @@ import android.os.ParcelFileDescriptor
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.contentstream.PDFGraphicsStreamEngine
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImage
@@ -267,7 +268,9 @@ class PdfSource private constructor(
         if (pdfBoxDoc == null && !pdfBoxLoadFailed) {
             pdfBoxDoc = runCatching {
                 PDFBoxResourceLoader.init(appContext)
-                PDDocument.load(file)
+                // Cap PdfBox's in-RAM scratch (used while decoding page content streams to locate image
+                // boxes) and spill the overflow to temp files, so a pathological PDF can't spike the heap.
+                PDDocument.load(file, MemoryUsageSetting.setupMixed(SCRATCH_MAIN_MEM_BYTES).setTempDir(appContext.cacheDir))
             }.getOrElse { pdfBoxLoadFailed = true; null }
         }
         return pdfBoxDoc
@@ -333,6 +336,9 @@ class PdfSource private constructor(
 
     companion object {
         private const val MAX_DIM = 4096
+
+        /** Cap on PdfBox's in-RAM scratch while parsing image boxes; overflow spills to temp files. */
+        private const val SCRATCH_MAIN_MEM_BYTES = 32L * 1024 * 1024
 
         private val INVERT = ColorMatrix(
             floatArrayOf(
