@@ -166,23 +166,13 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
     val resolver = context.contentResolver
     val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
-    // "Open…" streams the picked .xnote to a staging file and asks for a name before saving it into the folder (it opens only when tapped).
+    // "Open…" remembers the picked .xnote and shows the name dialog at once; it's copied into the folder at Save.
     val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { u ->
             val stem = com.xnotes.core.util.Paths.stem(displayNameOf(resolver, u) ?: "Note")
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                // Stream to disk off the main thread — never read the whole pick into RAM.
-                val staged = runCatching { resolver.openInputStream(u)?.use { s -> editor.stageImport(s) } }.getOrNull()
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    if (staged != null) {
-                        editor.requestImport(com.xnotes.ui.ImportKind.OPEN, stem, staged)
-                        backstageView = com.xnotes.ui.BackstageView.HOME
-                        editor.goHome() // land on backstage to name/place the pending import
-                    } else {
-                        editor.message = "Could not open the note."
-                    }
-                }
-            }
+            editor.requestImport(com.xnotes.ui.ImportKind.OPEN, stem, u.toString())
+            backstageView = com.xnotes.ui.BackstageView.HOME
+            editor.goHome() // land on backstage to name/place the pending import
         }
     }
     val createLauncher = rememberLauncherForActivityResult(
@@ -197,23 +187,14 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         }
     }
 
-    // "Import PDF" streams the picked PDF to a staging file and asks for a name before saving it as an .xnote in the folder (opens only when tapped).
+    // "Import PDF" remembers the picked PDF and shows the name dialog at once; the (possibly large) copy
+    // into the .xnote happens at Save, under the "Importing PDF…" loader, so the dialog isn't delayed.
     val importPdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { u ->
             val stem = com.xnotes.core.util.Paths.stem(displayNameOf(resolver, u) ?: "Document")
-            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                // Stream the PDF to disk off the main thread — a large PDF is never held in RAM.
-                val staged = runCatching { resolver.openInputStream(u)?.use { s -> editor.stageImport(s) } }.getOrNull()
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    if (staged != null) {
-                        editor.requestImport(com.xnotes.ui.ImportKind.PDF, stem, staged)
-                        backstageView = com.xnotes.ui.BackstageView.HOME
-                        editor.goHome() // land on backstage to name/place the pending import
-                    } else {
-                        editor.message = "Could not import the PDF."
-                    }
-                }
-            }
+            editor.requestImport(com.xnotes.ui.ImportKind.PDF, stem, u.toString())
+            backstageView = com.xnotes.ui.BackstageView.HOME
+            editor.goHome() // land on backstage to name/place the pending import
         }
     }
     // A PDF "Save as" destination. The note is already rendered into [pendingExportTemp]

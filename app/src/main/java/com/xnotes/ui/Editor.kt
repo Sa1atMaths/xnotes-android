@@ -81,7 +81,7 @@ data class BrowseEntry(
 enum class ImportKind { PDF, OPEN }
 
 /** A picked file awaiting a name before it's saved into the explorer's current folder. */
-data class PendingImport(val kind: ImportKind, val defaultName: String, val file: java.io.File)
+data class PendingImport(val kind: ImportKind, val defaultName: String, val uri: String)
 
 @Stable
 class Editor(context: Context) {
@@ -1014,11 +1014,13 @@ class Editor(context: Context) {
     /** Streams [input] to a private temp file for a pending import; returns it, or null. The caller
      *  owns the file (it's handed to [requestImport]). Copies in small buffers so a large pick never
      *  loads into RAM. IO — call off the main thread. */
-    fun stageImport(input: InputStream): java.io.File? = runCatching {
-        val f = java.io.File.createTempFile("import", ".tmp", pdfDir)
-        java.io.FileOutputStream(f).use { input.copyTo(it) }
-        f
-    }.getOrNull()
+    private fun stageImport(input: InputStream): java.io.File? {
+        val f = runCatching { java.io.File.createTempFile("import", ".tmp", pdfDir) }.getOrNull() ?: return null
+        return runCatching {
+            java.io.FileOutputStream(f).use { copyStream(input, it) { importCancelled.get() } } // closes input
+            f
+        }.getOrElse { f.delete(); null } // failed or cancelled mid-copy: drop the partial temp
+    }
 
     /** Copies [input] to [out] in small buffers, polling [isCancelled] so a long copy can abort
      *  (throwing [DocumentCodec.WriteCancelled], which [createNoteFile] turns into a discarded file). */
@@ -1034,29 +1036,35 @@ class Editor(context: Context) {
         }
     }
 
-    /** A picked PDF/.xnote (already staged to [file]) now awaits a name before being saved into the folder. */
-    fun requestImport(kind: ImportKind, defaultName: String, file: java.io.File) {
-        pendingImport = PendingImport(kind, defaultName, file)
+    /** A picked PDF/.xnote (referenced by content [uri]) now awaits a name before being saved into the
+     *  folder. The file is deliberately **not** copied yet — that happens at [commitImport], under the
+     *  import loader — so the name dialog can appear instantly instead of after a big copy. */
+    fun requestImport(kind: ImportKind, defaultName: String, uri: String) {
+        pendingImport = PendingImport(kind, defaultName, uri)
     }
 
-    /** Discards a pending import (the user cancelled the name prompt) and deletes its staged file. */
-    fun cancelImport() {
-        pendingImport?.file?.delete()
-        pendingImport = null
-    }
+    /** Discards a pending import (the user cancelled the name prompt). Nothing was copied yet. */
+    fun cancelImport() { pendingImport = null }
 
     /** Saves a pending import into [parentDocId] under [treeUri] as [rawName]; returns its URI, or null.
-     *  Clears the request (and deletes the staged file) on success or cancel; keeps it on a genuine
+     *  Copies the picked file to a local temp first (the slow part, shown under the import loader), then
+     *  builds the note and drops the temp. Clears the request on success or cancel; keeps it on a genuine
      *  failure so the user can retry the name. IO — call off-thread. */
     fun commitImport(treeUri: String, parentDocId: String, rawName: String): String? {
         val pending = pendingImport ?: return null
         importCancelled.set(false)
-        val uri = when (pending.kind) {
-            ImportKind.PDF -> createPdfNoteFile(treeUri, parentDocId, rawName, pending.file)
-            ImportKind.OPEN -> createNoteFileFromFile(treeUri, parentDocId, rawName, pending.file)
+        val staged = runCatching {
+            appContext.contentResolver.openInputStream(android.net.Uri.parse(pending.uri))?.let { stageImport(it) }
+        }.getOrNull()
+        val uri = if (staged == null) null else try {
+            when (pending.kind) {
+                ImportKind.PDF -> createPdfNoteFile(treeUri, parentDocId, rawName, staged)
+                ImportKind.OPEN -> createNoteFileFromFile(treeUri, parentDocId, rawName, staged)
+            }
+        } finally {
+            staged.delete()
         }
         if (uri != null || importCancelled.get()) {
-            pending.file.delete()
             pendingImport = null
         }
         return uri
