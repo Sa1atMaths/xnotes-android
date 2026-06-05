@@ -121,6 +121,21 @@ class CanvasState(
     private val bgCaches = HashMap<Page, CacheEntry>()
 
     /**
+     * Presentation's own page caches, kept separate from the on-screen [caches]/[bgCaches]
+     * and built at the higher [PRES_CACHE_PX] cap so streaming stays crisp regardless of the
+     * (lower) on-screen [MAX_CACHE_PX] and the presenter's zoom. Populated only while
+     * presenting (by [presCacheFor]/[presBackgroundFor] from the presentation frame source),
+     * bounded to the streamed page(s) ([dropPresCachesExcept]) and freed on stop
+     * ([clearPresentationCaches]). Kept current by the same incremental hooks as the on-screen
+     * caches so live annotation never forces a full re-raster.
+     */
+    private val presCaches = HashMap<Page, CacheEntry>()
+    private val presBgCaches = HashMap<Page, CacheEntry>()
+
+    /** True while a presentation is running; gates the presentation-cache debug readout. */
+    var presentationActive: Boolean = false
+
+    /**
      * Off-UI-thread plumbing for the *non-blocking* cache path ([cacheForOrSchedule] /
      * [backgroundForOrSchedule]). The canvas calls those from `onDraw`; when a freshly
      * scrolled-in page has no current-resolution cache yet, the heavy rasterization runs
@@ -534,10 +549,70 @@ class CanvasState(
         return CacheEntry(surface, res)
     }
 
+    // --- presentation cache ---
+
+    /**
+     * Fixed (zoom-independent) resolution for the presentation caches: the whole page at
+     * [PRES_CACHE_PX] on its long edge. Independent of the on-screen [MAX_CACHE_PX] and the
+     * presenter's current zoom, so a streamed page stays sharp at any quality setting.
+     */
+    private fun presRes(page: Page): Double =
+        (PRES_CACHE_PX / max(page.width, page.height)).coerceAtLeast(0.01)
+
+    /** Presentation ink layer for [page] at [presRes] (built once, then kept current incrementally). */
+    fun presCacheFor(page: Page): CacheEntry {
+        val res = presRes(page)
+        presCaches[page]?.let { if (abs(it.res - res) < 1e-6) return it }
+        return renderInk(page, res, cacheItems(page)).also { presCaches[page] = it }
+    }
+
+    /** Presentation background layer for [page] at [presRes], or null when there is no background. */
+    fun presBackgroundFor(page: Page): CacheEntry? {
+        if (paintPageBackground == null) return null
+        val res = presRes(page)
+        presBgCaches[page]?.let { if (abs(it.res - res) < 1e-6) return it }
+        return buildBackground(page, res).also { presBgCaches[page] = it }
+    }
+
+    /** Bound the presentation caches to the page(s) currently streamed (called each frame). */
+    fun dropPresCachesExcept(pages: Set<Page>) {
+        presCaches.keys.retainAll(pages)
+        presBgCaches.keys.retainAll(pages)
+    }
+
+    /** Free the presentation caches (called when presentation stops). */
+    fun clearPresentationCaches() {
+        presCaches.clear()
+        presBgCaches.clear()
+    }
+
+    /** Keep [page]'s presentation ink layer current with a just-committed [item], if it is cached. */
+    private fun appendToPresCache(page: Page, item: CanvasItem) {
+        val entry = presCaches[page] ?: return
+        val r = entry.surface.renderer()
+        r.scale(entry.res, entry.res)
+        item.paint(r)
+    }
+
+    /** Repair just [dirtyRect] of [page]'s presentation ink layer in place, if it is cached. */
+    private fun repairPresRegion(page: Page, dirtyRect: Rect) {
+        val entry = presCaches[page] ?: return
+        val r = entry.surface.renderer()
+        r.save()
+        r.scale(entry.res, entry.res)
+        r.clipRect(dirtyRect)
+        r.clear()
+        for (item in page.items) {
+            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
+        }
+        r.restore()
+    }
+
     /** Append a single just-committed stroke into an existing cache (cheap), else rebuild. */
     fun appendToCache(page: Page, item: CanvasItem) {
         if (item.isHighlighterInk()) return // composited live over the page, never cached
         appendToSharpInk(page, item) // keep the sharp viewport crisp without a full re-render
+        appendToPresCache(page, item) // keep the presentation cache crisp too, if it's live
         val res = clampedRes(page)
         val existing = caches[page]
         if (existing == null || abs(existing.res - res) > 1e-6) {
@@ -561,6 +636,7 @@ class CanvasState(
      */
     fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
         repairSharpInk(page, dirtyRect) // erase from the sharp ink layer in place, no re-render
+        repairPresRegion(page, dirtyRect) // erase from the presentation ink layer in place too
         val entry = caches[page] ?: return false
         val r = entry.surface.renderer()
         r.save()
@@ -576,6 +652,7 @@ class CanvasState(
 
     fun invalidatePage(page: Page) {
         caches.remove(page)
+        presCaches.remove(page) // ink changed: drop the presentation ink layer too (bg untouched)
         cacheGen++
         sharpGen++
     }
@@ -583,6 +660,8 @@ class CanvasState(
     fun invalidateAllCaches() {
         caches.clear()
         bgCaches.clear()
+        presCaches.clear()
+        presBgCaches.clear()
         cacheGen++
         sharpGen++
     }
@@ -601,6 +680,7 @@ class CanvasState(
      */
     fun refreshBackground(page: Page) {
         if (paintPageBackground == null) return
+        presBgCaches.remove(page) // refined colours: rebuild the presentation bg lazily next frame
         if (!bgCaches.containsKey(page)) return
         sharpGen++ // also refine the sharp viewport if it's covering this page (deep zoom)
         scheduleBg(page, clampedRes(page))
@@ -626,6 +706,24 @@ class CanvasState(
     fun dropCachesExcept(visible: Set<Page>) {
         caches.keys.retainAll(visible)
         bgCaches.keys.retainAll(visible)
+    }
+
+    /**
+     * The pages whose rect intersects the viewport, as a contiguous `first..last` index range
+     * (pages stack vertically, so the visible set is always contiguous), or null when none is
+     * visible. Used for the debug readout and to size the off-screen prefetch band.
+     */
+    fun visiblePageRange(): IntRange? {
+        val visible = visibleContentRect()
+        var first = -1
+        var last = -1
+        for (i in pageRects.indices) {
+            val pr = pageRects.getOrNull(i) ?: continue
+            if (!pr.intersects(visible)) continue
+            if (first < 0) first = i
+            last = i
+        }
+        return if (first < 0) null else first..last
     }
 
     // --- sharp viewport ---
@@ -812,13 +910,23 @@ class CanvasState(
     }
 
     /** A read-only count of the live page caches and their bitmap bytes, for the debug overlay. */
-    class CacheSnapshot(val inkPages: Int, val bgPages: Int, val bytes: Long)
+    class CacheSnapshot(
+        val visiblePages: Int,
+        val inkPages: Int,
+        val bgPages: Int,
+        val presPages: Int,
+        val presentationActive: Boolean,
+        val bytes: Long,
+    )
 
     fun cacheSnapshot(): CacheSnapshot {
         var bytes = 0L
         for (e in caches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
         for (e in bgCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
-        return CacheSnapshot(caches.size, bgCaches.size, bytes)
+        for (e in presCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
+        for (e in presBgCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
+        val visible = visiblePageRange()?.let { it.last - it.first + 1 } ?: 0
+        return CacheSnapshot(visible, caches.size, bgCaches.size, presCaches.size, presentationActive, bytes)
     }
 
     /**
@@ -848,6 +956,13 @@ class CanvasState(
         const val SNAP_TO_FIT_WIDTH = 0.05
         const val CTRL_WHEEL_BASE = 1.01
         const val MAX_CACHE_PX = 2048.0
+
+        /**
+         * Cap for the *presentation* caches' long edge. Kept independent of (and higher than)
+         * [MAX_CACHE_PX] so live streaming stays sharp at its quality targets even when the
+         * on-screen cache is clamped lower.
+         */
+        const val PRES_CACHE_PX = 2048.0
 
         /** The page label sits ~26px above the page top (content space). */
         const val PAGE_LABEL_OFFSET = 26.0

@@ -66,6 +66,7 @@ class PresentationController(
         this.maxFps = maxFps
         val result = server.start(port, lan)
         return if (result.isSuccess) {
+            state.presentationActive = true
             onStateChanged()
             notifyChanged()
             null
@@ -76,6 +77,8 @@ class PresentationController(
 
     fun stop() {
         server.stop()
+        state.presentationActive = false
+        state.clearPresentationCaches()
         onStateChanged()
     }
 

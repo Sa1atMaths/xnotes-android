@@ -66,8 +66,9 @@ class PresentationFrameSource(
         val h = ceil(page.height * scale).toInt().coerceAtLeast(1)
         val draw = PageDraw(
             0.0, 0.0, page.width, page.height, state.paperColor(page),
-            state.backgroundFor(page)?.surface, state.cacheFor(page).surface, highlightsFor(page), liveSnapshotFor(index),
+            state.presBackgroundFor(page)?.surface, state.presCacheFor(page).surface, highlightsFor(page), liveSnapshotFor(index),
         )
+        state.dropPresCachesExcept(setOf(page))
         return FramePlan(w, h, state.paperColor(page), follow = false, outerScale = scale, 0.0, 0.0, 1.0, listOf(draw))
     }
 
@@ -82,17 +83,20 @@ class PresentationFrameSource(
         val origin = state.origin()
         val visible = state.visibleContentRect()
         val draws = ArrayList<PageDraw>()
+        val presented = HashSet<Page>()
         for (i in state.document.pages.indices) {
             val pr = state.pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             val page = state.document.pages[i]
+            presented.add(page)
             draws.add(
                 PageDraw(
                     pr.left, pr.top, page.width, page.height, state.paperColor(page),
-                    state.backgroundFor(page)?.surface, state.cacheFor(page).surface, highlightsFor(page), liveSnapshotFor(i),
+                    state.presBackgroundFor(page)?.surface, state.presCacheFor(page).surface, highlightsFor(page), liveSnapshotFor(i),
                 ),
             )
         }
+        state.dropPresCachesExcept(presented)
         return FramePlan(w, h, state.palette.bg, follow = true, outerScale = s, origin.x, origin.y, state.zoom, draws)
     }
 

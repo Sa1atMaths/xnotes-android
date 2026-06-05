@@ -60,14 +60,15 @@ class DebugOverlay {
 
         val (rw, rh) = state.targetRasterSize()
         val res = if (rw > 0) "$rw x $rh" else "-"
-        val lines = listOf(
-            "%.0f fps   %.1f ms".format(fps, frameMs),
-            "cache res  $res",
-            "ink cache  ${snap.inkPages} pg",
-            "bg  cache  ${snap.bgPages} pg",
-            "cache mem  %.1f MB".format(snap.bytes / MB),
-            "heap  %.0f / %.0f MB".format(heapUsedMb, heapMaxMb),
-        )
+        val lines = buildList {
+            add("%.0f fps   %.1f ms".format(fps, frameMs))
+            add("cache res  $res")
+            add("ink cache  ${snap.inkPages} pg")
+            add("bg  cache  ${snap.bgPages} pg")
+            if (snap.presentationActive) add("pr  cache  ${snap.presPages} pg")
+            add("cache mem  %.1f MB".format(snap.bytes / MB))
+            add("heap  %.0f / %.0f MB".format(heapUsedMb, heapMaxMb))
+        }
 
         val lineH = AndroidText.lineHeight(FONT)
         val hintH = AndroidText.lineHeight(HINT_FONT)
