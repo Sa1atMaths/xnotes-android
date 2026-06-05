@@ -226,13 +226,13 @@ class CanvasView @JvmOverloads constructor(
 
         val visible = st.visibleContentRect()
         val border = Pen(st.palette.paperBorder, 1.0, cosmetic = true)
-        val visiblePages = HashSet<Page>()
+        val cachedPages = HashSet<Page>()
 
         for (i in st.document.pages.indices) {
             val pr = st.pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             val page = st.document.pages[i]
-            visiblePages.add(page)
+            cachedPages.add(page)
 
             r.fillRect(pr, st.paperColor(page))
             r.strokeRect(pr, border)
@@ -241,6 +241,22 @@ class CanvasView @JvmOverloads constructor(
             drawPageLabel(r, st, i, pr)
         }
         r.restore()
+
+        // Prefetch the N pages before and after the visible band (N = visible count) into the
+        // page cache so scrolling lands on already-rasterized pages. Scheduled after the on-screen
+        // pages above so visible content always builds first on the single cache thread, nearest
+        // pages first, and skipped during a pinch so the settle-rebuild isn't starved.
+        if (!st.zoomingInProgress) {
+            st.visiblePageRange()?.let { vis ->
+                val n = vis.last - vis.first + 1
+                for (d in 1..n) for (j in intArrayOf(vis.last + d, vis.first - d)) {
+                    val page = st.document.pages.getOrNull(j) ?: continue
+                    if (!cachedPages.add(page)) continue
+                    st.backgroundForOrSchedule(page)
+                    st.cacheForOrSchedule(page)
+                }
+            }
+        }
 
         // Past the resolution cap, cover the (soft, capped) page caches with a razor-sharp,
         // full-resolution render of just the viewport. While panning we slide the previous sharp
@@ -293,7 +309,7 @@ class CanvasView @JvmOverloads constructor(
         // Elastic "pull past the end to add a page" affordance, on top of everything (viewport space).
         if (st.overscrollY > 1.0) drawOverscrollIndicator(canvas, st)
 
-        st.dropCachesExcept(visiblePages)
+        st.dropCachesExcept(cachedPages)
 
         // Debug HUD on top, reading the just-pruned cache state (viewport space).
         debugOverlay.sampleFrame(System.nanoTime())

@@ -63,6 +63,7 @@ class DebugOverlay {
         val lines = buildList {
             add("%.0f fps   %.1f ms".format(fps, frameMs))
             add("cache res  $res")
+            add("visible    ${snap.visiblePages} pg")
             add("ink cache  ${snap.inkPages} pg")
             add("bg  cache  ${snap.bgPages} pg")
             if (snap.presentationActive) add("pr  cache  ${snap.presPages} pg")

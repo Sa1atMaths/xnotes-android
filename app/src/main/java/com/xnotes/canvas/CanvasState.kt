@@ -955,7 +955,7 @@ class CanvasState(
         /** While a pinch's zoom is within this fraction of [fitWidthZoom] it sticks to fit-to-width. */
         const val SNAP_TO_FIT_WIDTH = 0.05
         const val CTRL_WHEEL_BASE = 1.01
-        const val MAX_CACHE_PX = 2048.0
+        const val MAX_CACHE_PX = 1024.0
 
         /**
          * Cap for the *presentation* caches' long edge. Kept independent of (and higher than)
