@@ -22,7 +22,6 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImage
 import java.io.File
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -63,9 +62,6 @@ class PdfSource private constructor(
     /** Per-page image boxes as normalized page fractions (top-left origin); parsed once, cached. */
     private val imageRects = ConcurrentHashMap<Int, List<RectF>>()
 
-    /** PDF page indices whose image-rect parse is queued on [imagesExecutor] (dedupes scheduling). */
-    private val scheduledImages = Collections.synchronizedSet(HashSet<Int>())
-
     /** Single daemon worker for PdfBox parsing; created on first use, shut down in [close]. */
     private var imagesExecutor: ExecutorService? = null
 
@@ -82,6 +78,16 @@ class PdfSource private constructor(
      */
     @Volatile var onImagesReady: ((index: Int) -> Unit)? = null
 
+    /**
+     * Invoked (on the prep worker) after each page is handled during the up-front [prepAllImages]
+     * sweep, with `(pagesParsed, totalPages)`, so the UI can drive a "Refining PDF colours k/N pages…"
+     * progress bar. The callback must hop to the main thread itself.
+     */
+    @Volatile var onImagesProgress: ((done: Int, total: Int) -> Unit)? = null
+
+    /** Latches true once [prepAllImages] has enqueued the whole-document sweep (once per source). */
+    @Volatile private var sweepRequested = false
+
     /** Page size in points (1 pt = 1/72 inch). */
     @Synchronized
     fun pageSizePoints(index: Int): Pair<Int, Int> {
@@ -92,7 +98,7 @@ class PdfSource private constructor(
     }
 
     @Synchronized
-    fun renderPage(index: Int, widthPx: Int, heightPx: Int, invert: Boolean, keepImages: Boolean = false, blockingImages: Boolean = false): AndroidRasterSurface? {
+    fun renderPage(index: Int, widthPx: Int, heightPx: Int, invert: Boolean, keepImages: Boolean = false): AndroidRasterSurface? {
         if (index !in 0 until renderer.pageCount) return null
         val w = widthPx.coerceIn(1, MAX_DIM)
         val h = heightPx.coerceIn(1, MAX_DIM)
@@ -105,7 +111,7 @@ class PdfSource private constructor(
 
         val inverted = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(inverted).drawBitmap(bmp, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(INVERT) })
-        if (keepImages) keepImageColors(index, inverted, bmp, fullWpx = w, fullHpx = h, offsetXpx = 0, offsetYpx = 0, blocking = blockingImages)
+        if (keepImages) keepImageColors(index, inverted, bmp, fullWpx = w, fullHpx = h, offsetXpx = 0, offsetYpx = 0)
         bmp.recycle()
         return AndroidRasterSurface(inverted)
     }
@@ -128,7 +134,6 @@ class PdfSource private constructor(
         regionHpx: Int,
         invert: Boolean,
         keepImages: Boolean = false,
-        blockingImages: Boolean = false,
     ): AndroidRasterSurface? {
         if (index !in 0 until renderer.pageCount) return null
         val w = regionWpx.coerceIn(1, MAX_DIM)
@@ -147,19 +152,19 @@ class PdfSource private constructor(
         val inverted = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(inverted).drawBitmap(bmp, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(INVERT) })
         if (keepImages) {
-            keepImageColors(index, inverted, bmp, fullWpx, fullHpx, offsetXpx = regionLeftPx, offsetYpx = regionTopPx, blocking = blockingImages)
+            keepImageColors(index, inverted, bmp, fullWpx, fullHpx, offsetXpx = regionLeftPx, offsetYpx = regionTopPx)
         }
         bmp.recycle()
         return AndroidRasterSurface(inverted)
     }
 
     /**
-     * Keep embedded images in their real colours over the inverted page. Stamps immediately when
-     * [index]'s image rects are already parsed. Otherwise: [blocking] (thumbnail/one-shot) callers
-     * parse inline so the result is correct now; the on-screen canvas instead schedules an async
-     * parse and leaves the images inverted for this frame — they snap to colour on the re-render
-     * once [onImagesReady] fires. This is what keeps a freshly opened PDF from blanking while the
-     * one-time [PDDocument.load] runs.
+     * Keep embedded images in their real colours over the inverted page: a pure consumer of the
+     * parsed-locations cache. Stamps when [index]'s image rects are already parsed; otherwise leaves
+     * the images inverted for this frame and parses nothing — only the linear [prepAllImages] sweep
+     * finds locations. The page snaps to colour on the re-render once the sweep reaches it and
+     * [onImagesReady] fires. One-shot callers that must be correct now (PNG export, recents preview)
+     * call [ensureImageRects] first, so the rects are already cached here and this stamps in one pass.
      */
     private fun keepImageColors(
         index: Int,
@@ -169,14 +174,11 @@ class PdfSource private constructor(
         fullHpx: Int,
         offsetXpx: Int,
         offsetYpx: Int,
-        blocking: Boolean,
     ) {
-        if (blocking && !imageRects.containsKey(index)) imageRectsFor(index)
         if (imageRects.containsKey(index)) {
             stampOriginalImages(inverted, original, index, fullWpx, fullHpx, offsetXpx, offsetYpx)
-        } else {
-            scheduleImagePrep(index)
         }
+        // Not parsed yet: leave the images inverted; the sweep will fill it in and trigger a re-render.
     }
 
     /**
@@ -236,31 +238,58 @@ class PdfSource private constructor(
     fun hasImageRects(index: Int): Boolean = imageRects.containsKey(index)
 
     /**
-     * Parse [index]'s image rects on a dedicated worker (loading the PdfBox model once, on first
-     * call), then notify [onImagesReady]. Never runs on the cache thread, so the slow first
-     * [PDDocument.load] doesn't stall other pages' background builds. Deduped; a no-op when
-     * already parsed or after [close].
+     * Parse [index]'s image rects now (unless already cached), on the **calling** thread, taking only
+     * [pdfBoxLock] — never the render monitor. Only one-shot renderers that must be correct immediately
+     * (PNG export, the recents preview tile) call this *before* [renderPage], so the page draws with
+     * real image colours in one pass without holding the PdfRenderer monitor across the parse. The live
+     * sidebar and canvas never call it — they consume the sweep's cache and stay inverted until it
+     * fills. Idempotent and shares the cache with the sweep, so each page is parsed at most once.
      */
-    private fun scheduleImagePrep(index: Int) {
-        if (closed || imageRects.containsKey(index)) return
-        if (!scheduledImages.add(index)) return
-        val executor = synchronized(executorLock) {
-            if (closed) {
-                scheduledImages.remove(index)
-                return
-            }
-            imagesExecutor ?: Executors.newSingleThreadExecutor { r ->
-                Thread(r, "xnotes-pdfbox").apply { isDaemon = true }
-            }.also { imagesExecutor = it }
-        }
-        runCatching {
-            executor.execute {
-                runCatching { imageRectsFor(index) }
-                scheduledImages.remove(index)
-                if (!closed) onImagesReady?.invoke(index)
-            }
-        }.onFailure { scheduledImages.remove(index) } // executor already shut down
+    fun ensureImageRects(index: Int) {
+        if (!closed) imageRectsFor(index)
     }
+
+    /** The single PdfBox prep worker, created on first use; null after [close]. Runs the linear
+     *  [prepAllImages] sweep on one background thread, off the main and cache threads. (One-shot
+     *  callers parse on their own thread via [ensureImageRects]; [imageRectsFor] serializes both on
+     *  [pdfBoxLock].) */
+    private fun imagesWorker(): ExecutorService? = synchronized(executorLock) {
+        if (closed) return@synchronized null
+        imagesExecutor ?: Executors.newSingleThreadExecutor { r ->
+            Thread(r, "xnotes-pdfbox").apply { isDaemon = true }
+        }.also { imagesExecutor = it }
+    }
+
+    /**
+     * Parse **every** page's image rects up front on the single prep worker, strictly in page order
+     * 0..N-1, so a freshly opened dark-mode PDF resolves all embedded-image locations in one linear
+     * background pass. This is the **only** place locations are found for the live canvas and sidebar.
+     * Idempotent per source (enqueued once); already-parsed pages are skipped. Fires [onImagesReady]
+     * for each page it parses (so the canvas and side panel can snap that page from inverted to real
+     * colours) and [onImagesProgress] after every page (so the "Refining k/N" bar advances). A no-op
+     * after [close]; callers stay free to scroll and draw while it runs.
+     */
+    fun prepAllImages() {
+        if (closed || sweepRequested) return
+        sweepRequested = true
+        val total = renderer.pageCount
+        val executor = imagesWorker() ?: return
+        for (index in 0 until total) {
+            runCatching {
+                executor.execute {
+                    if (closed) return@execute
+                    if (!imageRects.containsKey(index)) {
+                        runCatching { imageRectsFor(index) }
+                        if (!closed) onImagesReady?.invoke(index)
+                    }
+                    if (!closed) onImagesProgress?.invoke(imageRects.size, total)
+                }
+            }
+        }
+    }
+
+    /** Pages whose image rects are parsed (cached) — the "done" count for the [prepAllImages] sweep. */
+    fun parsedPageCount(): Int = imageRects.size
 
     /** The lazily-loaded PdfBox model. Always called under [pdfBoxLock]. */
     private fun pdfBoxDocument(): PDDocument? {
@@ -279,6 +308,7 @@ class PdfSource private constructor(
     fun close() {
         closed = true
         onImagesReady = null
+        onImagesProgress = null
         synchronized(executorLock) { runCatching { imagesExecutor?.shutdownNow() } }
         runCatching { pdfBoxDoc?.close() }
         runCatching { renderer.close() }

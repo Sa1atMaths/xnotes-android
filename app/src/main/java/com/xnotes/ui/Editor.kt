@@ -236,6 +236,18 @@ class Editor(context: Context) {
     var isRefiningPdf by mutableStateOf(false)
         private set
 
+    /** Up-front sweep progress for the "Refining PDF colours k/N pages…" hint: PDF pages whose
+     *  embedded-image boxes are parsed, and the total PDF page count. Both 0 when not refining. */
+    var refiningDone by mutableStateOf(0)
+        private set
+    var refiningTotal by mutableStateOf(0)
+        private set
+
+    /** Bumped when the sweep finishes a PDF page that has a cached side-panel thumbnail, so the panel
+     *  re-renders that row from inverted to real image colours. Observed by the thumbnail producer. */
+    var pdfThumbTick by mutableStateOf(0)
+        private set
+
     /** Pages the side panel has selected, by **identity** so reorder/delete never breaks the set. */
     private val selectedPages = mutableStateListOf<Page>()
 
@@ -335,17 +347,26 @@ class Editor(context: Context) {
         pdfSource = state.document.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         pdfSource?.onImagesReady = { index ->
             view.post {
-                // Only the page whose embedded-image colours just parsed needs re-rendering; refresh it
-                // in place and leave every other page's cached background alone (no full flush, no flicker).
+                // The sweep found page [index]'s locations: snap the canvas background (refreshBackground
+                // self-skips off-screen pages) and drop the now-stale inverted side-panel thumbnail so the
+                // panel re-renders it un-inverted (pdfThumbTick is bumped only when a cached thumb existed).
                 state.document.pages.forEach { if (it.pdfPage == index) state.refreshBackground(it) }
+                if (evictPageThumbnails(index)) pdfThumbTick++
                 view.requestRender()
-                maybeFinishRefining()
             }
         }
-        // Optimistic: assume the first visible page needs colour-correction; cleared once parsed.
-        isRefiningPdf = pdfSource != null && settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors
+        pdfSource?.onImagesProgress = { done, total ->
+            view.post {
+                if (pdfSource != null && settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors) {
+                    refiningTotal = total
+                    refiningDone = done
+                    isRefiningPdf = done < total
+                }
+            }
+        }
         installPdfBackground()
         state.invalidateAllCaches()
+        startPdfRefine() // kick the up-front sweep over all pages + drive the "Refining k/N" hint
     }
 
     /** Records [doc] as the open note for source-PDF temp-file lifetime: deletes the previously open
@@ -385,23 +406,24 @@ class Editor(context: Context) {
     }
 
     /**
-     * Recompute [isRefiningPdf]: true while any *visible* PDF-backed page still lacks parsed image
-     * rects (and the keep-image-colours feature is on). Pages with no images, rotated, or that fail
-     * to parse cache an empty result, so they count as resolved and the hint clears.
+     * Kick off (once per source) the up-front background sweep that parses every PDF page's embedded-
+     * image boxes, currently-visible pages first, and prime the "Refining PDF colours k/N pages…"
+     * hint. A no-op that clears the hint unless dark mode + keep-image-colours are both on, since the
+     * boxes are only needed to un-invert images. Safe to call repeatedly (on open and whenever the
+     * preference toggles): [PdfSource.prepAllImages] enqueues the sweep only the first time.
      */
-    private fun maybeFinishRefining() {
+    private fun startPdfRefine() {
         val src = pdfSource
         if (src == null || !(settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors)) {
             isRefiningPdf = false
+            refiningDone = 0
+            refiningTotal = 0
             return
         }
-        val visible = state.visibleContentRect()
-        isRefiningPdf = state.document.pages.withIndex().any { (i, p) ->
-            val pi = p.pdfPage
-            pi != null &&
-                state.pageRects.getOrNull(i)?.intersects(visible) == true &&
-                !src.hasImageRects(pi)
-        }
+        refiningTotal = src.pageCount
+        refiningDone = src.parsedPageCount()
+        isRefiningPdf = refiningDone < refiningTotal
+        if (isRefiningPdf) src.prepAllImages()
     }
 
     fun insertImage(bytes: ByteArray) = insertImageAt(bytes, null)
@@ -521,7 +543,7 @@ class Editor(context: Context) {
         settings = settings.copy(prefs = p)
         applyPagePrefsToState(p)
         state.invalidateAllCaches()
-        maybeFinishRefining() // feature may have just toggled on/off
+        startPdfRefine() // re-sweep / clear the hint if the dark-mode or keep-images preference toggled
         if (marginChanged) {
             state.fitWidth() // re-fit so the new side margin takes effect immediately
             refreshView()
@@ -663,9 +685,12 @@ class Editor(context: Context) {
         val src = pdfSource
         val pi = page.pdfPage
         if (src != null && pi != null) {
-            // One-shot and off the main thread: parse image colours inline so the thumbnail is correct now.
+            // Pure consumer: never parses. Stamps real image colours only if the linear sweep has
+            // already found this page's locations, otherwise draws it inverted; the row re-renders
+            // un-inverted once the sweep reaches the page (see onImagesReady → pdfThumbTick).
             val invert = settings.prefs.pdfDarkMode
-            src.renderPage(pi, w, h, invert, keepImages = invert && settings.prefs.pdfKeepImageColors, blockingImages = true)?.let { bg ->
+            val keep = invert && settings.prefs.pdfKeepImageColors
+            src.renderPage(pi, w, h, invert, keepImages = keep)?.let { bg ->
                 r.drawRaster(bg, com.xnotes.core.geometry.Rect(0.0, 0.0, page.width, page.height))
                 bg.recycle()
             }
@@ -719,6 +744,14 @@ class Editor(context: Context) {
             synchronized(pageThumbs) { pageThumbs.put(page, bmp) }
             bmp
         }
+    }
+
+    /** Drop any cached side-panel thumbnails backed by PDF page [pdfPageIndex] (its colours just
+     *  finished parsing), so the panel re-renders them un-inverted. Returns true if one was evicted. */
+    private fun evictPageThumbnails(pdfPageIndex: Int): Boolean = synchronized(pageThumbs) {
+        var evicted = false
+        state.document.pages.forEach { if (it.pdfPage == pdfPageIndex && pageThumbs.remove(it) != null) evicted = true }
+        evicted
     }
 
     fun addBookmark(label: String) {
@@ -807,7 +840,9 @@ class Editor(context: Context) {
             runCatching {
                 com.xnotes.platform.PdfSource.create(appContext, file)?.let { src ->
                     page.pdfPage?.let { pi ->
-                        src.renderPage(pi, side, side, settings.prefs.pdfDarkMode, keepImages = settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors, blockingImages = true)?.let { bg ->
+                        val keep = settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors
+                        if (keep) src.ensureImageRects(pi)
+                        src.renderPage(pi, side, side, settings.prefs.pdfDarkMode, keepImages = keep)?.let { bg ->
                             r.drawRaster(bg, Rect(0.0, 0.0, page.width, page.height))
                             bg.recycle()
                         }
@@ -1783,6 +1818,11 @@ class Editor(context: Context) {
     /** PNG bytes for page [index], rendered at full page resolution (paper + background + items), or null. */
     fun pageImagePng(index: Int): ByteArray? {
         val page = pageAt(index) ?: return null
+        // One-shot export: find this page's image locations now so the PNG is correct regardless of how
+        // far the background sweep has reached (renderThumbnail itself is a pure consumer).
+        if (settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors) {
+            page.pdfPage?.let { pi -> pdfSource?.ensureImageRects(pi) }
+        }
         val bmp = renderThumbnail(page, page.width.toInt().coerceAtLeast(1)) ?: return null
         return java.io.ByteArrayOutputStream().use { out ->
             bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)

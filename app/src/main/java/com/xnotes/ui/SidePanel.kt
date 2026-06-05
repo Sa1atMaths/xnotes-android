@@ -177,7 +177,7 @@ private fun PageThumb(
     val current = index == editor.pageIndex
     val selected = editor.isPageSelected(index)
     var menuOpen by remember { mutableStateOf(false) }
-    val bitmap by produceState<ImageBitmap?>(editor.cachedPageThumbnail(page), page, editor.contentVersion, settled) {
+    val bitmap by produceState<ImageBitmap?>(editor.cachedPageThumbnail(page), page, editor.contentVersion, editor.pdfThumbTick, settled) {
         val cached = editor.cachedPageThumbnail(page)
         if (cached != null) {
             value = cached

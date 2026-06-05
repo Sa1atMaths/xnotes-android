@@ -751,8 +751,9 @@ private fun PdfImportDialog(isPdf: Boolean, onCancel: () -> Unit) {
 
 /**
  * Subtle, non-blocking hint shown bottom-right while a dark-mode PDF's embedded-image colours are
- * still being parsed in the background ([Editor.isRefiningPdf]). The page is already visible
- * (inverted); this just signals that the images will snap to their true colours shortly.
+ * still being parsed by the up-front background sweep ([Editor.isRefiningPdf]). The pages are already
+ * visible; this just shows a `k/N` progress bar so the user can keep scrolling and drawing while the
+ * remaining pages' images snap to their true colours.
  */
 @Composable
 private fun BoxScope.RefiningPdfHint(editor: Editor) {
@@ -763,24 +764,35 @@ private fun BoxScope.RefiningPdfHint(editor: Editor) {
         enter = fadeIn(),
         exit = fadeOut(),
     ) {
-        Row(
+        val total = editor.refiningTotal
+        val done = editor.refiningDone
+        val fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+        Column(
+            // Fixed width so the bar's fillMaxWidth tracks the chip (not the whole screen); the label
+            // wraps to two tidy lines under it.
             modifier = Modifier
+                .width(190.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(palette.surface.toComposeColor())
                 .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(6.dp))
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            androidx.compose.material3.CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
                 color = palette.accent.toComposeColor(),
+                trackColor = palette.border.toComposeColor(),
+                drawStopIndicator = {}, // no trailing dot
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Refining PDF colours…",
+                "Refining PDF colours $done/$total pages…",
                 color = palette.textDim.toComposeColor(),
                 fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
             )
         }
     }
