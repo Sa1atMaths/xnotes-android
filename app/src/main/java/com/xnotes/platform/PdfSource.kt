@@ -71,6 +71,11 @@ class PdfSource private constructor(
     @Volatile private var pdfBoxDoc: PDDocument? = null
     private var pdfBoxLoadFailed = false
 
+    /** Set once the image sweep finishes and [releasePdfBoxModel] closes [pdfBoxDoc] to reclaim its
+     *  heap; [pdfBoxDocument] won't reload it, since every page's image rects are already cached.
+     *  (Links never touch [pdfBoxDoc]; they open a short-lived model per parse via [loadLinkDoc].) */
+    private var pdfBoxReleased = false
+
     /**
      * Monitor for all PdfBox state ([pdfBoxDoc], [pdfBoxLoadFailed], parsing). Deliberately separate
      * from the instance monitor that serializes the non-thread-safe [PdfRenderer], so a slow first
@@ -367,50 +372,70 @@ class PdfSource private constructor(
     }
 
     /**
-     * Parse [index]'s link annotations into page-fraction rects + targets and make them the current
-     * page's links, replacing (evicting) the previous page's — so only one page is ever held. Reads
-     * only the page's annotation dictionaries (Rect, the URI action, a GoTo destination); it never
-     * walks the content stream and never resolves a font or image, so it stays light (the `f74df73`
-     * font leak came from the content-stream walk, not from annotations). Empty list ⇒ no PDF, parse
-     * failure, a rotated page (not mapped), or no link annotations.
+     * Parse [index]'s links and make them the current page's links, replacing (evicting) the previous
+     * page's — only one page is ever held. The PdfBox model is opened just for this parse and closed
+     * immediately ([loadLinkDoc] + close), so warming across pages can never accumulate a growing
+     * object pool: the heap returns to baseline between parses and only the plain [PdfLink] data is
+     * kept. (Keeping one shared model open instead grows its pool page by page — the bug behind the
+     * scroll-time heap climb.) Reads only annotation dictionaries; never walks the content stream or
+     * resolves a font/image (the `f74df73` font leak was that walk).
      */
-    private fun setCurrentLinks(index: Int): List<PdfLink> = synchronized(pdfBoxLock) {
+    private fun setCurrentLinks(index: Int): List<PdfLink> {
         current?.let { if (it.index == index) return it.links }
-        val result = runCatching {
-            val doc = pdfBoxDocument() ?: return@runCatching emptyList()
-            if (index !in 0 until doc.numberOfPages) return@runCatching emptyList()
-            val page = doc.getPage(index)
-            if (page.rotation % 360 != 0) return@runCatching emptyList() // rotated page: don't risk a misplaced rect
-            val box = page.cropBox
-            val llx = box.lowerLeftX
-            val cropW = box.width
-            val cropH = box.height
-            if (cropW <= 0f || cropH <= 0f) return@runCatching emptyList()
-            val ury = box.lowerLeftY + cropH // user-space y is up; bitmap/page-fraction y is down
-            val out = ArrayList<PdfLink>()
-            for (annot in page.annotations) {
-                runCatching {
-                    if (annot !is PDAnnotationLink) return@runCatching
-                    val rect = annot.rectangle ?: return@runCatching
-                    val (url, destPage) = linkTarget(doc, annot) ?: return@runCatching
-                    val x0 = minOf(rect.lowerLeftX, rect.upperRightX)
-                    val x1 = maxOf(rect.lowerLeftX, rect.upperRightX)
-                    val y0 = minOf(rect.lowerLeftY, rect.upperRightY)
-                    val y1 = maxOf(rect.lowerLeftY, rect.upperRightY)
-                    val fLeft = ((x0 - llx) / cropW).coerceIn(0f, 1f)
-                    val fRight = ((x1 - llx) / cropW).coerceIn(0f, 1f)
-                    val fTop = ((ury - y1) / cropH).coerceIn(0f, 1f)
-                    val fBottom = ((ury - y0) / cropH).coerceIn(0f, 1f)
-                    if (fRight > fLeft && fBottom > fTop) {
-                        out.add(PdfLink(RectF(fLeft, fTop, fRight, fBottom), url, destPage))
-                    }
+        val result: List<PdfLink> = synchronized(pdfBoxLock) {
+            val doc = loadLinkDoc() ?: return@synchronized emptyList()
+            try {
+                runCatching { parseLinks(doc, index) }.getOrDefault(emptyList())
+            } finally {
+                runCatching { doc.close() } // free the model's object pool immediately
+            }
+        }
+        current = PageLinks(index, result)
+        return result
+    }
+
+    /** Extract [index]'s link annotations from the open [doc] as page-fraction rects (top-left origin)
+     *  plus targets. Annotation dictionaries only — no content-stream walk, no font/image resolve.
+     *  Empty ⇒ out of range, a rotated page (not mapped), a degenerate crop box, or no link annots. */
+    private fun parseLinks(doc: PDDocument, index: Int): List<PdfLink> {
+        if (index !in 0 until doc.numberOfPages) return emptyList()
+        val page = doc.getPage(index)
+        if (page.rotation % 360 != 0) return emptyList() // rotated page: don't risk a misplaced rect
+        val box = page.cropBox
+        val llx = box.lowerLeftX
+        val cropW = box.width
+        val cropH = box.height
+        if (cropW <= 0f || cropH <= 0f) return emptyList()
+        val ury = box.lowerLeftY + cropH // user-space y is up; page-fraction y is down
+        val out = ArrayList<PdfLink>()
+        for (annot in page.annotations) {
+            runCatching {
+                if (annot !is PDAnnotationLink) return@runCatching
+                val rect = annot.rectangle ?: return@runCatching
+                val (url, destPage) = linkTarget(doc, annot) ?: return@runCatching
+                val x0 = minOf(rect.lowerLeftX, rect.upperRightX)
+                val x1 = maxOf(rect.lowerLeftX, rect.upperRightX)
+                val y0 = minOf(rect.lowerLeftY, rect.upperRightY)
+                val y1 = maxOf(rect.lowerLeftY, rect.upperRightY)
+                val fLeft = ((x0 - llx) / cropW).coerceIn(0f, 1f)
+                val fRight = ((x1 - llx) / cropW).coerceIn(0f, 1f)
+                val fTop = ((ury - y1) / cropH).coerceIn(0f, 1f)
+                val fBottom = ((ury - y0) / cropH).coerceIn(0f, 1f)
+                if (fRight > fLeft && fBottom > fTop) {
+                    out.add(PdfLink(RectF(fLeft, fTop, fRight, fBottom), url, destPage))
                 }
             }
-            out
-        }.getOrDefault(emptyList())
-        current = PageLinks(index, result)
-        result
+        }
+        return out
     }
+
+    /** Load a fresh, short-lived PdfBox model to read one page's annotations; the caller closes it
+     *  immediately. Deliberately separate from [pdfBoxDoc] (the image path's long-lived model) and
+     *  never retained, so warming links across pages cannot accumulate a growing object pool. */
+    private fun loadLinkDoc(): PDDocument? = runCatching {
+        PDFBoxResourceLoader.init(appContext)
+        PDDocument.load(file, MemoryUsageSetting.setupMixed(SCRATCH_MAIN_MEM_BYTES).setTempDir(appContext.cacheDir))
+    }.getOrNull()
 
     /** A link's target: an external URI (web/mailto) → (url, null), or an internal page jump
      *  (a direct destination or a GoTo action) → (null, 0-based page). Null for unsupported actions
@@ -487,7 +512,7 @@ class PdfSource private constructor(
     /** The lazily-loaded PdfBox model. Always called under [pdfBoxLock]. */
     private fun pdfBoxDocument(): PDDocument? {
         if (closed) return null
-        if (pdfBoxDoc == null && !pdfBoxLoadFailed) {
+        if (pdfBoxDoc == null && !pdfBoxLoadFailed && !pdfBoxReleased) {
             pdfBoxDoc = runCatching {
                 PDFBoxResourceLoader.init(appContext)
                 // Cap PdfBox's in-RAM scratch (used while decoding page content streams to locate image
@@ -500,12 +525,13 @@ class PdfSource private constructor(
 
     /** Close the PdfBox model once the image sweep has cached every page's rects, reclaiming its heap
      *  (the parsed object model and any cached resources). The framework [renderer] is independent and
-     *  stays open for rasterizing, and image rects read from their cache; the model is now re-openable,
-     *  so only a later link tap reloads it on demand ([linksFor]), and annotation reads keep it light.
-     *  Runs on the prep worker after the last parse; serialized with parsing on [pdfBoxLock]. */
+     *  stays open for rasterizing, and image rects read from their cache, so nothing reloads it. Links
+     *  don't use this model — they open a short-lived one per parse via [loadLinkDoc]. Runs on the prep
+     *  worker after the last parse; serialized with parsing on [pdfBoxLock]. */
     private fun releasePdfBoxModel() = synchronized(pdfBoxLock) {
         runCatching { pdfBoxDoc?.close() }
         pdfBoxDoc = null
+        pdfBoxReleased = true
     }
 
     fun close() {
