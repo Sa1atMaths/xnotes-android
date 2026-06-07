@@ -25,10 +25,24 @@ import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImage
+import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionGoTo
+import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionURI
+import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNamedDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+
+/**
+ * A tappable link discovered on a PDF page. [frac] is the link's rectangle as a page fraction
+ * (0..1, top-left origin, matching the rendered bitmap and the image-box cache). Exactly one
+ * target is set: an external [url] (web/mailto), or an internal [destPage] (0-based source-PDF
+ * page to jump to). Plain data only, so the cache survives closing the PdfBox model.
+ */
+data class PdfLink(val frac: RectF, val url: String?, val destPage: Int?)
 
 /**
  * Reads and rasterizes a PDF via the framework [PdfRenderer] (PAL §14). Pages
@@ -56,10 +70,6 @@ class PdfSource private constructor(
     @Volatile private var pdfBoxDoc: PDDocument? = null
     private var pdfBoxLoadFailed = false
 
-    /** Set once the up-front sweep finishes and [releasePdfBoxModel] closes [pdfBoxDoc] to reclaim its
-     *  heap. [pdfBoxDocument] won't reload it afterwards, since every page's rects are already cached. */
-    private var pdfBoxReleased = false
-
     /**
      * Monitor for all PdfBox state ([pdfBoxDoc], [pdfBoxLoadFailed], parsing). Deliberately separate
      * from the instance monitor that serializes the non-thread-safe [PdfRenderer], so a slow first
@@ -69,6 +79,11 @@ class PdfSource private constructor(
 
     /** Per-page image boxes as normalized page fractions (top-left origin); parsed once, cached. */
     private val imageRects = ConcurrentHashMap<Int, List<RectF>>()
+
+    /** Per-page link rects as page fractions (top-left origin) + their target, parsed lazily from the
+     *  page's annotations on first tap and cached. Plain data, so closing the PdfBox model never
+     *  invalidates it. */
+    private val linkRects = ConcurrentHashMap<Int, List<PdfLink>>()
 
     /** Single daemon worker for PdfBox parsing; created on first use, shut down in [close]. */
     private var imagesExecutor: ExecutorService? = null
@@ -257,6 +272,109 @@ class PdfSource private constructor(
         if (!closed) imageRectsFor(index)
     }
 
+    // --- Links (tap-driven; annotation reads only — no content walk, no font/image parsing) ---
+
+    /** True once [index]'s links have been parsed (possibly to an empty list). */
+    fun hasLinks(index: Int): Boolean = linkRects.containsKey(index)
+
+    /** The topmost link whose rect (page fraction, top-left origin) contains ([fx], [fy]), or null.
+     *  Cache-only and non-blocking: returns null when [index] isn't parsed yet — call [requestLinks]
+     *  to parse it off the main thread. Later annotations paint on top, so iterate back-to-front. */
+    fun linkAt(index: Int, fx: Float, fy: Float): PdfLink? {
+        val links = linkRects[index] ?: return null
+        for (i in links.indices.reversed()) {
+            if (links[i].frac.contains(fx, fy)) return links[i]
+        }
+        return null
+    }
+
+    /** Parse [index]'s links off the main thread on the shared PdfBox worker (unless already cached),
+     *  then invoke [onReady] (on the worker thread; the caller hops back to the main thread itself).
+     *  Taps are rare and serialized, so this can never flood the way a per-render trigger would. */
+    fun requestLinks(index: Int, onReady: () -> Unit) {
+        if (closed) return
+        if (linkRects.containsKey(index)) { onReady(); return }
+        val executor = imagesWorker() ?: return
+        runCatching {
+            executor.execute {
+                if (closed) return@execute
+                runCatching { linksFor(index) }
+                if (!closed) onReady()
+            }
+        }
+    }
+
+    /**
+     * Parse [index]'s link annotations into page-fraction rects + targets, cached. Reads only the
+     * page's annotation dictionaries (Rect, the URI action, a GoTo destination) — it never walks the
+     * content stream and never resolves a font or image, so it stays light and the retained model
+     * can't balloon (the `f74df73` font leak came from the content-stream walk, not from annotations).
+     * Empty list ⇒ no PDF, parse failure, a rotated page (not mapped), or no link annotations.
+     */
+    private fun linksFor(index: Int): List<PdfLink> = synchronized(pdfBoxLock) {
+        linkRects[index]?.let { return it }
+        val result = runCatching {
+            val doc = pdfBoxDocument() ?: return@runCatching emptyList()
+            if (index !in 0 until doc.numberOfPages) return@runCatching emptyList()
+            val page = doc.getPage(index)
+            if (page.rotation % 360 != 0) return@runCatching emptyList() // rotated page: don't risk a misplaced rect
+            val box = page.cropBox
+            val llx = box.lowerLeftX
+            val cropW = box.width
+            val cropH = box.height
+            if (cropW <= 0f || cropH <= 0f) return@runCatching emptyList()
+            val ury = box.lowerLeftY + cropH // user-space y is up; bitmap/page-fraction y is down
+            val out = ArrayList<PdfLink>()
+            for (annot in page.annotations) {
+                runCatching {
+                    if (annot !is PDAnnotationLink) return@runCatching
+                    val rect = annot.rectangle ?: return@runCatching
+                    val (url, destPage) = linkTarget(doc, annot) ?: return@runCatching
+                    val x0 = minOf(rect.lowerLeftX, rect.upperRightX)
+                    val x1 = maxOf(rect.lowerLeftX, rect.upperRightX)
+                    val y0 = minOf(rect.lowerLeftY, rect.upperRightY)
+                    val y1 = maxOf(rect.lowerLeftY, rect.upperRightY)
+                    val fLeft = ((x0 - llx) / cropW).coerceIn(0f, 1f)
+                    val fRight = ((x1 - llx) / cropW).coerceIn(0f, 1f)
+                    val fTop = ((ury - y1) / cropH).coerceIn(0f, 1f)
+                    val fBottom = ((ury - y0) / cropH).coerceIn(0f, 1f)
+                    if (fRight > fLeft && fBottom > fTop) {
+                        out.add(PdfLink(RectF(fLeft, fTop, fRight, fBottom), url, destPage))
+                    }
+                }
+            }
+            out
+        }.getOrDefault(emptyList())
+        linkRects[index] = result
+        result
+    }
+
+    /** A link's target: an external URI (web/mailto) → (url, null), or an internal page jump
+     *  (a direct destination or a GoTo action) → (null, 0-based page). Null for unsupported actions
+     *  (GoToR/Launch/JavaScript) or an unresolvable destination. */
+    private fun linkTarget(doc: PDDocument, link: PDAnnotationLink): Pair<String?, Int?>? {
+        val action = link.action
+        if (action is PDActionURI) {
+            val uri = action.uri
+            return if (!uri.isNullOrBlank()) Pair(uri, null) else null
+        }
+        val dest: PDDestination? = if (action is PDActionGoTo) action.destination else link.destination
+        val page = resolvePageDestination(doc, dest) ?: return null
+        return Pair(null, page)
+    }
+
+    /** Resolve a destination to a 0-based page index, handling explicit page destinations and named
+     *  destinations (via the catalog). Null when it isn't a page destination or can't be resolved. */
+    private fun resolvePageDestination(doc: PDDocument, dest: PDDestination?): Int? {
+        val pageDest: PDPageDestination = when (dest) {
+            is PDPageDestination -> dest
+            is PDNamedDestination -> runCatching { doc.documentCatalog.findNamedDestinationPage(dest) }.getOrNull()
+            else -> null
+        } ?: return null
+        val n = runCatching { pageDest.retrievePageNumber() }.getOrDefault(-1)
+        return if (n >= 0) n else null
+    }
+
     /** The single PdfBox prep worker, created on first use; null after [close]. Runs the linear
      *  [prepAllImages] sweep on one background thread, off the main and cache threads. (One-shot
      *  callers parse on their own thread via [ensureImageRects]; [imageRectsFor] serializes both on
@@ -306,7 +424,7 @@ class PdfSource private constructor(
     /** The lazily-loaded PdfBox model. Always called under [pdfBoxLock]. */
     private fun pdfBoxDocument(): PDDocument? {
         if (closed) return null
-        if (pdfBoxDoc == null && !pdfBoxLoadFailed && !pdfBoxReleased) {
+        if (pdfBoxDoc == null && !pdfBoxLoadFailed) {
             pdfBoxDoc = runCatching {
                 PDFBoxResourceLoader.init(appContext)
                 // Cap PdfBox's in-RAM scratch (used while decoding page content streams to locate image
@@ -317,14 +435,14 @@ class PdfSource private constructor(
         return pdfBoxDoc
     }
 
-    /** Close the PdfBox model once the sweep has cached every page's rects, reclaiming its heap (the
-     *  parsed object model and any cached resources). The framework [renderer] is independent and stays
-     *  open for rasterizing. Runs on the prep worker after the last parse; serialized with parsing on
-     *  [pdfBoxLock], and safe because post-sweep every render / [ensureImageRects] reads from the cache. */
+    /** Close the PdfBox model once the image sweep has cached every page's rects, reclaiming its heap
+     *  (the parsed object model and any cached resources). The framework [renderer] is independent and
+     *  stays open for rasterizing, and image rects read from their cache; the model is now re-openable,
+     *  so only a later link tap reloads it on demand ([linksFor]), and annotation reads keep it light.
+     *  Runs on the prep worker after the last parse; serialized with parsing on [pdfBoxLock]. */
     private fun releasePdfBoxModel() = synchronized(pdfBoxLock) {
         runCatching { pdfBoxDoc?.close() }
         pdfBoxDoc = null
-        pdfBoxReleased = true
     }
 
     fun close() {

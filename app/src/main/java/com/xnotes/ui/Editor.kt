@@ -304,6 +304,26 @@ class Editor(context: Context) {
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         view.afterLayout = { refreshView() }
         controller.clipboardHasImage = { clipboardImageUri() != null }
+        controller.onLinkTap = onLinkTap@{ pageIndex, pageLocal ->
+            val src = pdfSource ?: return@onLinkTap false
+            val page = state.document.pages.getOrNull(pageIndex) ?: return@onLinkTap false
+            val pdfIdx = page.pdfPage ?: return@onLinkTap false
+            if (page.width <= 0.0 || page.height <= 0.0) return@onLinkTap false
+            val fx = (pageLocal.x / page.width).toFloat()
+            val fy = (pageLocal.y / page.height).toFloat()
+            if (src.hasLinks(pdfIdx)) {
+                val link = src.linkAt(pdfIdx, fx, fy) ?: return@onLinkTap false
+                followLink(link)
+                true
+            } else {
+                // Not parsed yet: parse off the main thread, then open on the main thread. The tap
+                // is not blocked or consumed; on the first tap of a page the link opens a moment later.
+                src.requestLinks(pdfIdx) {
+                    view.post { if (pdfSource === src) src.linkAt(pdfIdx, fx, fy)?.let { followLink(it) } }
+                }
+                false
+            }
+        }
         maybeAutoEnableFingerDraw()
         applySettings()
         rebuildPdfSource()
@@ -402,6 +422,34 @@ class Editor(context: Context) {
                     }
                 }
             }
+        }
+    }
+
+    /** Act on a tapped PDF link: open a web/mail URL externally, or jump to an internal destination
+     *  page (mapped from the source-PDF page index to whichever document page carries it). */
+    private fun followLink(link: com.xnotes.platform.PdfLink) {
+        val url = link.url
+        if (url != null) {
+            openUrl(url)
+            return
+        }
+        val dest = link.destPage ?: return
+        val docPage = state.document.pages.indexOfFirst { it.pdfPage == dest }
+        if (docPage >= 0) goToPage(docPage)
+    }
+
+    /** Open an external web/mail URL in the system handler. Restricted to safe schemes; never throws. */
+    private fun openUrl(url: String) {
+        val u = url.trim()
+        val ok = u.startsWith("http://", ignoreCase = true) ||
+            u.startsWith("https://", ignoreCase = true) ||
+            u.startsWith("mailto:", ignoreCase = true)
+        if (!ok) return
+        runCatching {
+            appContext.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }
     }
 

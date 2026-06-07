@@ -103,6 +103,13 @@ class InteractionController(
 ) {
     /** Whether the system clipboard currently holds an image (provided by the host). */
     var clipboardHasImage: () -> Boolean = { false }
+
+    /** Host hook for tap-to-open PDF links. A finger tap landed on page [pageIndex] at [pageLocal]
+     *  (page-local content px). Returns true if it hit a known link and was handled, so the tap is
+     *  consumed (skipping the selection-dismiss / fling). The host parses link rects lazily off the
+     *  main thread, so a tap on a not-yet-parsed page returns false and opens the link a moment later
+     *  once it is ready. */
+    var onLinkTap: ((pageIndex: Int, pageLocal: Pt) -> Boolean)? = null
     val document: Document get() = state.document
 
     var tool: Tool = Tool.DEFAULT
@@ -382,7 +389,9 @@ class InteractionController(
                 // A finger tap (no drag) that didn't just halt a glide, landing off the current
                 // selection, dismisses it — the finger's counterpart to the stylus's empty-tap clear.
                 val tap = !downStoppedFling && upViewport.distanceTo(panDownViewport) <= TAP_SLOP
+                val linkHandled = tap && state.overscrollY <= 0.0 && tryLinkTap(content)
                 when {
+                    linkHandled -> Unit
                     state.overscrollY > 0.0 -> releaseOverscroll()
                     tap && hasSelection && selectionBoundsContent()?.contains(content) != true -> clearSelection()
                     else -> startFling(panVel)
@@ -398,6 +407,14 @@ class InteractionController(
             PointerMode.TEXT_DRAG -> endTextDrag(content)
             else -> Unit
         }
+    }
+
+    /** Map a finger tap's content point to its page + page-local point and offer it to [onLinkTap]. */
+    private fun tryLinkTap(content: Pt): Boolean {
+        val cb = onLinkTap ?: return false
+        val pageIndex = state.pageIndexAtContent(content) ?: return false
+        val pr = state.pageRects[pageIndex]
+        return cb(pageIndex, Pt(content.x - pr.left, content.y - pr.top))
     }
 
     // --- DRAW ---
