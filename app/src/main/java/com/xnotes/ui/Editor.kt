@@ -662,8 +662,18 @@ class Editor(context: Context) {
     private fun refreshView() {
         zoomPercent = (state.zoom * 100).roundToInt()
         pageIndex = state.currentPageIndex()
+        warmVisibleLinks(pageIndex)
         if (controller.editingItem != null) editingField = controller.editingField()
         refreshTextBar()
+    }
+
+    /** Proactively parse the current page's PDF links off-thread (coalesce + cancel-stale) so a tap
+     *  lands on a warm cache. Cheap and idempotent; a fast scroll keeps moving the target, so only the
+     *  page it settles on is parsed, never a backlog. The on-tap parse stays as a fallback. */
+    private fun warmVisibleLinks(pageIndex: Int) {
+        val src = pdfSource ?: return
+        val pdfIdx = state.document.pages.getOrNull(pageIndex)?.pdfPage ?: return
+        src.warmLinks(pdfIdx)
     }
 
     /** Recompute the floating text style bar's anchor + values (it follows pan/zoom/selection). */

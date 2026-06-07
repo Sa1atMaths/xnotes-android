@@ -35,6 +35,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A tappable link discovered on a PDF page. [frac] is the link's rectangle as a page fraction
@@ -80,13 +81,27 @@ class PdfSource private constructor(
     /** Per-page image boxes as normalized page fractions (top-left origin); parsed once, cached. */
     private val imageRects = ConcurrentHashMap<Int, List<RectF>>()
 
-    /** Per-page link rects as page fractions (top-left origin) + their target, parsed lazily from the
-     *  page's annotations on first tap and cached. Plain data, so closing the PdfBox model never
-     *  invalidates it. */
-    private val linkRects = ConcurrentHashMap<Int, List<PdfLink>>()
+    /** Immutable snapshot of one page's parsed links (page fractions, top-left origin). */
+    private class PageLinks(val index: Int, val links: List<PdfLink>)
+
+    /** Only the **current** page's links are held, replaced as the canvas moves — so link memory is
+     *  O(1) and there is no accumulating per-page cache that could grow without bound. Stale pages are
+     *  dropped, not kept. */
+    @Volatile private var current: PageLinks? = null
+
+    /** The latest page whose links the canvas wants warmed (the coalesce target); -1 when none. */
+    @Volatile private var desiredLinkPage = -1
+
+    /** Single-flight guard for the warm pump, so a burst of [warmLinks] folds into one worker pass. */
+    private val linkPumpActive = AtomicBoolean(false)
 
     /** Single daemon worker for PdfBox parsing; created on first use, shut down in [close]. */
     private var imagesExecutor: ExecutorService? = null
+
+    /** Separate daemon worker for link parsing, so coalesced warm parses never queue behind the
+     *  (possibly long) dark-mode image sweep on [imagesExecutor]; both still serialize PDDocument
+     *  access on [pdfBoxLock]. Created on first use, shut down in [close]. */
+    private var linksExecutor: ExecutorService? = null
 
     /** Guards [imagesExecutor]'s lifecycle. Kept off [pdfBoxLock] so scheduling a parse never waits
      *  on a load already running on the worker. */
@@ -274,45 +289,93 @@ class PdfSource private constructor(
 
     // --- Links (tap-driven; annotation reads only — no content walk, no font/image parsing) ---
 
-    /** True once [index]'s links have been parsed (possibly to an empty list). */
-    fun hasLinks(index: Int): Boolean = linkRects.containsKey(index)
+    /** True when [index] is the page whose links are currently held (possibly an empty list). */
+    fun hasLinks(index: Int): Boolean = current?.index == index
 
     /** The topmost link whose rect (page fraction, top-left origin) contains ([fx], [fy]), or null.
-     *  Cache-only and non-blocking: returns null when [index] isn't parsed yet — call [requestLinks]
-     *  to parse it off the main thread. Later annotations paint on top, so iterate back-to-front. */
+     *  Non-blocking: returns null unless [index] is the currently-held page — call [requestLinks] to
+     *  parse it off the main thread. Later annotations paint on top, so iterate back-to-front. */
     fun linkAt(index: Int, fx: Float, fy: Float): PdfLink? {
-        val links = linkRects[index] ?: return null
-        for (i in links.indices.reversed()) {
-            if (links[i].frac.contains(fx, fy)) return links[i]
+        val c = current ?: return null
+        if (c.index != index) return null
+        for (i in c.links.indices.reversed()) {
+            if (c.links[i].frac.contains(fx, fy)) return c.links[i]
         }
         return null
     }
 
-    /** Parse [index]'s links off the main thread on the shared PdfBox worker (unless already cached),
-     *  then invoke [onReady] (on the worker thread; the caller hops back to the main thread itself).
-     *  Taps are rare and serialized, so this can never flood the way a per-render trigger would. */
+    /** Coalesce + cancel-stale warming: record [index] as the latest wanted page and ensure a single
+     *  worker is parsing the *latest* wanted page, skipping cached ones. A fast scroll across many
+     *  pages just overwrites the target, so only the page(s) the scroll settles on get parsed — never
+     *  a per-page backlog. Fire-and-forget: it only fills the cache so a later tap finds it hot. */
+    fun warmLinks(index: Int) {
+        if (closed || index < 0) return
+        desiredLinkPage = index
+        if (current?.index != index) pumpLinks()
+    }
+
+    /** Drive the warm pump: a single in-flight worker that repeatedly parses whatever [desiredLinkPage]
+     *  currently is (the latest, so pages merely scrolled past are cancelled) until it is cached or
+     *  cleared. The single-flight [linkPumpActive] guard collapses a burst of [warmLinks] into one. */
+    private fun pumpLinks() {
+        if (closed) return
+        if (!linkPumpActive.compareAndSet(false, true)) return
+        val executor = linksWorker()
+        if (executor == null) { linkPumpActive.set(false); return }
+        val submitted = runCatching {
+            executor.execute {
+                try {
+                    while (!closed) {
+                        val target = desiredLinkPage // latest wins; intermediate scroll targets are skipped
+                        if (target < 0 || current?.index == target) break
+                        setCurrentLinks(target)
+                    }
+                } finally {
+                    linkPumpActive.set(false)
+                    val d = desiredLinkPage // a request that arrived as we exited gets a fresh pump
+                    if (!closed && d >= 0 && current?.index != d) pumpLinks()
+                }
+            }
+        }.isSuccess
+        if (!submitted) linkPumpActive.set(false)
+    }
+
+    /** Guaranteed parse of [index]'s links off the main thread (a committed tap is never cancelled the
+     *  way a stale [warmLinks] request is), then invoke [onReady] on the worker thread (the caller hops
+     *  to the main thread itself). Cache-checked, so it no-ops if warming already parsed the page. */
     fun requestLinks(index: Int, onReady: () -> Unit) {
         if (closed) return
-        if (linkRects.containsKey(index)) { onReady(); return }
-        val executor = imagesWorker() ?: return
+        if (current?.index == index) { onReady(); return }
+        val executor = linksWorker() ?: return
         runCatching {
             executor.execute {
                 if (closed) return@execute
-                runCatching { linksFor(index) }
+                runCatching { setCurrentLinks(index) }
                 if (!closed) onReady()
             }
         }
     }
 
+    /** The single daemon worker for all link parsing (warm + guaranteed tap), created on first use;
+     *  null after [close]. Separate from the image worker so warming never waits behind the dark-mode
+     *  image sweep; PDDocument access stays serialized across both on [pdfBoxLock]. */
+    private fun linksWorker(): ExecutorService? = synchronized(executorLock) {
+        if (closed) return@synchronized null
+        linksExecutor ?: Executors.newSingleThreadExecutor { r ->
+            Thread(r, "xnotes-pdfbox-links").apply { isDaemon = true }
+        }.also { linksExecutor = it }
+    }
+
     /**
-     * Parse [index]'s link annotations into page-fraction rects + targets, cached. Reads only the
-     * page's annotation dictionaries (Rect, the URI action, a GoTo destination) — it never walks the
-     * content stream and never resolves a font or image, so it stays light and the retained model
-     * can't balloon (the `f74df73` font leak came from the content-stream walk, not from annotations).
-     * Empty list ⇒ no PDF, parse failure, a rotated page (not mapped), or no link annotations.
+     * Parse [index]'s link annotations into page-fraction rects + targets and make them the current
+     * page's links, replacing (evicting) the previous page's — so only one page is ever held. Reads
+     * only the page's annotation dictionaries (Rect, the URI action, a GoTo destination); it never
+     * walks the content stream and never resolves a font or image, so it stays light (the `f74df73`
+     * font leak came from the content-stream walk, not from annotations). Empty list ⇒ no PDF, parse
+     * failure, a rotated page (not mapped), or no link annotations.
      */
-    private fun linksFor(index: Int): List<PdfLink> = synchronized(pdfBoxLock) {
-        linkRects[index]?.let { return it }
+    private fun setCurrentLinks(index: Int): List<PdfLink> = synchronized(pdfBoxLock) {
+        current?.let { if (it.index == index) return it.links }
         val result = runCatching {
             val doc = pdfBoxDocument() ?: return@runCatching emptyList()
             if (index !in 0 until doc.numberOfPages) return@runCatching emptyList()
@@ -345,7 +408,7 @@ class PdfSource private constructor(
             }
             out
         }.getOrDefault(emptyList())
-        linkRects[index] = result
+        current = PageLinks(index, result)
         result
     }
 
@@ -449,7 +512,10 @@ class PdfSource private constructor(
         closed = true
         onImagesReady = null
         onImagesProgress = null
-        synchronized(executorLock) { runCatching { imagesExecutor?.shutdownNow() } }
+        synchronized(executorLock) {
+            runCatching { imagesExecutor?.shutdownNow() }
+            runCatching { linksExecutor?.shutdownNow() }
+        }
         runCatching { pdfBoxDoc?.close() }
         runCatching { renderer.close() }
         runCatching { pfd.close() }
