@@ -136,6 +136,7 @@ data class Settings(
             .put("switch_back_after_erase", c.switchBackAfterErase)
             .put("straight_line", c.straightLine)
             .put("scale", c.scale)
+            .put("highlighter_alpha", c.highlighterAlpha)
             .put("rgba", rgbaArr(c.rgba))
 
         private fun toolConfig(o: JSONObject, tool: Tool): ToolConfig {
@@ -156,6 +157,7 @@ data class Settings(
                 switchBackAfterErase = o.optBoolean("switch_back_after_erase", d.switchBackAfterErase),
                 straightLine = o.optBoolean("straight_line", d.straightLine),
                 scale = o.optBoolean("scale", d.scale),
+                highlighterAlpha = o.optDouble("highlighter_alpha", d.highlighterAlpha),
             )
         }
 

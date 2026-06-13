@@ -38,8 +38,11 @@ class Stroke(
     private var cachedRawBounds: Rect? = null
     private var cachedBounds: Rect? = null
 
-    /** Ink colour with the tool's alpha scale applied (highlighter ×0.35). */
-    val renderColor get() = config.rgba.scaleAlpha(tool.alphaScale)
+    /** Ink colour with the tool's alpha scale applied (the highlighter uses its configurable
+     *  [ToolConfig.highlighterAlpha]; every other tool is opaque, scale 1.0). */
+    val renderColor get() = config.rgba.scaleAlpha(
+        if (tool == Tool.HIGHLIGHTER) config.highlighterAlpha else tool.alphaScale,
+    )
 
     val isEmpty get() = samples.isEmpty()
 

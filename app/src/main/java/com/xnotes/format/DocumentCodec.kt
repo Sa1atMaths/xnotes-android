@@ -218,6 +218,8 @@ class DocumentCodec(
             config.put("dash_length", s.config.dashLength)
             config.put("dash_gap", s.config.dashGap)
         }
+        // Strength matters only to the highlighter; baked per-stroke so a note reopens unchanged.
+        if (s.tool == Tool.HIGHLIGHTER) config.put("highlighter_alpha", s.config.highlighterAlpha)
         val obj = JSONObject()
             .put("kind", Stroke.KIND)
             .put("tool", s.tool.id)
@@ -296,6 +298,8 @@ class DocumentCodec(
             neonStrength = c?.optDouble("neon_strength", def.neonStrength) ?: def.neonStrength,
             dashLength = c?.optDouble("dash_length", def.dashLength) ?: def.dashLength,
             dashGap = c?.optDouble("dash_gap", def.dashGap) ?: def.dashGap,
+            // Absent on legacy highlighter strokes -> the historical 0.35, so they reload unchanged.
+            highlighterAlpha = c?.optDouble("highlighter_alpha", def.highlighterAlpha) ?: def.highlighterAlpha,
         )
         val samples = ArrayList<Sample>()
         o.optJSONArray("samples")?.let { arr ->

@@ -66,12 +66,14 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     var gapLen by remember { mutableStateOf(base.dashGap.toFloat()) }
     var straight by remember { mutableStateOf(base.straightLine) }
     var scale by remember { mutableStateOf(base.scale) }
+    var intensity by remember { mutableStateOf(ToolConversions.highlighterAlphaToIntensity(base.highlighterAlpha).toFloat()) }
 
     fun emit() {
         val m = ToolConversions.sensitivityToMinFactor(sensitivity.toDouble())
         val ds = if (tool == Tool.CALLIGRAPHY) ToolConversions.multiplierToDirectionStrength(multiplier.toDouble()) else 0.0
         val sp = if (tool == Tool.SPEED) ToolConversions.speedToStrength(speed.toDouble()) else 0.0
         val tp = if (tool == Tool.TAPER) taper.toDouble() else 0.0
+        val ha = if (tool == Tool.HIGHLIGHTER) ToolConversions.intensityToHighlighterAlpha(intensity.toDouble()) else base.highlighterAlpha
         editor.updateToolConfig(
             tool,
             base.copy(
@@ -87,6 +89,7 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                 dashGap = gapLen.toDouble(),
                 straightLine = straight,
                 scale = scale,
+                highlighterAlpha = ha,
             ),
         )
     }
@@ -116,8 +119,10 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                 SliderRow("DASH", dashLen, 2f..40f) { dashLen = it; emit() }
                 SliderRow("GAP", gapLen, 2f..40f) { gapLen = it; emit() }
             }
-            // The highlighter can lock each drag to a single straight segment (for ruling/underlining).
+            // The highlighter's strength (translucency) and an optional straight-segment lock
+            // (for ruling/underlining).
             if (tool == Tool.HIGHLIGHTER) {
+                SliderRow("INTENSITY", intensity, 10f..90f) { intensity = it; emit() }
                 ToggleRow("STRAIGHT LINE", straight) { straight = it; emit() }
             }
             // Glow is offered on every stroke tool except the highlighter (translucent) and the

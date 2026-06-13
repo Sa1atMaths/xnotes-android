@@ -54,6 +54,10 @@ data class ToolConfig(
      *  taper/dash extents) are divided by the current zoom, so the stroke looks the same
      *  thickness whatever zoom you draw at. The eraser uses it to size its radius. */
     val scale: Boolean = true,
+    /** Highlighter translucency: render-time alpha scale, default 0.35 (the historical value, so
+     *  legacy strokes that lack the field reload unchanged). Capped to [0.10, 0.90] by the UI so it
+     *  stays a MULTIPLY-blended marker. Only used by [Tool.HIGHLIGHTER]. */
+    val highlighterAlpha: Double = 0.35,
 )
 
 /** Factory defaults per tool (spec 04 §3). */
@@ -65,7 +69,7 @@ object ToolDefaults {
         Tool.CALLIGRAPHY -> ToolConfig(baseWidth = 6.0, pressureEnabled = true, pressureMinFactor = 0.40, directionStrength = 0.60)
         Tool.SPEED -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0, speedStrength = 0.8)
         Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperLength = 40.0)
-        Tool.HIGHLIGHTER -> ToolConfig(baseWidth = 16.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
+        Tool.HIGHLIGHTER -> ToolConfig(baseWidth = 16.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0, highlighterAlpha = 0.50)
         Tool.ERASER -> ToolConfig(baseWidth = 24.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
         Tool.LASSO -> ToolConfig(baseWidth = 2.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
         else -> ToolConfig()
@@ -101,6 +105,12 @@ object ToolConversions {
     fun intensityToNeonStrength(intensity: Double): Double = intensity.coerceIn(0.0, 100.0) / 100.0
 
     fun neonStrengthToIntensity(s: Double): Double = s * 100.0
+
+    /** Highlighter INTENSITY (10..90 percent opacity) -> alpha in [0.10, 0.90]. Capped below
+     *  1.0 so the highlighter stays translucent (its MULTIPLY blend is preserved). */
+    fun intensityToHighlighterAlpha(intensity: Double): Double = intensity.coerceIn(10.0, 90.0) / 100.0
+
+    fun highlighterAlphaToIntensity(a: Double): Double = a * 100.0
 
     /** WIDTH slider range per tool (spec 04 §5): 4..40 for the highlighter, 8..80 for the eraser
      *  (its radius, default 24), else 1..20. */
