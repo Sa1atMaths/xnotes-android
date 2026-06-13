@@ -138,6 +138,7 @@ data class Settings(
             .put("scale", c.scale)
             .put("highlighter_alpha", c.highlighterAlpha)
             .put("rgba", rgbaArr(c.rgba))
+            .apply { c.colorOverride?.let { put("color_override", rgbaArr(it)) } }
 
         private fun toolConfig(o: JSONObject, tool: Tool): ToolConfig {
             val d = ToolDefaults.configFor(tool)
@@ -158,6 +159,9 @@ data class Settings(
                 straightLine = o.optBoolean("straight_line", d.straightLine),
                 scale = o.optBoolean("scale", d.scale),
                 highlighterAlpha = o.optDouble("highlighter_alpha", d.highlighterAlpha),
+                colorOverride = o.optJSONArray("color_override")
+                    ?.let { a -> Rgba.fromList((0 until a.length()).map { i -> a.optInt(i, 0) }) }
+                    ?: d.colorOverride,
             )
         }
 

@@ -543,12 +543,15 @@ class InteractionController(
         // SCALE off: normalise the stroke to its 100%-zoom size by dividing the spatial
         // dimensions by the draw-time zoom, so it draws at a constant on-screen thickness
         // whatever zoom you are at. Baked into the snapshot, so it is ordinary ink afterwards.
+        // A pen with a colour override always draws in its own colour; otherwise it follows the
+        // toolbar's active ink colour.
+        val drawColor = cfg0.colorOverride ?: inkColor
         val cfg = if (cfg0.scale) {
-            cfg0.copy(rgba = inkColor)
+            cfg0.copy(rgba = drawColor)
         } else {
             val z = state.zoom
             cfg0.copy(
-                rgba = inkColor,
+                rgba = drawColor,
                 baseWidth = cfg0.baseWidth / z,
                 taperLength = cfg0.taperLength / z,
                 dashLength = cfg0.dashLength / z,

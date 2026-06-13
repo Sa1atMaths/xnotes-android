@@ -58,6 +58,9 @@ data class ToolConfig(
      *  legacy strokes that lack the field reload unchanged). Capped to [0.10, 0.90] by the UI so it
      *  stays a MULTIPLY-blended marker. Only used by [Tool.HIGHLIGHTER]. */
     val highlighterAlpha: Double = 0.35,
+    /** Per-tool colour override: when set, new strokes from this tool use this colour instead of
+     *  the toolbar's active ink colour. null = follow the toolbar (the default for every tool). */
+    val colorOverride: Rgba? = null,
 )
 
 /** Factory defaults per tool (spec 04 §3). */

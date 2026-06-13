@@ -51,6 +51,7 @@ import kotlin.math.roundToInt
  * tool's signature control — MULTIPLIER (calligraphy), SPEED (speed pen) or TAPER
  * (taper pen) — then WIDTH, and a NEON toggle (with INTENSITY) on any stroke tool but the highlighter.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     val base = remember { editor.toolConfig(tool) }
@@ -67,6 +68,7 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     var straight by remember { mutableStateOf(base.straightLine) }
     var scale by remember { mutableStateOf(base.scale) }
     var intensity by remember { mutableStateOf(ToolConversions.highlighterAlphaToIntensity(base.highlighterAlpha).toFloat()) }
+    var colorOverride by remember { mutableStateOf(base.colorOverride) }
 
     fun emit() {
         val m = ToolConversions.sensitivityToMinFactor(sensitivity.toDouble())
@@ -90,6 +92,7 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                 straightLine = straight,
                 scale = scale,
                 highlighterAlpha = ha,
+                colorOverride = colorOverride,
             ),
         )
     }
@@ -97,6 +100,18 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
         Column(Modifier.width(250.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
             PopupTitle(tool.name)
+            // COLOUR override: "Default" follows the toolbar's active ink colour; pick a hue to pin
+            // this tool to it regardless of the toolbar selection.
+            StyleCaption("COLOUR")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("Default", colorOverride == null) { colorOverride = null; emit() }
+                ColorPickerDot(
+                    colorOverride,
+                    custom = colorOverride != null,
+                    onPick = { colorOverride = it; emit() },
+                ) { d, p -> ColorSwitcherGrid(editor.recentColors, d, p) }
+            }
+            Spacer(Modifier.size(12.dp))
             val hasPressure = tool == Tool.PEN || tool == Tool.CALLIGRAPHY || tool == Tool.SPEED || tool == Tool.TAPER
             if (hasPressure) {
                 ToggleRow("PRESSURE", pressure) { pressure = it; emit() }
@@ -316,37 +331,41 @@ fun ShapeConfigPopup(editor: Editor, onDismiss: () -> Unit) {
     }
 }
 
-/** Colour switcher (spec 10 §4): a hue×shade matrix, a greyscale row and recent colours. */
+/** Colour switcher (spec 10 §4): the toolbar swatch picker — opens the shared [ColorSwitcherGrid]
+ *  and writes the chosen colour back to swatch [index]. */
 @Composable
 fun ColorSwitcherPopup(editor: Editor, index: Int, onDismiss: () -> Unit) {
-    val hues = (0 until 11).map { it * 360.0 / 11.0 }
-    val shades = listOf(0.4 to 1.0, 0.7 to 1.0, 1.0 to 1.0, 1.0 to 0.8, 1.0 to 0.6, 1.0 to 0.42)
-
-    fun pick(c: Rgba) {
+    ColorSwitcherGrid(editor.recentColors, onDismiss) { c ->
         editor.setSwatchColor(index, c)
         onDismiss()
     }
+}
 
+/** The toolbar's colour palette: a hue×shade matrix, a greyscale row and recent colours. Shared by
+ *  the toolbar swatch switcher and the per-tool colour override so both pick from the same set. */
+@Composable
+internal fun ColorSwitcherGrid(recents: List<Rgba>, onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
+    val hues = (0 until 11).map { it * 360.0 / 11.0 }
+    val shades = listOf(0.4 to 1.0, 0.7 to 1.0, 1.0 to 1.0, 1.0 to 0.8, 1.0 to 0.6, 1.0 to 0.42)
     DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
         Column(Modifier.padding(10.dp)) {
-            val recents = editor.recentColors
             if (recents.isNotEmpty()) {
                 PopupTitle("RECENT")
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    recents.take(8).forEach { Cell(it) { pick(it) } }
+                    recents.take(8).forEach { Cell(it) { onPick(it) } }
                 }
             }
             PopupTitle("COLOUR")
             shades.forEach { (s, v) ->
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    hues.forEach { h -> val c = ColorMath.hsvToRgb(h, s, v); Cell(c) { pick(c) } }
+                    hues.forEach { h -> val c = ColorMath.hsvToRgb(h, s, v); Cell(c) { onPick(c) } }
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 (0..10).forEach { i ->
                     val g = (i * 255 / 10)
                     val c = Rgba(g, g, g)
-                    Cell(c) { pick(c) }
+                    Cell(c) { onPick(c) }
                 }
             }
         }
