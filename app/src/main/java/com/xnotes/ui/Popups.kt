@@ -65,6 +65,7 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
     var dashLen by remember { mutableStateOf(base.dashLength.toFloat()) }
     var gapLen by remember { mutableStateOf(base.dashGap.toFloat()) }
     var straight by remember { mutableStateOf(base.straightLine) }
+    var scale by remember { mutableStateOf(base.scale) }
 
     fun emit() {
         val m = ToolConversions.sensitivityToMinFactor(sensitivity.toDouble())
@@ -85,6 +86,7 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                 dashLength = dashLen.toDouble(),
                 dashGap = gapLen.toDouble(),
                 straightLine = straight,
+                scale = scale,
             ),
         )
     }
@@ -108,6 +110,8 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
             }
             val range = ToolConversions.widthRange(tool)
             SliderRow("WIDTH", width, range.start.toFloat()..range.endInclusive.toFloat()) { width = it; emit() }
+            // SCALE off: ink keeps a constant on-screen thickness whatever zoom you draw at.
+            ToggleRow("SCALE", scale) { scale = it; emit() }
             if (tool == Tool.DASHED) {
                 SliderRow("DASH", dashLen, 2f..40f) { dashLen = it; emit() }
                 SliderRow("GAP", gapLen, 2f..40f) { gapLen = it; emit() }
@@ -246,6 +250,7 @@ fun EraserConfigPopup(editor: Editor, onDismiss: () -> Unit) {
     var area by remember { mutableStateOf(base.eraseMode == EraseMode.AREA) }
     var size by remember { mutableStateOf(base.baseWidth.toFloat()) }
     var switchBack by remember { mutableStateOf(base.switchBackAfterErase) }
+    var scale by remember { mutableStateOf(base.scale) }
 
     fun emit() = editor.updateToolConfig(
         Tool.ERASER,
@@ -253,6 +258,7 @@ fun EraserConfigPopup(editor: Editor, onDismiss: () -> Unit) {
             baseWidth = size.toDouble(),
             eraseMode = if (area) EraseMode.AREA else EraseMode.STROKE,
             switchBackAfterErase = switchBack,
+            scale = scale,
         ),
     )
 
@@ -265,6 +271,8 @@ fun EraserConfigPopup(editor: Editor, onDismiss: () -> Unit) {
             }
             val r = ToolConversions.widthRange(Tool.ERASER)
             SliderRow("SIZE", size, r.start.toFloat()..r.endInclusive.toFloat()) { size = it; emit() }
+            // SCALE off: the eraser holds a constant on-screen size whatever zoom you are at.
+            ToggleRow("SCALE", scale) { scale = it; emit() }
             // Re-arm the previous pen/highlighter once an erase lifts, so a quick fix doesn't strand
             // you in the eraser.
             ToggleRow("SWITCH BACK", switchBack) { switchBack = it; emit() }

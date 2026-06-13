@@ -50,6 +50,10 @@ data class ToolConfig(
     val switchBackAfterErase: Boolean = false,
     /** Highlighter: commit each drag as a single straight segment (start → release). Only [Tool.HIGHLIGHTER]. */
     val straightLine: Boolean = false,
+    /** When false, the pen draws at a constant on-screen size: at pen-down the width (and the
+     *  taper/dash extents) are divided by the current zoom, so the stroke looks the same
+     *  thickness whatever zoom you draw at. The eraser uses it to size its radius. */
+    val scale: Boolean = true,
 )
 
 /** Factory defaults per tool (spec 04 §3). */

@@ -438,9 +438,25 @@ class InteractionController(
         // Capture content-px → dp scale now, so the speed pen judges gesture speed in
         // zoom- and density-independent dp regardless of how the stroke is later viewed.
         val speedScale = state.zoom / state.devicePxPerDp
-        val cfg = configFor(drawTool)
+        val cfg0 = configFor(drawTool)
+        // SCALE off: normalise the stroke to its 100%-zoom size by dividing the spatial
+        // dimensions by the draw-time zoom, so it draws at a constant on-screen thickness
+        // whatever zoom you are at. Baked into the snapshot, so it is ordinary ink afterwards.
+        val cfg = if (cfg0.scale) {
+            cfg0.copy(rgba = inkColor)
+        } else {
+            val z = state.zoom
+            cfg0.copy(
+                rgba = inkColor,
+                baseWidth = cfg0.baseWidth / z,
+                taperLength = cfg0.taperLength / z,
+                dashLength = cfg0.dashLength / z,
+                dashGap = cfg0.dashGap / z,
+                scale = true,
+            )
+        }
         val straight = drawTool == Tool.HIGHLIGHTER && cfg.straightLine
-        val stroke = Stroke(drawTool, cfg.copy(rgba = inkColor), speedScale = speedScale, straight = straight)
+        val stroke = Stroke(drawTool, cfg, speedScale = speedScale, straight = straight)
         strokeStartTimeMs = timeMs
         stroke.addSample(Sample(content.x - pr.left, content.y - pr.top, pressure)) // first sample: t = 0
         liveStroke = stroke
@@ -582,7 +598,12 @@ class InteractionController(
 
     // --- ERASE ---
 
-    private fun eraserRadius(): Double = configFor(Tool.ERASER).baseWidth
+    // SCALE off: hold the eraser at a constant on-screen size by shrinking its content-space
+    // radius as you zoom in (both the hit-test and the cursor circle derive from this).
+    private fun eraserRadius(): Double {
+        val cfg = configFor(Tool.ERASER)
+        return if (cfg.scale) cfg.baseWidth else cfg.baseWidth / state.zoom
+    }
 
     private fun areaErase(): Boolean = configFor(Tool.ERASER).eraseMode == EraseMode.AREA
 
