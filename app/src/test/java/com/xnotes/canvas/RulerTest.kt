@@ -59,6 +59,16 @@ class RulerTest {
         assertEquals(Pt(70.0, 90.0), q[3])
     }
 
+    @Test fun handles() {
+        val r = ruler() // centre (100,100), horizontal, thickness 20 -> handleRadius 4
+        val hs = r.handleCenters(50.0)
+        assertEquals(Pt(150.0, 100.0), hs[0]) // +direction
+        assertEquals(Pt(50.0, 100.0), hs[1])  // −direction
+        assertEquals(0, r.hitHandle(Pt(150.0, 100.0), 50.0, r.handleRadiusPx()))
+        assertEquals(1, r.hitHandle(Pt(50.0, 100.0), 50.0, r.handleRadiusPx()))
+        assertNull(r.hitHandle(Pt(100.0, 100.0), 50.0, r.handleRadiusPx())) // centre misses both
+    }
+
     @Test fun hitButton() {
         val r = ruler()
         val centers = r.buttonCenters()

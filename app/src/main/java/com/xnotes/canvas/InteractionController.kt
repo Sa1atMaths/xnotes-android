@@ -58,7 +58,7 @@ import kotlin.math.sin
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode {
     IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHAPE, MOVE, RESIZE, PAN, PINCH, TEXT_DRAG,
-    RULER_MOVE, RULER_TRANSFORM,
+    RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE,
 }
 
 /** On-screen geometry of the live text editor field (viewport pixels). */
@@ -190,6 +190,7 @@ class InteractionController(
     private var rulerXformStartFingerAngle = 0.0
     private var rulerXformStartCenter = Pt.ZERO
     private var rulerXformStartRuler = 0.0
+    private var rulerRotateSign = 1.0                // +1 if dragging the +direction handle, −1 the other
     // SNAP (per-sample magnet, live for the current stroke only)
     private var snapEngaged = false
     private var snapTopSide = false                  // which long edge the ink is riding
@@ -372,6 +373,14 @@ class InteractionController(
         // magnet snaps the in-progress stroke to the edge. Its buttons toggle; its body moves it.
         if (ruler.visible) {
             val v = Pt(vx, vy)
+            val hi = ruler.hitHandle(v, rulerHandleDist(), (RULER_HANDLE_HIT * state.devicePxPerDp).coerceAtLeast(ruler.handleRadiusPx()))
+            if (hi != null && !ruler.lockAngle) {
+                rulerRotateSign = if (hi == 0) 1.0 else -1.0
+                mode = PointerMode.RULER_ROTATE
+                cancelLongPress()
+                requestRender()
+                return
+            }
             val btn = ruler.hitButton(v, (RULER_BTN_HIT * state.devicePxPerDp).coerceAtLeast(ruler.buttonRadiusPx()))
             if (btn != null) {
                 when (btn) {
@@ -382,7 +391,13 @@ class InteractionController(
                 requestRender()
                 return
             }
-            if (ruler.bodyContains(v)) {
+            // Move zone: the body, minus an inner margin (as wide as the magnet band) along each edge
+            // for the STYLUS — so a pen drawing right along the edge never accidentally grabs the ruler.
+            val band = RULER_SNAP_DP * state.devicePxPerDp
+            val moveHalf =
+                if (toolType == MotionEvent.TOOL_TYPE_STYLUS) (ruler.thicknessPx / 2.0 - band).coerceAtLeast(0.0)
+                else ruler.thicknessPx / 2.0
+            if (abs(ruler.signedAcross(v)) <= moveHalf) {
                 if (ruler.lockPosition) {
                     mode = PointerMode.IDLE // locked: swallow so it neither pans nor draws under the ruler
                 } else {
@@ -419,6 +434,7 @@ class InteractionController(
             beginRulerTransform(e)
             return
         }
+        if (mode == PointerMode.RULER_ROTATE) return // handle-drag rotation ignores extra fingers
         if (mode == PointerMode.DRAW && drawingIsStylus) return
         // A finger erase (finger-draw on) yields to a two-finger pinch: commit what was erased so
         // far as one undo step, then start the zoom. A stylus-eraser erase keeps ignoring incidental
@@ -442,6 +458,7 @@ class InteractionController(
             PointerMode.PINCH -> updatePinch(e)
             PointerMode.RULER_MOVE -> { ruler.center = Pt(vx, vy) + rulerGrabOffset; requestRender() }
             PointerMode.RULER_TRANSFORM -> updateRulerTransform(e)
+            PointerMode.RULER_ROTATE -> updateRulerRotate(e)
             PointerMode.ERASE -> eraseAt(vx, vy)
             PointerMode.BAND -> extendBand(content)
             PointerMode.LASSO_DRAW -> extendLasso(content)
@@ -501,6 +518,7 @@ class InteractionController(
             PointerMode.TEXT_DRAG -> endTextDrag(content)
             PointerMode.RULER_MOVE -> { mode = PointerMode.IDLE; requestRender() }
             PointerMode.RULER_TRANSFORM -> { mode = PointerMode.IDLE; requestRender() }
+            PointerMode.RULER_ROTATE -> { mode = PointerMode.IDLE; requestRender() }
             else -> Unit
         }
     }
@@ -1819,6 +1837,19 @@ class InteractionController(
         requestRender()
     }
 
+    /** How far the rotation handles sit from the ruler centre (kept on-screen). */
+    private fun rulerHandleDist(): Double = 0.30 * minOf(state.viewportW, state.viewportH).toDouble()
+
+    /** Drag a rotation handle: spin the ruler about its centre so the grabbed handle tracks the pointer. */
+    private fun updateRulerRotate(e: MotionEvent) {
+        if (ruler.lockAngle) return
+        val idx = e.findPointerIndex(drawingPointerId).coerceAtLeast(0)
+        val v = (Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble()) - ruler.center) * rulerRotateSign
+        if (v.length() < 1e-3) return
+        ruler.angleRad = atan2(v.y, v.x)
+        requestRender()
+    }
+
     /**
      * The ruler magnet for a viewport draw point. Engages when the pen enters the snap band beside a
      * long edge, then clamps the ink onto that edge — so a stroke can't pass through the body — and
@@ -1885,20 +1916,34 @@ class InteractionController(
 
         drawRulerTicks(r, density, pal, sMin, sMax)
         drawRulerButtons(r, pal)
+        drawRulerHandles(r, density, pal)
 
-        if (mode == PointerMode.RULER_TRANSFORM) {
-            val deg = ((Math.toDegrees(ruler.angleRad) % 360) + 360) % 360
-            val at = ruler.center + ruler.normal() * (ruler.thicknessPx / 2.0 + 18.0 * density)
-            drawReadout(r, "%.0f°".format(deg), at, density, pal)
-        }
         if (snapEngaged) {
             val a = snapRunStartEdge
             val b = snapCurrentEdge
             val pen = snapPenViewport
             if (a != null && b != null && pen != null) {
                 val cm = RulerMath.viewportLenToCm(a.distanceTo(b), state.zoom, document.dpi)
-                drawReadout(r, "%.1f cm".format(cm), pen + Pt(18.0, -18.0) * density, density, pal)
+                drawReadout(r, "%.1f cm".format(cm), pen + Pt(30.0, -30.0) * density, density, pal)
             }
+        }
+    }
+
+    /** The two rotation handles with permanent angle readouts: counter-clockwise from −x on the +x
+     *  side, clockwise from +x on the other. Dragging a handle spins the ruler about its centre. */
+    private fun drawRulerHandles(r: Renderer, density: Double, pal: Palette) {
+        val dist = rulerHandleDist()
+        val radius = ruler.handleRadiusPx()
+        val dir = ruler.direction()
+        val cwDeg = ((Math.toDegrees(atan2(dir.y, dir.x)) % 180) + 180) % 180
+        for (h in ruler.handleCenters(dist)) {
+            r.fillCircle(h, radius, pal.menuBg.scaleAlpha(0.95))
+            r.strokeEllipse(h, radius, radius, Pen(pal.text, 1.4, cosmetic = true))
+            r.strokePolyline(arcPolyline(h, radius * 0.5, 25.0, 155.0, 10), Pen(pal.textDim, 1.3, cosmetic = true))
+            r.strokePolyline(arcPolyline(h, radius * 0.5, 205.0, 335.0, 10), Pen(pal.textDim, 1.3, cosmetic = true))
+            val deg = if (h.x >= ruler.center.x) 180.0 - cwDeg else cwDeg
+            val outward = (h - ruler.center).normalized()
+            drawReadout(r, "%.0f°".format(deg), h + outward * (radius + 28.0 * density), density, pal)
         }
     }
 
@@ -1991,8 +2036,8 @@ class InteractionController(
         val textH = font.pointSize * 2.1
         val w = textW + padX * 2
         val h = textH + padY * 2
-        val left = at.x.coerceIn(2.0, (state.viewportW - w - 2.0).coerceAtLeast(2.0))
-        val top = at.y.coerceIn(2.0, (state.viewportH - h - 2.0).coerceAtLeast(2.0))
+        val left = (at.x - w / 2.0).coerceIn(2.0, (state.viewportW - w - 2.0).coerceAtLeast(2.0))
+        val top = (at.y - h / 2.0).coerceIn(2.0, (state.viewportH - h - 2.0).coerceAtLeast(2.0))
         r.fillRect(Rect(left, top, w, h), pal.menuBg.scaleAlpha(0.92))
         r.strokeRect(Rect(left, top, w, h), Pen(pal.textDim, 1.2, cosmetic = true))
         r.drawText(text, Rect(left + padX, top + padY, textW + 2.0, textH), font, pal.text)
@@ -2007,6 +2052,9 @@ class InteractionController(
 
         /** Ruler: finger hit radius (dp) for the on-ruler control buttons. */
         const val RULER_BTN_HIT = 22.0
+
+        /** Ruler: finger hit radius (dp) for the rotation handles. */
+        const val RULER_HANDLE_HIT = 24.0
 
         /** Max finger drift (viewport px) from touch-down still counted as a tap (e.g. tap-to-dismiss). */
         const val TAP_SLOP = 12.0

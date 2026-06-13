@@ -79,6 +79,22 @@ class Ruler {
     fun hitButton(v: Pt, tolerancePx: Double): RulerButton? =
         buttonCenters().firstOrNull { it.second.distanceTo(v) <= tolerancePx }?.first
 
+    /** Visual radius of a rotation handle. */
+    fun handleRadiusPx(): Double = thicknessPx * 0.20
+
+    /** The two rotation handles, [distPx] along the band each side of [center] (+direction first). */
+    fun handleCenters(distPx: Double): List<Pt> {
+        val d = direction() * distPx
+        return listOf(center + d, center - d)
+    }
+
+    /** Index (0 = +direction, 1 = −direction) of the handle within [tolerancePx] of [v], or null. */
+    fun hitHandle(v: Pt, distPx: Double, tolerancePx: Double): Int? {
+        val hs = handleCenters(distPx)
+        for (i in hs.indices) if (hs[i].distanceTo(v) <= tolerancePx) return i
+        return null
+    }
+
     /** Place a sensible default ruler the first time it is shown. */
     fun placeDefault(viewportW: Double, viewportH: Double, density: Double) {
         center = Pt(viewportW / 2.0, viewportH * 0.45)
