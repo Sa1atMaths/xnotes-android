@@ -34,6 +34,7 @@ import com.xnotes.core.model.TextHandle
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.model.TextStyle
 import com.xnotes.core.pal.FontFace
+import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.pal.TextMeasurer
@@ -47,11 +48,18 @@ import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConfig
 import com.xnotes.core.tools.ToolDefaults
+import com.xnotes.ui.theme.Palette
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.sin
 
 /** The pointer state machine modes (spec 06 §1). */
-enum class PointerMode { IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHAPE, MOVE, RESIZE, PAN, PINCH, TEXT_DRAG }
+enum class PointerMode {
+    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHAPE, MOVE, RESIZE, PAN, PINCH, TEXT_DRAG,
+    RULER_MOVE, RULER_TRANSFORM,
+}
 
 /** On-screen geometry of the live text editor field (viewport pixels). */
 data class EditingField(
@@ -175,6 +183,20 @@ class InteractionController(
     private var pinchInitZoom = 1.0
     private var pinchAnchorContent = Pt.ZERO
 
+    // RULER (transient screen-space straightedge; no model/undo state)
+    val ruler = Ruler()
+    private var rulerGrabOffset = Pt.ZERO            // ruler.center − grab point, for 1-finger move
+    private var rulerXformStartCentroid = Pt.ZERO    // two-finger transform anchors
+    private var rulerXformStartFingerAngle = 0.0
+    private var rulerXformStartCenter = Pt.ZERO
+    private var rulerXformStartRuler = 0.0
+    // SNAP (per-sample magnet, live for the current stroke only)
+    private var snapEngaged = false
+    private var snapTopSide = false                  // which long edge the ink is riding
+    private var snapRunStartEdge: Pt? = null         // start of the current engaged run, on the edge (viewport)
+    private var snapCurrentEdge: Pt? = null          // current point on the edge (viewport)
+    private var snapPenViewport: Pt? = null          // actual (unprojected) pen, for readout placement
+
     // SELECTION
     private val selection = mutableListOf<Selected>()
     private var lassoPolygon: List<Pt>? = null
@@ -268,6 +290,17 @@ class InteractionController(
         requestRender()
     }
 
+    fun rulerVisible(): Boolean = ruler.visible
+
+    /** Toggle the on-screen ruler; on first show it places itself in the current viewport. */
+    fun toggleRuler() {
+        ruler.visible = !ruler.visible
+        if (ruler.visible && !ruler.initialized) {
+            ruler.placeDefault(state.viewportW.toDouble(), state.viewportH.toDouble(), state.devicePxPerDp)
+        }
+        requestRender()
+    }
+
     // --- touch entry point ---
 
     fun onTouch(e: MotionEvent): Boolean {
@@ -334,6 +367,33 @@ class InteractionController(
             }
         }
 
+        // Touching the ruler grabs it before the normal tool dispatch — for the stylus too, so a
+        // pen-down ON the body moves it. A pen-down OFF the body falls through to drawing, where the
+        // magnet snaps the in-progress stroke to the edge. Its buttons toggle; its body moves it.
+        if (ruler.visible) {
+            val v = Pt(vx, vy)
+            val btn = ruler.hitButton(v, (RULER_BTN_HIT * state.devicePxPerDp).coerceAtLeast(ruler.buttonRadiusPx()))
+            if (btn != null) {
+                when (btn) {
+                    RulerButton.LOCK_POS -> ruler.lockPosition = !ruler.lockPosition
+                    RulerButton.LOCK_ANGLE -> ruler.lockAngle = !ruler.lockAngle
+                }
+                mode = PointerMode.IDLE
+                requestRender()
+                return
+            }
+            if (ruler.bodyContains(v)) {
+                if (ruler.lockPosition) {
+                    mode = PointerMode.IDLE // locked: swallow so it neither pans nor draws under the ruler
+                } else {
+                    mode = PointerMode.RULER_MOVE
+                    rulerGrabOffset = ruler.center - v
+                }
+                requestRender()
+                return
+            }
+        }
+
         when {
             effectiveTool == Tool.PAN -> beginPan(vx, vy)
             effectiveTool.isStroke -> beginDraw(content, resolvePressure(e, 0, toolType), effectiveTool, e.eventTime, Pt(vx, vy))
@@ -354,6 +414,11 @@ class InteractionController(
 
     private fun handlePointerDown(e: MotionEvent) {
         cancelLongPress()
+        // A second finger on a ruler being moved twists/translates it instead of pinch-zooming.
+        if (mode == PointerMode.RULER_MOVE && e.pointerCount >= 2) {
+            beginRulerTransform(e)
+            return
+        }
         if (mode == PointerMode.DRAW && drawingIsStylus) return
         // A finger erase (finger-draw on) yields to a two-finger pinch: commit what was erased so
         // far as one undo step, then start the zoom. A stylus-eraser erase keeps ignoring incidental
@@ -375,6 +440,8 @@ class InteractionController(
             PointerMode.DRAW -> extendDraw(e)
             PointerMode.PAN -> extendPan(vx, vy)
             PointerMode.PINCH -> updatePinch(e)
+            PointerMode.RULER_MOVE -> { ruler.center = Pt(vx, vy) + rulerGrabOffset; requestRender() }
+            PointerMode.RULER_TRANSFORM -> updateRulerTransform(e)
             PointerMode.ERASE -> eraseAt(vx, vy)
             PointerMode.BAND -> extendBand(content)
             PointerMode.LASSO_DRAW -> extendLasso(content)
@@ -387,6 +454,20 @@ class InteractionController(
     }
 
     private fun handlePointerUp(e: MotionEvent) {
+        if (mode == PointerMode.RULER_TRANSFORM) {
+            // One finger lifted: fall back to a single-finger move with whichever finger remains.
+            val up = e.actionIndex
+            val remaining = (0 until e.pointerCount).firstOrNull { it != up }
+            if (remaining != null) {
+                drawingPointerId = e.getPointerId(remaining)
+                rulerGrabOffset = ruler.center - Pt(e.getX(remaining).toDouble(), e.getY(remaining).toDouble())
+                mode = PointerMode.RULER_MOVE
+            } else {
+                mode = PointerMode.IDLE
+            }
+            requestRender()
+            return
+        }
         if (mode == PointerMode.PINCH && e.pointerCount <= 2) endPinch()
     }
 
@@ -418,6 +499,8 @@ class InteractionController(
             PointerMode.RESIZE -> endResize()
             PointerMode.SHAPE -> endShape()
             PointerMode.TEXT_DRAG -> endTextDrag(content)
+            PointerMode.RULER_MOVE -> { mode = PointerMode.IDLE; requestRender() }
+            PointerMode.RULER_TRANSFORM -> { mode = PointerMode.IDLE; requestRender() }
             else -> Unit
         }
     }
@@ -458,13 +541,19 @@ class InteractionController(
         val straight = drawTool == Tool.HIGHLIGHTER && cfg.straightLine
         val stroke = Stroke(drawTool, cfg, speedScale = speedScale, straight = straight)
         strokeStartTimeMs = timeMs
-        stroke.addSample(Sample(content.x - pr.left, content.y - pr.top, pressure)) // first sample: t = 0
+        // Ruler magnet: reset per-stroke engagement, then snap the first sample if it lands in the zone.
+        snapEngaged = false
+        snapRunStartEdge = null
+        snapCurrentEdge = null
+        snapPenViewport = null
+        val firstContent = state.viewportToContent(magnetize(downViewport))
+        stroke.addSample(Sample(firstContent.x - pr.left, firstContent.y - pr.top, pressure)) // first sample: t = 0
         liveStroke = stroke
         strokePageIndex = pageIndex
         mode = PointerMode.DRAW
-        // Shape snap: only solid ink pens (not the translucent highlighter or its straight-line
-        // mode) arm the "hold still → shape" timer, and only when the preference is on.
-        dwellEligible = detectShapes && drawTool.isStroke && drawTool != Tool.HIGHLIGHTER && !straight
+        // Shape snap: only solid ink pens (not the highlighter or its straight-line mode) arm the
+        // "hold still → shape" timer — and never while the ruler is up (you're drawing straight lines).
+        dwellEligible = detectShapes && drawTool.isStroke && drawTool != Tool.HIGHLIGHTER && !straight && !ruler.visible
         if (dwellEligible) {
             dwellAnchor = downViewport
             armDwell()
@@ -495,7 +584,8 @@ class InteractionController(
         val stroke = liveStroke ?: return
         val pi = strokePageIndex ?: return
         val pr = state.pageRects.getOrNull(pi) ?: return
-        val content = state.viewportToContent(Pt(vx, vy))
+        val vp = magnetize(Pt(vx, vy))
+        val content = state.viewportToContent(vp)
         val local = Pt(content.x - pr.left, content.y - pr.top)
         if (stroke.straight) {
             // Straight-line mode: the stroke is always pen-down → current point, so the moving
@@ -544,6 +634,10 @@ class InteractionController(
         }
         liveStroke = null
         strokePageIndex = null
+        snapEngaged = false
+        snapRunStartEdge = null
+        snapCurrentEdge = null
+        snapPenViewport = null
         mode = PointerMode.IDLE
         requestRender()
     }
@@ -1610,6 +1704,10 @@ class InteractionController(
         clearOverscroll()
         liveStroke = null
         strokePageIndex = null
+        snapEngaged = false
+        snapRunStartEdge = null
+        snapCurrentEdge = null
+        snapPenViewport = null
         pendingShape = null
         shapePageIndex = null
         bandRect = null
@@ -1680,6 +1778,9 @@ class InteractionController(
             val radius = eraserRadius() * state.zoom
             r.strokeEllipse(it, radius, radius, Pen(state.palette.textDim, 1.3, cosmetic = true))
         }
+
+        // Ruler (viewport space; floats above all content and the live stroke).
+        if (ruler.visible) drawRuler(r)
     }
 
     private inline fun paintClippedToPage(r: Renderer, pageIndex: Int?, crossinline paint: () -> Unit) {
@@ -1691,9 +1792,221 @@ class InteractionController(
         }
     }
 
+    // --- ruler ---
+
+    private fun beginRulerTransform(e: MotionEvent) {
+        cancelLongPress()
+        val a = Pt(e.getX(0).toDouble(), e.getY(0).toDouble())
+        val b = Pt(e.getX(1).toDouble(), e.getY(1).toDouble())
+        rulerXformStartCentroid = (a + b) * 0.5
+        rulerXformStartFingerAngle = atan2(b.y - a.y, b.x - a.x)
+        rulerXformStartCenter = ruler.center
+        rulerXformStartRuler = ruler.angleRad
+        mode = PointerMode.RULER_TRANSFORM
+        requestRender()
+    }
+
+    private fun updateRulerTransform(e: MotionEvent) {
+        if (e.pointerCount < 2) return
+        val a = Pt(e.getX(0).toDouble(), e.getY(0).toDouble())
+        val b = Pt(e.getX(1).toDouble(), e.getY(1).toDouble())
+        if (!ruler.lockPosition) {
+            ruler.center = rulerXformStartCenter + ((a + b) * 0.5 - rulerXformStartCentroid)
+        }
+        if (!ruler.lockAngle) {
+            ruler.angleRad = rulerXformStartRuler + (atan2(b.y - a.y, b.x - a.x) - rulerXformStartFingerAngle)
+        }
+        requestRender()
+    }
+
+    /**
+     * The ruler magnet for a viewport draw point. Engages when the pen enters the snap band beside a
+     * long edge, then clamps the ink onto that edge — so a stroke can't pass through the body — and
+     * releases only when the pen retreats back out past the band on the engaged side. Updates the
+     * engagement state and returns the point to actually draw.
+     */
+    private fun magnetize(vp: Pt): Pt {
+        if (!ruler.visible) return vp
+        val ht = ruler.thicknessPx / 2.0
+        val band = RULER_SNAP_DP * state.devicePxPerDp
+        val across = ruler.signedAcross(vp)
+        val active = when {
+            snapEngaged -> {
+                // Release only on an outward retreat past the band on the engaged side; pushing inward
+                // (toward/through the body) stays clamped to the edge, so ink can't cross the ruler.
+                val retreated = if (snapTopSide) across > ht + band else across < -(ht + band)
+                if (retreated) {
+                    snapEngaged = false
+                    snapRunStartEdge = null
+                    snapCurrentEdge = null
+                }
+                snapEngaged
+            }
+            abs(across) <= ht + band -> {
+                snapTopSide = across >= 0.0
+                snapEngaged = true
+                true
+            }
+            else -> false
+        }
+        if (!active) return vp
+        snapPenViewport = vp
+        val edge = ruler.projectToEdge(vp, snapTopSide)
+        if (snapRunStartEdge == null) snapRunStartEdge = edge
+        snapCurrentEdge = edge
+        return edge
+    }
+
+    /** Paint the ruler in viewport space: an infinite frosted band, dual-edge graduations and readouts. */
+    private fun drawRuler(r: Renderer) {
+        val pal = state.palette
+        val density = state.devicePxPerDp
+        // Visible along-range: project the four viewport corners onto the band's length axis.
+        val d = ruler.direction()
+        val vw = state.viewportW.toDouble()
+        val vh = state.viewportH.toDouble()
+        var sMin = Double.MAX_VALUE
+        var sMax = -Double.MAX_VALUE
+        for (c in listOf(Pt(0.0, 0.0), Pt(vw, 0.0), Pt(0.0, vh), Pt(vw, vh))) {
+            val s = Geometry.dot(c - ruler.center, d)
+            if (s < sMin) sMin = s
+            if (s > sMax) sMax = s
+        }
+        val pad = 4.0 * density
+        sMin -= pad
+        sMax += pad
+
+        // Body: a neutral frosted strip with thin neutral edges (no accent).
+        val quad = ruler.bodyQuad(sMin, sMax)
+        r.fillPolygon(quad, pal.panel.scaleAlpha(if (pal.isDark) 0.6 else 0.5))
+        val edgePen = Pen(pal.textDim, 1.2, cosmetic = true)
+        r.strokePolyline(listOf(quad[0], quad[1]), edgePen)
+        r.strokePolyline(listOf(quad[3], quad[2]), edgePen)
+
+        drawRulerTicks(r, density, pal, sMin, sMax)
+        drawRulerButtons(r, pal)
+
+        if (mode == PointerMode.RULER_TRANSFORM) {
+            val deg = ((Math.toDegrees(ruler.angleRad) % 360) + 360) % 360
+            val at = ruler.center + ruler.normal() * (ruler.thicknessPx / 2.0 + 18.0 * density)
+            drawReadout(r, "%.0f°".format(deg), at, density, pal)
+        }
+        if (snapEngaged) {
+            val a = snapRunStartEdge
+            val b = snapCurrentEdge
+            val pen = snapPenViewport
+            if (a != null && b != null && pen != null) {
+                val cm = RulerMath.viewportLenToCm(a.distanceTo(b), state.zoom, document.dpi)
+                drawReadout(r, "%.1f cm".format(cm), pen + Pt(18.0, -18.0) * density, density, pal)
+            }
+        }
+    }
+
+    /** cm/mm graduations on BOTH long edges; spacing scales with zoom; origin (0) at the ruler centre. */
+    private fun drawRulerTicks(r: Renderer, density: Double, pal: Palette, sMin: Double, sMax: Double) {
+        val cmPx = RulerMath.contentPxPerCm(document.dpi) * state.zoom
+        if (cmPx <= 0.0) return
+        val d = ruler.direction()
+        val n = ruler.normal()
+        val ht = ruler.thicknessPx / 2.0
+        val tickPen = Pen(pal.text, 1.0, cosmetic = true)
+        val labelFont = FontSpec(5.0 * density)
+        val showMinor = cmPx >= 46.0
+        val showLabels = cmPx >= 26.0
+        val unitPx = if (showMinor) cmPx / 10.0 else cmPx
+        val unitsPerLabel = if (showMinor) 10 else 1
+        val step = if (showMinor || cmPx >= 12.0) 1 else 5 // crowd guard when zoomed far out
+        var j = Math.ceil(sMin / unitPx).toInt()
+        val jMax = Math.floor(sMax / unitPx).toInt()
+        while (j <= jMax) {
+            if (step == 1 || j % step == 0) {
+                val mid = ruler.center + d * (j * unitPx)
+                val top = mid + n * ht
+                val bot = mid - n * ht
+                val len = when {
+                    !showMinor || j % 10 == 0 -> ht * 0.46
+                    j % 5 == 0 -> ht * 0.30
+                    else -> ht * 0.18
+                }
+                r.strokePolyline(listOf(top, top - n * len), tickPen)
+                r.strokePolyline(listOf(bot, bot + n * len), tickPen)
+                if (showLabels && j % unitsPerLabel == 0) drawTickLabel(r, abs(j / unitsPerLabel), mid, labelFont, pal.textDim)
+            }
+            j++
+        }
+    }
+
+    private fun drawTickLabel(r: Renderer, cm: Int, center: Pt, font: FontSpec, color: Rgba) {
+        val s = cm.toString()
+        val w = s.length * font.pointSize * 1.25 + 2.0
+        val h = font.pointSize * 2.1
+        r.drawText(s, Rect(center.x - w / 2.0, center.y - h / 2.0, w, h), font, color)
+    }
+
+    private fun drawRulerButtons(r: Renderer, pal: Palette) {
+        val radius = ruler.buttonRadiusPx()
+        for ((btn, c) in ruler.buttonCenters()) {
+            val active = when (btn) {
+                RulerButton.LOCK_POS -> ruler.lockPosition
+                RulerButton.LOCK_ANGLE -> ruler.lockAngle
+            }
+            r.fillCircle(c, radius, pal.menuBg.scaleAlpha(0.95))
+            r.strokeEllipse(c, radius, radius, Pen(if (active) pal.text else pal.border, 1.3, cosmetic = true))
+            val pen = Pen(if (active) pal.text else pal.textDim, 1.4, cosmetic = true)
+            when (btn) {
+                RulerButton.LOCK_POS -> {
+                    val rr = radius * 0.5
+                    r.strokeEllipse(c, rr * 0.5, rr * 0.5, pen)
+                    r.strokePolyline(listOf(Pt(c.x, c.y - rr), Pt(c.x, c.y - rr * 0.5)), pen)
+                    r.strokePolyline(listOf(Pt(c.x, c.y + rr * 0.5), Pt(c.x, c.y + rr)), pen)
+                    r.strokePolyline(listOf(Pt(c.x - rr, c.y), Pt(c.x - rr * 0.5, c.y)), pen)
+                    r.strokePolyline(listOf(Pt(c.x + rr * 0.5, c.y), Pt(c.x + rr, c.y)), pen)
+                }
+                RulerButton.LOCK_ANGLE -> {
+                    val s = radius * 0.5
+                    val v = Pt(c.x - s, c.y + s)
+                    r.strokePolyline(listOf(v, Pt(c.x + s, c.y + s)), pen)
+                    r.strokePolyline(listOf(v, Pt(c.x + s, c.y - s)), pen)
+                    r.strokePolyline(arcPolyline(v, s * 0.95, 0.0, -45.0, 6), pen)
+                }
+            }
+        }
+    }
+
+    private fun arcPolyline(center: Pt, radius: Double, startDeg: Double, endDeg: Double, segments: Int): List<Pt> {
+        val pts = ArrayList<Pt>(segments + 1)
+        for (i in 0..segments) {
+            val t = Math.toRadians(startDeg + (endDeg - startDeg) * i / segments)
+            pts.add(Pt(center.x + radius * cos(t), center.y + radius * sin(t)))
+        }
+        return pts
+    }
+
+    /** A small pill + text readout in viewport space, kept on-screen. */
+    private fun drawReadout(r: Renderer, text: String, at: Pt, density: Double, pal: Palette) {
+        val font = FontSpec(7.0 * density, bold = true)
+        val padX = 7.0 * density
+        val padY = 4.0 * density
+        val textW = text.length * font.pointSize * 1.25
+        val textH = font.pointSize * 2.1
+        val w = textW + padX * 2
+        val h = textH + padY * 2
+        val left = at.x.coerceIn(2.0, (state.viewportW - w - 2.0).coerceAtLeast(2.0))
+        val top = at.y.coerceIn(2.0, (state.viewportH - h - 2.0).coerceAtLeast(2.0))
+        r.fillRect(Rect(left, top, w, h), pal.menuBg.scaleAlpha(0.92))
+        r.strokeRect(Rect(left, top, w, h), Pen(pal.textDim, 1.2, cosmetic = true))
+        r.drawText(text, Rect(left + padX, top + padY, textW + 2.0, textH), font, pal.text)
+    }
+
     companion object {
         const val MIN_SAMPLE_DIST = 1.0
         const val MOVE_EPS = 0.01
+
+        /** Ruler: a stylus-down within this (dp) of a long edge snaps the stroke to that edge. */
+        const val RULER_SNAP_DP = 12.0
+
+        /** Ruler: finger hit radius (dp) for the on-ruler control buttons. */
+        const val RULER_BTN_HIT = 22.0
 
         /** Max finger drift (viewport px) from touch-down still counted as a tap (e.g. tap-to-dismiss). */
         const val TAP_SLOP = 12.0

@@ -35,4 +35,19 @@ object Geometry {
         t = t.coerceIn(0.0, 1.0)
         return hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby))
     }
+
+    /** Dot product of two vectors. */
+    fun dot(a: Pt, b: Pt): Double = a.x * b.x + a.y * b.y
+
+    /**
+     * Foot of the perpendicular from [p] onto the **infinite** line through [a]–[b]
+     * (the parameter is not clamped, so the result can fall past either endpoint).
+     * A degenerate `a == b` returns [a]. Used to ride a stroke along the ruler edge.
+     */
+    fun projectPointOntoLine(p: Pt, a: Pt, b: Pt): Pt {
+        val ab = b - a
+        val lenSq = dot(ab, ab)
+        if (lenSq < 1e-12) return a
+        return a + ab * (dot(p - a, ab) / lenSq)
+    }
 }

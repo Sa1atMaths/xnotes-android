@@ -38,6 +38,30 @@ class GeometryTest {
         assertEquals(5.0, Geometry.distancePointToSegment(Pt(-5.0, 0.0), Pt(0.0, 0.0), Pt(10.0, 0.0)), 1e-9)
     }
 
+    @Test fun dotProduct() {
+        assertEquals(11.0, Geometry.dot(Pt(1.0, 2.0), Pt(3.0, 4.0)), 1e-9)
+        assertEquals(0.0, Geometry.dot(Pt(1.0, 0.0), Pt(0.0, 1.0)), 1e-9)
+    }
+
+    @Test fun projectPointOntoLine() {
+        val a = Pt(0.0, 0.0)
+        val b = Pt(10.0, 0.0)
+        // Drops to the foot on the horizontal line.
+        val foot = Geometry.projectPointOntoLine(Pt(5.0, 7.0), a, b)
+        assertEquals(5.0, foot.x, 1e-9)
+        assertEquals(0.0, foot.y, 1e-9)
+        // Unclamped: a point beyond b projects past b (segment-clamp would stop at b).
+        val far = Geometry.projectPointOntoLine(Pt(20.0, 3.0), a, b)
+        assertEquals(20.0, far.x, 1e-9)
+        assertEquals(0.0, far.y, 1e-9)
+        // Works on a diagonal line through the origin.
+        val diag = Geometry.projectPointOntoLine(Pt(0.0, 2.0), Pt(0.0, 0.0), Pt(2.0, 2.0))
+        assertEquals(1.0, diag.x, 1e-9)
+        assertEquals(1.0, diag.y, 1e-9)
+        // Degenerate a == b returns a.
+        assertEquals(a, Geometry.projectPointOntoLine(Pt(4.0, 4.0), a, a))
+    }
+
     @Test fun rectIntersection() {
         val a = Rect(0.0, 0.0, 10.0, 10.0)
         assertTrue(a.intersects(Rect(5.0, 5.0, 10.0, 10.0)))

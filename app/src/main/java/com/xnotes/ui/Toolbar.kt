@@ -121,6 +121,9 @@ fun Toolbar(
                 }
             }
             if (i == 6 || i == 9) Separator()
+            if (tool == Tool.SHAPE) {
+                ToolbarIcon(XnotesIcons.ruler, "Ruler", active = editor.rulerVisible) { editor.toggleRuler() }
+            }
         }
         Separator()
 
