@@ -1934,14 +1934,19 @@ class InteractionController(
     private fun drawRulerHandles(r: Renderer, density: Double, pal: Palette) {
         val dist = rulerHandleDist()
         val radius = ruler.handleRadiusPx()
-        val dir = ruler.direction()
-        val cwDeg = ((Math.toDegrees(atan2(dir.y, dir.x)) % 180) + 180) % 180
-        for (h in ruler.handleCenters(dist)) {
+        // Readings are tied to the handle (not the screen side) so they never swap as the ruler turns:
+        // the +direction handle reads counter-clockwise from +x, the −direction handle clockwise from −x.
+        val phi = Math.toDegrees(atan2(ruler.direction().y, ruler.direction().x))
+        val ccwFromPlusX = ((-phi) % 360 + 360) % 360
+        val cwFromMinusX = (phi % 360 + 360) % 360
+        val handles = ruler.handleCenters(dist)
+        for (i in handles.indices) {
+            val h = handles[i]
             r.fillCircle(h, radius, pal.menuBg.scaleAlpha(0.95))
             r.strokeEllipse(h, radius, radius, Pen(pal.text, 1.4, cosmetic = true))
             r.strokePolyline(arcPolyline(h, radius * 0.5, 25.0, 155.0, 10), Pen(pal.textDim, 1.3, cosmetic = true))
             r.strokePolyline(arcPolyline(h, radius * 0.5, 205.0, 335.0, 10), Pen(pal.textDim, 1.3, cosmetic = true))
-            val deg = if (h.x >= ruler.center.x) 180.0 - cwDeg else cwDeg
+            val deg = if (i == 0) ccwFromPlusX else cwFromMinusX
             val outward = (h - ruler.center).normalized()
             drawReadout(r, "%.0f°".format(deg), h + outward * (radius + 28.0 * density), density, pal)
         }
