@@ -21,11 +21,32 @@ import java.security.MessageDigest
  */
 class NoteThumbnailCache(private val dir: File, private val maxFiles: Int = 256) {
 
-    /** The cached thumbnail, or null when not cached. */
+    /**
+     * The cached thumbnail, decoded small and 16-bit for the grid, or null when not cached.
+     * Tiles are opaque (filled with the paper colour), so RGB_565 halves the bytes of ARGB with
+     * no visible loss, and downsampling to ~[DECODE_PX] cuts both the allocation and the GPU
+     * texture upload — the two things that drop frames while the grid scrolls.
+     */
     fun load(uri: String): Bitmap? {
         val png = File(dir, "${key(uri)}.png")
         if (!png.exists()) return null
-        return runCatching { BitmapFactory.decodeFile(png.path) }.getOrNull()
+        return runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(png.path, bounds)
+            val opts = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inSampleSize = sampleSize(bounds.outWidth, DECODE_PX)
+            }
+            BitmapFactory.decodeFile(png.path, opts)
+        }.getOrNull()
+    }
+
+    /** Largest power-of-two subsample that keeps the decoded width at or above [reqPx]. */
+    private fun sampleSize(srcPx: Int, reqPx: Int): Int {
+        if (srcPx <= 0 || reqPx <= 0) return 1
+        var s = 1
+        while (srcPx / (s * 2) >= reqPx) s *= 2
+        return s
     }
 
     /** Cache [bitmap] for [uri]. */
@@ -67,4 +88,9 @@ class NoteThumbnailCache(private val dir: File, private val maxFiles: Int = 256)
 
     private fun key(uri: String): String =
         MessageDigest.getInstance("SHA-256").digest(uri.toByteArray()).joinToString("") { "%02x".format(it) }.take(32)
+
+    private companion object {
+        /** Target decode width for grid tiles; well above the on-screen tile size on a tablet. */
+        const val DECODE_PX = 300
+    }
 }
