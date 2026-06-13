@@ -601,6 +601,7 @@ class Editor(context: Context) {
         state.palette = palette
         state.pageColorOverride = if (p.defaultTemplate == "color") p.pageColor else null
         controller.fingerDraws = p.fingerDraws
+        controller.detectShapes = p.detectShapes
         controller.penButtonTool = if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER)
         state.sideMargin = p.sideMargin
         state.relayout()

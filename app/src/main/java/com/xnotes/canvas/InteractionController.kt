@@ -37,7 +37,9 @@ import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.pal.TextMeasurer
+import com.xnotes.core.stroke.RecognizedShape
 import com.xnotes.core.stroke.Sample
+import com.xnotes.core.stroke.ShapeRecognizer
 import com.xnotes.core.tools.EraseMode
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
@@ -119,6 +121,9 @@ class InteractionController(
     /** Whether a finger draws (true) or pans (false). The stylus always uses the armed tool. */
     var fingerDraws: Boolean = false
 
+    /** Whether holding a freehand ink stroke still snaps it to a recognized shape (spec: "hold to snap"). */
+    var detectShapes: Boolean = false
+
     /** Tool the stylus side button activates while held, or null to ignore the button. */
     var penButtonTool: Tool? = Tool.ERASER
 
@@ -135,6 +140,14 @@ class InteractionController(
     private var strokeStartTimeMs = 0L
     private var drawingPointerId = -1
     private var drawingIsStylus = false
+
+    // SHAPE SNAP (hold a freehand stroke still → it becomes a real shape)
+    /** Pending "pen held still" timer; non-null only while a stroke is eligible and armed. */
+    private var dwellRunnable: Runnable? = null
+    /** Viewport px of the last point that re-armed the dwell timer (sub-slop jitter doesn't reset it). */
+    private var dwellAnchor = Pt.ZERO
+    /** True for the current stroke when snapping is allowed (pref on, an ink pen, not a straight line). */
+    private var dwellEligible = false
 
     // PAN + inertial fling
     private var lastPan = Pt.ZERO
@@ -323,7 +336,7 @@ class InteractionController(
 
         when {
             effectiveTool == Tool.PAN -> beginPan(vx, vy)
-            effectiveTool.isStroke -> beginDraw(content, resolvePressure(e, 0, toolType), effectiveTool, e.eventTime)
+            effectiveTool.isStroke -> beginDraw(content, resolvePressure(e, 0, toolType), effectiveTool, e.eventTime, Pt(vx, vy))
             effectiveTool == Tool.ERASER -> {
                 clearSelection()
                 erasingWithFinger = toolType == MotionEvent.TOOL_TYPE_FINGER
@@ -419,7 +432,7 @@ class InteractionController(
 
     // --- DRAW ---
 
-    private fun beginDraw(content: Pt, pressure: Double, drawTool: Tool, timeMs: Long) {
+    private fun beginDraw(content: Pt, pressure: Double, drawTool: Tool, timeMs: Long, downViewport: Pt) {
         val pageIndex = state.pageIndexAtContent(content) ?: return
         val pr = state.pageRects[pageIndex]
         // Capture content-px → dp scale now, so the speed pen judges gesture speed in
@@ -433,6 +446,13 @@ class InteractionController(
         liveStroke = stroke
         strokePageIndex = pageIndex
         mode = PointerMode.DRAW
+        // Shape snap: only solid ink pens (not the translucent highlighter or its straight-line
+        // mode) arm the "hold still → shape" timer, and only when the preference is on.
+        dwellEligible = detectShapes && drawTool.isStroke && drawTool != Tool.HIGHLIGHTER && !straight
+        if (dwellEligible) {
+            dwellAnchor = downViewport
+            armDwell()
+        }
         requestRender()
     }
 
@@ -476,14 +496,26 @@ class InteractionController(
         if (force || last == null || Pt(last.x, last.y).manhattanTo(local) >= gate) {
             stroke.addSample(Sample(local.x, local.y, pressure.coerceIn(0.0, 1.0), (timeMs - strokeStartTimeMs).toDouble()))
         }
+        // Real movement restarts the hold-to-snap clock; staying within the slop lets it mature,
+        // so the snap fires only once the pen has actually come to rest. (Sub-slop jitter is ignored
+        // even when a sample is decimated out above, so a trembling-but-still pen still triggers.)
+        if (dwellEligible && Pt(vx, vy).distanceTo(dwellAnchor) > SHAPE_DWELL_SLOP) {
+            dwellAnchor = Pt(vx, vy)
+            armDwell()
+        }
     }
 
     private fun endDraw(e: MotionEvent) {
+        // Drop the dwell timer before the final sample so the lift can't re-arm or fire a snap.
+        cancelDwell()
+        dwellEligible = false
         val idx = e.findPointerIndex(drawingPointerId).coerceAtLeast(0)
         addStrokePoint(
             e.getX(idx).toDouble(), e.getY(idx).toDouble(),
             if (drawingIsStylus) e.getPressure(idx).toDouble() else 1.0, e.eventTime, force = true,
         )
+        // A mid-stroke snap already committed a shape and cleared liveStroke, so this block is
+        // skipped and the freehand stroke is intentionally not also committed.
         val stroke = liveStroke
         val pi = strokePageIndex
         if (stroke != null && pi != null && !stroke.isEmpty) {
@@ -497,6 +529,54 @@ class InteractionController(
         liveStroke = null
         strokePageIndex = null
         mode = PointerMode.IDLE
+        requestRender()
+    }
+
+    private fun armDwell() {
+        cancelDwell()
+        val r = Runnable { onDwellElapsed() }
+        dwellRunnable = r
+        handler.postDelayed(r, SHAPE_DWELL_MS)
+    }
+
+    private fun cancelDwell() {
+        dwellRunnable?.let { handler.removeCallbacks(it) }
+        dwellRunnable = null
+    }
+
+    /** Fired when the pen has held still: snap the live stroke to a shape if it's a confident match. */
+    private fun onDwellElapsed() {
+        dwellRunnable = null
+        if (!dwellEligible) return
+        val stroke = liveStroke ?: return
+        val pi = strokePageIndex ?: return
+        if (stroke.samples.size < SHAPE_MIN_SAMPLES) return // not enough yet; the next move re-arms
+        val rec = ShapeRecognizer.recognize(stroke.samples) ?: return // not a shape; the next move re-arms
+        commitRecognizedShape(stroke, pi, rec)
+    }
+
+    /** Replace the (uncommitted) live stroke with a recognized [ShapeItem], as one undoable add. */
+    private fun commitRecognizedShape(stroke: Stroke, pageIndex: Int, rec: RecognizedShape) {
+        val page = state.document.pages.getOrNull(pageIndex) ?: return
+        val shape = ShapeItem(
+            shape = rec.kind,
+            start = rec.start,
+            end = rec.end,
+            strokeRgba = stroke.config.rgba, // the as-drawn ink colour (not renderColor's alpha-scaled one)
+            strokeWidth = stroke.config.baseWidth,
+            fillRgba = null,
+        )
+        page.items.add(shape)
+        state.appendToCache(page, shape)
+        history.push(AddItem(page, shape))
+        state.document.dirty = true
+        // The stroke was never added to the page, so clearing liveStroke makes the live ink preview
+        // vanish the instant it snaps; the eventual pen-up in endDraw then commits nothing.
+        liveStroke = null
+        dwellEligible = false
+        cancelDwell()
+        onContentChanged()
+        onHaptic()
         requestRender()
     }
 
@@ -1420,6 +1500,8 @@ class InteractionController(
     fun resetGestureState() {
         stopFling()
         clearOverscroll()
+        cancelDwell()
+        dwellEligible = false
         mode = PointerMode.IDLE
         lastPan = Pt.ZERO
         panVel = Pt.ZERO
@@ -1446,6 +1528,8 @@ class InteractionController(
     private fun beginPinch(e: MotionEvent) {
         liveStroke = null
         strokePageIndex = null
+        cancelDwell() // a second finger turns the gesture into a zoom; don't snap a shape mid-pinch
+        dwellEligible = false
         bandRect = null
         lassoPoints.clear()
         clearOverscroll() // a second finger ends any bottom-pull; the elastic snaps away
@@ -1499,6 +1583,8 @@ class InteractionController(
 
     private fun abortGesture() {
         cancelLongPress()
+        cancelDwell()
+        dwellEligible = false
         stopFling()
         clearOverscroll()
         liveStroke = null
@@ -1605,6 +1691,15 @@ class InteractionController(
         const val TEXT_MAX_PT = 96.0
         const val LONG_PRESS_MS = 450L
         const val LONG_PRESS_SLOP = 6.0
+
+        /** Hold-to-snap: how long the pen must rest (ms) before a freehand stroke snaps to a shape. */
+        const val SHAPE_DWELL_MS = 500L
+
+        /** Hold-to-snap: pen drift (viewport px) above which the dwell timer restarts rather than fires. */
+        const val SHAPE_DWELL_SLOP = 4.0
+
+        /** Hold-to-snap: minimum samples before recognition is even attempted (mirrors the recognizer). */
+        const val SHAPE_MIN_SAMPLES = 8
 
         // Inertial fling tuning (viewport px/s).
         const val VEL_SMOOTH = 0.4 // EMA weight on the previous velocity estimate

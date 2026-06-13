@@ -23,6 +23,8 @@ data class Preferences(
     val defaultPageOrientation: Orientation = Orientation.PORTRAIT,
     /** Whether a finger draws (true) or pans (false, default). The stylus always draws. */
     val fingerDraws: Boolean = false,
+    /** Whether holding a freehand ink stroke still snaps it to a recognized shape. */
+    val detectShapes: Boolean = false,
     /** Tool the stylus side button activates while held; "none" disables it. */
     val penButtonTool: String = "eraser",
     /** Horizontal margin (px) on each side of the page column; 0 ⇒ fit-width fills the screen. */
@@ -42,6 +44,7 @@ data class Preferences(
         .put("default_page_size", defaultPageSize.displayName)
         .put("default_page_orientation", defaultPageOrientation.toName())
         .put("finger_draws", fingerDraws)
+        .put("detect_shapes", detectShapes)
         .put("pen_button_tool", penButtonTool)
         .put("side_margin", sideMargin)
 
@@ -64,6 +67,7 @@ data class Preferences(
                 defaultPageSize = PageSize.fromName(o.optString("default_page_size", "A4")),
                 defaultPageOrientation = Orientation.fromName(o.optString("default_page_orientation", "portrait")),
                 fingerDraws = o.optBoolean("finger_draws", false),
+                detectShapes = o.optBoolean("detect_shapes", false),
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
             )
