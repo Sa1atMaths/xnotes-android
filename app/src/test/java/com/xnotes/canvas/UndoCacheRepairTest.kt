@@ -26,6 +26,7 @@ class UndoCacheRepairTest {
 
     private fun state(background: Boolean = false): CanvasState {
         val page = Page(200.0, 200.0, mutableListOf(dot(20.0, 20.0), dot(120.0, 120.0)))
+        if (background) page.pdfPage = 0 // a real PDF-backed page, so a background cache is built and kept
         val doc = Document(mutableListOf(page))
         return CanvasState(doc, FakeSurfaceFactory(), Palette.forAppearance("dark", Rgba(0, 230, 118))).apply {
             viewportW = 800

@@ -22,6 +22,7 @@ import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextItem
+import com.xnotes.core.pal.Renderer
 import com.xnotes.core.tools.Tool
 import java.io.File
 import java.io.OutputStream
@@ -81,6 +82,7 @@ object PdfExporter {
         source: PdfSource?,
         out: OutputStream,
         paperColor: (Page) -> Rgba,
+        paintRuling: (Page, Renderer) -> Unit = { _, _ -> },
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
         isCancelled: () -> Boolean = { false },
     ) {
@@ -91,11 +93,11 @@ object PdfExporter {
         val srcDoc = if (file != null) loadSource(context, file, mem) else null
         // A PDF background we can't parse with PdfBox: keep the working framework rasterizer.
         if (file != null && srcDoc == null) {
-            exportRasterized(doc, source, out, paperColor, onProgress, isCancelled)
+            exportRasterized(doc, source, out, paperColor, paintRuling, onProgress, isCancelled)
             return
         }
         try {
-            exportVector(doc, srcDoc, source, out, paperColor, onProgress, isCancelled, mem)
+            exportVector(doc, srcDoc, source, out, paperColor, paintRuling, onProgress, isCancelled, mem)
         } finally {
             srcDoc?.runCatching { close() }
         }
@@ -114,6 +116,7 @@ object PdfExporter {
         source: PdfSource?,
         out: OutputStream,
         paperColor: (Page) -> Rgba,
+        paintRuling: (Page, Renderer) -> Unit,
         onProgress: (Int, Int) -> Unit,
         isCancelled: () -> Boolean,
         mem: MemoryUsageSetting,
@@ -132,9 +135,9 @@ object PdfExporter {
             doc.pages.forEachIndexed { index, page ->
                 if (isCancelled()) return
                 if (index < n) {
-                    if (page.items.isNotEmpty()) annotatePage(srcDoc, srcDoc.getPage(index), page, s)
+                    if (page.items.isNotEmpty()) annotatePage(srcDoc, srcDoc.getPage(index), page, s, paintRuling)
                 } else {
-                    vectorBlankPage(srcDoc, page, s, paperColor) // a blank note page appended after the PDF
+                    vectorBlankPage(srcDoc, page, s, paperColor, paintRuling) // a blank note page appended after the PDF
                 }
                 onProgress(index + 1, total)
             }
@@ -162,11 +165,11 @@ object PdfExporter {
                 val hasSource = srcIdx != null && srcDoc != null && srcIdx in 0 until srcDoc.numberOfPages
                 when {
                     hasSource && srcDoc!!.getPage(srcIdx!!).rotation % 360 == 0 ->
-                        vectorImportedPage(outDoc, srcDoc, srcIdx, page, s)
+                        vectorImportedPage(outDoc, srcDoc, srcIdx, page, s, paintRuling)
                     hasSource ->
-                        rasterFullPage(outDoc, page, source, paperColor, s) // rotated source page
+                        rasterFullPage(outDoc, page, source, paperColor, s, paintRuling) // rotated source page
                     else ->
-                        vectorBlankPage(outDoc, page, s, paperColor)
+                        vectorBlankPage(outDoc, page, s, paperColor, paintRuling)
                 }
                 onProgress(index + 1, total)
             }
@@ -192,23 +195,23 @@ object PdfExporter {
         return true
     }
 
-    /** Copy a (rotation-0) source page in as vector, then overlay its annotations. */
-    private fun vectorImportedPage(outDoc: PDDocument, srcDoc: PDDocument, srcIdx: Int, page: Page, s: Double) {
-        annotatePage(outDoc, outDoc.importPage(srcDoc.getPage(srcIdx)), page, s)
+    /** Copy a (rotation-0) source page in as vector, then overlay its ruling + annotations. */
+    private fun vectorImportedPage(outDoc: PDDocument, srcDoc: PDDocument, srcIdx: Int, page: Page, s: Double, paintRuling: (Page, Renderer) -> Unit) {
+        annotatePage(outDoc, outDoc.importPage(srcDoc.getPage(srcIdx)), page, s, paintRuling)
     }
 
-    /** Append [page]'s annotations as a new content stream over an existing [pdfPage] of [doc]. */
-    private fun annotatePage(doc: PDDocument, pdfPage: PDPage, page: Page, s: Double) {
+    /** Append [page]'s ruling + annotations as a new content stream over an existing [pdfPage] of [doc]. */
+    private fun annotatePage(doc: PDDocument, pdfPage: PDPage, page: Page, s: Double, paintRuling: (Page, Renderer) -> Unit) {
         val crop = pdfPage.cropBox
         val ox = crop.lowerLeftX.toDouble()
         val oy = (crop.lowerLeftY + crop.height).toDouble()
         PDPageContentStream(doc, pdfPage, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
-            paintItems(cs, doc, page, ox, oy, s)
+            paintItems(cs, doc, page, ox, oy, s, paintRuling)
         }
     }
 
-    /** A note page with no PDF background: blank page filled with the paper colour, then annotations. */
-    private fun vectorBlankPage(outDoc: PDDocument, page: Page, s: Double, paperColor: (Page) -> Rgba) {
+    /** A note page with no PDF background: blank page filled with the paper colour, then ruling + annotations. */
+    private fun vectorBlankPage(outDoc: PDDocument, page: Page, s: Double, paperColor: (Page) -> Rgba, paintRuling: (Page, Renderer) -> Unit) {
         val wPts = (page.width * s).toFloat().coerceAtLeast(1f)
         val hPts = (page.height * s).toFloat().coerceAtLeast(1f)
         val pdfPage = PDPage(PDRectangle(wPts, hPts))
@@ -218,13 +221,14 @@ object PdfExporter {
             cs.setNonStrokingColor(paper.r / 255f, paper.g / 255f, paper.b / 255f)
             cs.addRect(0f, 0f, wPts, hPts)
             cs.fill()
-            paintItems(cs, outDoc, page, ox = 0.0, oy = hPts.toDouble(), s)
+            paintItems(cs, outDoc, page, ox = 0.0, oy = hPts.toDouble(), s, paintRuling)
         }
     }
 
-    /** Draw a page's items in z-order: vectorizable ones as paths/images, effect/text items as bitmaps. */
-    private fun paintItems(cs: PDPageContentStream, outDoc: PDDocument, page: Page, ox: Double, oy: Double, s: Double) {
+    /** Draw a page's ruling (behind ink), then its items in z-order: vector paths/images, effect/text as bitmaps. */
+    private fun paintItems(cs: PDPageContentStream, outDoc: PDDocument, page: Page, ox: Double, oy: Double, s: Double, paintRuling: (Page, Renderer) -> Unit) {
         val renderer = PdfBoxRenderer(cs, outDoc, ox, oy, s)
+        paintRuling(page, renderer) // page ruling sits behind the ink
         for (item in page.items) {
             if (needsRaster(item)) {
                 val raster = rasterizeItem(item, page) ?: continue
@@ -241,7 +245,7 @@ object PdfExporter {
      * plus its items into one upright bitmap and embed that as a full-page JPEG on a rotation-0 page.
      * Still vector for everything else; only these rare pages stay rasterized.
      */
-    private fun rasterFullPage(outDoc: PDDocument, page: Page, source: PdfSource?, paperColor: (Page) -> Rgba, s: Double) {
+    private fun rasterFullPage(outDoc: PDDocument, page: Page, source: PdfSource?, paperColor: (Page) -> Rgba, s: Double, paintRuling: (Page, Renderer) -> Unit) {
         val wPx = page.width.toInt().coerceIn(1, MAX_RASTER_DIM)
         val hPx = page.height.toInt().coerceIn(1, MAX_RASTER_DIM)
         val bmp = Bitmap.createBitmap(wPx, hPx, Bitmap.Config.ARGB_8888)
@@ -256,6 +260,7 @@ object PdfExporter {
             }
         }
         val r = AndroidRenderer(canvas)
+        paintRuling(page, r) // ruling behind ink
         for (item in page.items) item.paint(r)
 
         val wPts = (page.width * s).toFloat().coerceAtLeast(1f)
@@ -335,6 +340,7 @@ object PdfExporter {
         source: PdfSource?,
         out: OutputStream,
         paperColor: (Page) -> Rgba,
+        paintRuling: (Page, Renderer) -> Unit,
         onProgress: (Int, Int) -> Unit,
         isCancelled: () -> Boolean,
     ) {
@@ -363,6 +369,7 @@ object PdfExporter {
                     }
                 }
                 val renderer = AndroidRenderer(canvas)
+                paintRuling(page, renderer) // ruling behind ink
                 for (item in page.items) item.paint(renderer)
                 pdf.finishPage(pdfPage)
                 onProgress(index + 1, total)

@@ -10,6 +10,8 @@ class Page(
     val items: MutableList<CanvasItem> = mutableListOf(),
     /** Index of the source-PDF page drawn as this page's background, or null. */
     var pdfPage: Int? = null,
+    /** Per-page style override (paper colour + ruling); null fields inherit. See [PageStyle]. */
+    var style: PageStyle = PageStyle(),
 ) {
     /**
      * A process-unique, stable id (not persisted). Pages compare by identity, but Compose list keys

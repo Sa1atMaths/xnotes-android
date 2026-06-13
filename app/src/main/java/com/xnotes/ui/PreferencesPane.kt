@@ -53,7 +53,7 @@ import com.xnotes.ui.theme.toComposeColor
 private val accentPresets = listOf(
     Rgba(0, 230, 118), Rgba(255, 138, 30), Rgba(255, 77, 77), Rgba(255, 210, 30),
 )
-private val pageColorPresets = listOf(
+internal val pageColorPresets = listOf(
     Rgba(22, 22, 22), Rgba(13, 13, 13), Rgba(255, 255, 255), Rgba(247, 243, 233), Rgba(232, 232, 232),
 )
 private val penButtonOptions = listOf("eraser" to "Eraser", "pan" to "Pan", "select" to "Select", "none" to "None")
@@ -191,7 +191,7 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
+internal fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
     val palette = LocalPalette.current
     Box(
         Modifier
@@ -219,7 +219,7 @@ private val spectrumBrush = Brush.sweepGradient(
  * spectrum wheel; once one is, it fills with that colour and reads as selected.
  */
 @Composable
-private fun ColorPickerDot(
+internal fun ColorPickerDot(
     current: Rgba?,
     custom: Boolean,
     onPick: (Rgba) -> Unit,
@@ -277,7 +277,7 @@ private fun AccentColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) 
  * muted page backgrounds are reachable, not just the saturated ones.
  */
 @Composable
-private fun PageColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
+internal fun PageColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
     val hues = (0 until 12).map { it * 360.0 / 12.0 }
     val tones = listOf(0.25 to 1.0, 0.5 to 1.0, 0.85 to 1.0, 1.0 to 1.0, 1.0 to 0.7, 1.0 to 0.45)
     DropdownMenu(expanded = true, onDismissRequest = onDismiss) {

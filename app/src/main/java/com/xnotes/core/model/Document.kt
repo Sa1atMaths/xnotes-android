@@ -24,6 +24,8 @@ class Document(
      */
     var pdfFile: java.io.File? = null,
     val bookmarks: MutableList<Bookmark> = mutableListOf(),
+    /** Document-wide ("all pages") style override; per-page [Page.style] layers on top. */
+    var style: PageStyle = PageStyle(),
 ) {
     /** Derived: the storage display name (or path) base name without extension, or "Untitled". */
     val title: String

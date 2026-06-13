@@ -5,8 +5,13 @@ import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.PagePattern
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.Stroke
+import com.xnotes.core.model.resolvedPageColor
+import com.xnotes.core.model.resolvedPattern
+import com.xnotes.core.model.resolvedPatternColor
+import com.xnotes.core.model.resolvedSpacing
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.RasterSurface
@@ -258,7 +263,19 @@ class CanvasState(
 
     // --- pages & navigation ---
 
-    fun paperColor(page: Page): Rgba = pageColorOverride ?: palette.paper
+    // --- page style resolution (current page -> document "all pages" -> global default) ---
+
+    /** Resolved paper colour for [page], or null to fall back to the theme paper (see [paperColor]). */
+    fun effectivePageColor(page: Page): Rgba? = page.resolvedPageColor(document, pageColorOverride)
+
+    /** Resolved background ruling for [page] (NONE when nothing in the chain sets one). */
+    fun effectivePattern(page: Page): PagePattern = page.resolvedPattern(document)
+
+    fun effectivePatternColor(page: Page): Rgba = page.resolvedPatternColor(document)
+
+    fun effectiveSpacing(page: Page): Double = page.resolvedSpacing(document)
+
+    fun paperColor(page: Page): Rgba = effectivePageColor(page) ?: palette.paper
 
     /** Index of the page whose rect contains a content-space point, or null. */
     fun pageIndexAtContent(p: Pt): Int? {
@@ -500,13 +517,21 @@ class CanvasState(
     }
 
     /**
+     * Whether [page] has anything in its background layer — a PDF page or a resolved ruling.
+     * Plain colour pages return false so no (large, transparent) background surface is allocated,
+     * even though [paintPageBackground] is always installed for the pattern path.
+     */
+    fun hasPageBackground(page: Page): Boolean =
+        paintPageBackground != null && (page.pdfPage != null || effectivePattern(page) != PagePattern.NONE)
+
+    /**
      * The page's rendered background layer (PDF/template) at the current resolution,
      * or null when the document has no page background. Built once and reused across
      * ink edits — rebuilt only when the resolution changes — so erasing/repairing ink
      * never re-rasterizes the (expensive) background.
      */
     fun backgroundFor(page: Page): CacheEntry? {
-        if (paintPageBackground == null) return null
+        if (!hasPageBackground(page)) return null
         val res = clampedRes(page)
         val existing = bgCaches[page]
         if (existing != null && (zoomingInProgress || abs(existing.res - res) < 1e-6)) return existing
@@ -515,7 +540,7 @@ class CanvasState(
 
     /** Non-blocking counterpart to [backgroundFor]; see [cacheForOrSchedule]. */
     fun backgroundForOrSchedule(page: Page): CacheEntry? {
-        if (paintPageBackground == null) return null
+        if (!hasPageBackground(page)) return null
         val res = clampedRes(page)
         val existing = bgCaches[page]
         if (existing != null && (zoomingInProgress || abs(existing.res - res) < 1e-6)) return existing
@@ -568,7 +593,7 @@ class CanvasState(
 
     /** Presentation background layer for [page] at [presRes], or null when there is no background. */
     fun presBackgroundFor(page: Page): CacheEntry? {
-        if (paintPageBackground == null) return null
+        if (!hasPageBackground(page)) return null
         val res = presRes(page)
         presBgCaches[page]?.let { if (abs(it.res - res) < 1e-6) return it }
         return buildBackground(page, res).also { presBgCaches[page] = it }
@@ -653,6 +678,34 @@ class CanvasState(
     fun invalidatePage(page: Page) {
         caches.remove(page)
         presCaches.remove(page) // ink changed: drop the presentation ink layer too (bg untouched)
+        cacheGen++
+        sharpGen++
+    }
+
+    /**
+     * Page-style invalidation. The paper colour is filled **live** each frame in [CanvasView] (not
+     * baked into [caches]/[bgCaches]), so a colour-only change just needs the sharp viewport — which
+     * *does* bake the paper — to re-render: bump [sharpGen]. A ruling, by contrast, lives in the
+     * background cache, so a pattern/spacing/pattern-colour change must drop that page's background
+     * (and its presentation copy) and let the draw loop rebuild via [backgroundForOrSchedule]. Unlike
+     * [refreshBackground] (the PDF-refine path) these do **not** early-return on a missing cache, so a
+     * plain page that *gains* a ruling rebuilds correctly; one that loses it stops drawing a background
+     * (see [hasPageBackground]).
+     */
+    fun invalidatePaper() {
+        sharpGen++
+    }
+
+    fun invalidateBackground(page: Page) {
+        bgCaches.remove(page)
+        presBgCaches.remove(page)
+        cacheGen++
+        sharpGen++
+    }
+
+    fun invalidateAllBackgrounds() {
+        bgCaches.clear()
+        presBgCaches.clear()
         cacheGen++
         sharpGen++
     }

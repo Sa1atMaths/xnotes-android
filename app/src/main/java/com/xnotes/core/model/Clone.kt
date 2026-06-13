@@ -16,6 +16,6 @@ fun CanvasItem.deepCopy(measurer: TextMeasurer): CanvasItem = when (this) {
     else -> this
 }
 
-/** A deep copy of a page — its items cloned ([deepCopy]) — keeping the size and PDF-background link. */
+/** A deep copy of a page — its items cloned ([deepCopy]) — keeping the size, PDF link and style. */
 fun Page.deepCopy(measurer: TextMeasurer): Page =
-    Page(width, height, items.mapTo(mutableListOf()) { it.deepCopy(measurer) }, pdfPage)
+    Page(width, height, items.mapTo(mutableListOf()) { it.deepCopy(measurer) }, pdfPage, style)

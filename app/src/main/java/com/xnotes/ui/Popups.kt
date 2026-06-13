@@ -6,7 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +32,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xnotes.core.model.PagePattern
+import com.xnotes.core.model.PageStyle
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.tools.EraseMode
 import com.xnotes.core.tools.ShapeConfig
@@ -39,6 +44,7 @@ import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
+import kotlin.math.roundToInt
 
 /**
  * Stroke-tool configuration popup (spec 10 §3): PRESSURE / SENSITIVITY, then the
@@ -120,6 +126,117 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Page-styles popup (spec 10): two tabs — "All Pages" (the document-wide override) and "Current
+ * Page" — each editing the same controls: paper colour, a ruling (None/Lines/Dots/Grid), its spacing
+ * and colour. Every control is tri-state: "Default" leaves the field unset so it inherits the level
+ * below (page → document → the global page-colour preference / a built-in default); the global
+ * default itself is unchanged here (it lives in Preferences). Like [ToolConfigPopup], the popup holds
+ * the edited style locally and pushes each change to the [Editor] (which persists, but never undoes).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun StylesPopup(editor: Editor, onDismiss: () -> Unit) {
+    var tab by remember { mutableStateOf(0) } // 0 = All Pages, 1 = Current Page
+    var docStyle by remember { mutableStateOf(editor.documentStyle) }
+    var pageStyle by remember { mutableStateOf(editor.currentPageStyle) }
+    val style = if (tab == 0) docStyle else pageStyle
+    fun apply(next: PageStyle) {
+        if (tab == 0) { docStyle = next; editor.setDocumentStyle(next) }
+        else { pageStyle = next; editor.setCurrentPageStyle(next) }
+    }
+
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        Column(Modifier.width(286.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
+            PopupTitle("STYLES")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("All Pages", tab == 0) { tab = 0 }
+                ModeChip("Current Page", tab == 1) { tab = 1 }
+            }
+
+            Spacer(Modifier.size(12.dp))
+            StyleCaption("PAGE COLOUR")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                ModeChip("Default", style.pageColor == null) { apply(style.copy(pageColor = null)) }
+                pageColorPresets.forEach { c ->
+                    ColorDot(c.toComposeColor(), style.pageColor == c) { apply(style.copy(pageColor = c)) }
+                }
+                ColorPickerDot(
+                    style.pageColor,
+                    custom = style.pageColor != null && style.pageColor !in pageColorPresets,
+                    onPick = { apply(style.copy(pageColor = it)) },
+                ) { d, p -> PageColorGridPopup(d, p) }
+            }
+
+            Spacer(Modifier.size(12.dp))
+            StyleCaption("PATTERN")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ModeChip("Default", style.pattern == null) { apply(style.copy(pattern = null)) }
+                ModeChip("None", style.pattern == PagePattern.NONE) { apply(style.copy(pattern = PagePattern.NONE)) }
+                ModeChip("Lines", style.pattern == PagePattern.LINES) { apply(style.copy(pattern = PagePattern.LINES)) }
+                ModeChip("Dots", style.pattern == PagePattern.DOTS) { apply(style.copy(pattern = PagePattern.DOTS)) }
+                ModeChip("Grid", style.pattern == PagePattern.GRID) { apply(style.copy(pattern = PagePattern.GRID)) }
+            }
+
+            Spacer(Modifier.size(12.dp))
+            val spacing = style.spacing ?: PageStyle.DEFAULT_SPACING
+            StyleCaption("SPACING  ${spacing.toInt()} px" + if (style.spacing == null) "  (default)" else "")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ModeChip("Default", style.spacing == null) { apply(style.copy(spacing = null)) }
+                Slider(
+                    value = spacing.toFloat().coerceIn(PageStyle.MIN_SPACING.toFloat(), PageStyle.MAX_SPACING.toFloat()),
+                    onValueChange = { apply(style.copy(spacing = it.toDouble())) },
+                    valueRange = PageStyle.MIN_SPACING.toFloat()..PageStyle.MAX_SPACING.toFloat(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(Modifier.size(12.dp))
+            // Effective pattern colour: the page's own, else (on the Current Page tab) the document's,
+            // else the built-in grey. Its alpha is the opacity the slider below edits.
+            val effPatternColor = style.patternColor
+                ?: (if (tab == 1) docStyle.patternColor else null)
+                ?: PageStyle.DEFAULT_PATTERN_COLOR
+            StyleCaption("PATTERN COLOUR")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("Default", style.patternColor == null) { apply(style.copy(patternColor = null)) }
+                ColorPickerDot(
+                    style.patternColor?.copy(a = 255), // show the hue at full strength; OPACITY sets the alpha
+                    custom = style.patternColor != null,
+                    onPick = { apply(style.copy(patternColor = it.copy(a = effPatternColor.a))) }, // keep current opacity
+                ) { d, p -> PageColorGridPopup(d, p) }
+            }
+
+            Spacer(Modifier.size(12.dp))
+            val opacityPct = effPatternColor.a * 100f / 255f
+            StyleCaption("OPACITY  ${opacityPct.roundToInt()}%")
+            Slider(
+                value = opacityPct,
+                onValueChange = { pct ->
+                    apply(style.copy(patternColor = effPatternColor.copy(a = (pct / 100f * 255f).roundToInt().coerceIn(0, 255))))
+                },
+                valueRange = 0f..100f,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StyleCaption(text: String) {
+    Text(
+        text,
+        color = LocalPalette.current.textDim.toComposeColor(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+    )
 }
 
 /** Eraser configuration popup: a STROKE/AREA mode picker and a SIZE slider (the eraser radius). */

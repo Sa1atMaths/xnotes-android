@@ -8,7 +8,9 @@ import com.xnotes.core.model.Document
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.PagePattern
 import com.xnotes.core.model.PageSize
+import com.xnotes.core.model.PageStyle
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
@@ -72,13 +74,13 @@ class DocumentCodec(
                 }
                 if (obj != null) itemsArr.put(obj)
             }
-            pagesArr.put(
-                JSONObject()
-                    .put("width", page.width)
-                    .put("height", page.height)
-                    .put("pdf_page", page.pdfPage ?: JSONObject.NULL)
-                    .put("items", itemsArr),
-            )
+            val pageObj = JSONObject()
+                .put("width", page.width)
+                .put("height", page.height)
+                .put("pdf_page", page.pdfPage ?: JSONObject.NULL)
+                .put("items", itemsArr)
+            pageStyleToJson(page.style)?.let { pageObj.put("style", it) }
+            pagesArr.put(pageObj)
         }
 
         val bookmarksArr = JSONArray()
@@ -93,6 +95,7 @@ class DocumentCodec(
             .put("has_pdf", doc.pdfFile != null)
             .put("bookmarks", bookmarksArr)
             .put("pages", pagesArr)
+        pageStyleToJson(doc.style)?.let { manifest.put("style", it) }
 
         ZipOutputStream(out).use { zos ->
             zos.putDeflated("manifest.json", manifest.toString().toByteArray(Charsets.UTF_8))
@@ -142,6 +145,7 @@ class DocumentCodec(
 
         val dpi = manifest.optInt("dpi", PageSize.DEFAULT_DPI)
         val doc = Document(dpi = dpi)
+        doc.style = parsePageStyle(manifest.optJSONObject("style"))
 
         if (manifest.optBoolean("has_pdf", false)) {
             doc.pdfFile = pdfFile
@@ -170,6 +174,7 @@ class DocumentCodec(
                 height = po.optDouble("height", fallbackH),
                 pdfPage = if (po.isNull("pdf_page")) null else po.optInt("pdf_page"),
             )
+            page.style = parsePageStyle(po.optJSONObject("style"))
             po.optJSONArray("items")?.let { items ->
                 for (j in 0 until items.length()) {
                     val io = items.optJSONObject(j) ?: continue
@@ -348,6 +353,27 @@ class DocumentCodec(
         if (arr == null || arr.length() < 3) return null
         val list = (0 until arr.length()).map { arr.optInt(it, 0) }
         return Rgba.fromList(list)
+    }
+
+    /** A page/document style, written only when something is overridden (forgiving: fields are optional). */
+    private fun pageStyleToJson(s: PageStyle): JSONObject? {
+        if (s.isEmpty) return null
+        val o = JSONObject()
+        s.pageColor?.let { o.put("page_color", rgbaToJson(it)) }
+        s.pattern?.let { o.put("pattern", it.id) }
+        s.patternColor?.let { o.put("pattern_color", rgbaToJson(it)) }
+        s.spacing?.let { o.put("spacing", it) }
+        return o
+    }
+
+    private fun parsePageStyle(o: JSONObject?): PageStyle {
+        if (o == null) return PageStyle()
+        return PageStyle(
+            pageColor = readRgba(o.optJSONArray("page_color")),
+            pattern = PagePattern.fromId(if (o.isNull("pattern")) null else o.optString("pattern")),
+            patternColor = readRgba(o.optJSONArray("pattern_color")),
+            spacing = if (o.has("spacing") && !o.isNull("spacing")) o.optDouble("spacing") else null,
+        )
     }
 
     private fun readPt(arr: JSONArray?): Pt? {

@@ -9,6 +9,8 @@ import com.xnotes.core.model.Bookmark
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.PagePattern
+import com.xnotes.core.model.PageStyle
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
@@ -217,5 +219,58 @@ class DocumentCodecTest {
         val stroke = doc.pages[0].items[0] as Stroke
         assertEquals(ToolConfig().baseWidth, stroke.config.baseWidth, 1e-9)
         assertNull(doc.pdfFile)
+    }
+
+    @Test fun pageStyleRoundTrips() {
+        val doc = Document(dpi = 150)
+        doc.style = PageStyle(pattern = PagePattern.LINES, spacing = 48.0) // document-wide ("all pages")
+        val page = Page(1240.0, 1754.0)
+        page.style = PageStyle(
+            pageColor = Rgba(20, 20, 20),
+            pattern = PagePattern.GRID,
+            patternColor = Rgba(100, 100, 100, 120),
+            spacing = 32.0,
+        )
+        doc.pages.add(page)
+
+        val back = roundTrip(doc)
+
+        assertEquals(PagePattern.LINES, back.style.pattern)
+        assertEquals(48.0, back.style.spacing!!, 1e-9)
+        assertNull(back.style.pageColor) // unset fields stay null (inherit)
+        val s = back.pages[0].style
+        assertEquals(Rgba(20, 20, 20), s.pageColor)
+        assertEquals(PagePattern.GRID, s.pattern)
+        assertEquals(Rgba(100, 100, 100, 120), s.patternColor)
+        assertEquals(32.0, s.spacing!!, 1e-9)
+    }
+
+    @Test fun emptyStyleReadsBackEmpty() {
+        val doc = Document(dpi = 150)
+        doc.pages.add(Page(100.0, 100.0)) // default (empty) styles on page + document
+        val back = roundTrip(doc)
+        assertTrue(back.style.isEmpty)
+        assertTrue(back.pages[0].style.isEmpty)
+    }
+
+    @Test fun partialStyleFieldsTakeDefaults() {
+        // A page whose style sets only the pattern: every other field inherits (stays null), and a
+        // manifest with no document-level "style" reads back an empty document style.
+        val out = ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use {
+            it.putNextEntry(java.util.zip.ZipEntry("manifest.json"))
+            it.write(
+                ("{\"format\":\"xnote\",\"pages\":[{\"width\":100,\"height\":100," +
+                    "\"style\":{\"pattern\":\"dots\"},\"items\":[]}]}").toByteArray(),
+            )
+            it.closeEntry()
+        }
+        val doc = codec.read(ByteArrayInputStream(out.toByteArray()))
+        val s = doc.pages[0].style
+        assertEquals(PagePattern.DOTS, s.pattern)
+        assertNull(s.pageColor)
+        assertNull(s.patternColor)
+        assertNull(s.spacing)
+        assertTrue(doc.style.isEmpty)
     }
 }
