@@ -51,6 +51,7 @@ android {
             // deterministic and the toolchain is pinned (AGP in libs.versions.toml), so F-Droid's
             // from-source build reproduces this APK's dex byte-for-byte.
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
