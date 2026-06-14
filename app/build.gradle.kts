@@ -47,7 +47,10 @@ android {
     buildTypes {
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            // R8 shrinks/optimises release builds (see proguard-rules.pro for the few keeps). R8 is
+            // deterministic and the toolchain is pinned (AGP in libs.versions.toml), so F-Droid's
+            // from-source build reproduces this APK's dex byte-for-byte.
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
