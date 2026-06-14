@@ -41,7 +41,6 @@ import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConversions
 import com.xnotes.ui.icons.XnotesIcons
-import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.roundToInt
@@ -109,7 +108,15 @@ fun ToolConfigPopup(editor: Editor, tool: Tool, onDismiss: () -> Unit) {
                     colorOverride,
                     custom = colorOverride != null,
                     onPick = { colorOverride = it; emit() },
-                ) { d, p -> ColorSwitcherGrid(editor.recentColors, d, p) }
+                    dismissOnPick = false,
+                ) { d, p ->
+                    ColorPickerPopup(
+                        initial = colorOverride ?: editor.toolbarColors.getOrNull(editor.activeColorIndex),
+                        recents = editor.recentColors,
+                        onDismiss = d,
+                        onPick = p,
+                    )
+                }
             }
             Spacer(Modifier.size(12.dp))
             val hasPressure = tool == Tool.PEN || tool == Tool.CALLIGRAPHY || tool == Tool.SPEED || tool == Tool.TAPER
@@ -194,7 +201,8 @@ fun StylesPopup(editor: Editor, onDismiss: () -> Unit) {
                     style.pageColor,
                     custom = style.pageColor != null && style.pageColor !in pageColorPresets,
                     onPick = { apply(style.copy(pageColor = it)) },
-                ) { d, p -> PageColorGridPopup(d, p) }
+                    dismissOnPick = false,
+                ) { d, p -> PageColorGridPopup(style.pageColor, d, p) }
             }
 
             Spacer(Modifier.size(12.dp))
@@ -236,7 +244,8 @@ fun StylesPopup(editor: Editor, onDismiss: () -> Unit) {
                     style.patternColor?.copy(a = 255), // show the hue at full strength; OPACITY sets the alpha
                     custom = style.patternColor != null,
                     onPick = { apply(style.copy(patternColor = it.copy(a = effPatternColor.a))) }, // keep current opacity
-                ) { d, p -> PageColorGridPopup(d, p) }
+                    dismissOnPick = false,
+                ) { d, p -> PageColorGridPopup(style.patternColor?.copy(a = 255), d, p) }
             }
 
             Spacer(Modifier.size(12.dp))
@@ -331,56 +340,16 @@ fun ShapeConfigPopup(editor: Editor, onDismiss: () -> Unit) {
     }
 }
 
-/** Colour switcher (spec 10 §4): the toolbar swatch picker — opens the shared [ColorSwitcherGrid]
- *  and writes the chosen colour back to swatch [index]. */
+/** Colour switcher (spec 10 §4): the toolbar swatch picker — opens the shared [ColorPickerPopup]
+ *  and writes the chosen colour back to swatch [index]. Picks apply live; the final colour is
+ *  remembered into recents when the popup closes. */
 @Composable
 fun ColorSwitcherPopup(editor: Editor, index: Int, onDismiss: () -> Unit) {
-    ColorSwitcherGrid(editor.recentColors, onDismiss) { c ->
-        editor.setSwatchColor(index, c)
-        onDismiss()
-    }
-}
-
-/** The toolbar's colour palette: a hue×shade matrix, a greyscale row and recent colours. Shared by
- *  the toolbar swatch switcher and the per-tool colour override so both pick from the same set. */
-@Composable
-internal fun ColorSwitcherGrid(recents: List<Rgba>, onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
-    val hues = (0 until 11).map { it * 360.0 / 11.0 }
-    val shades = listOf(0.4 to 1.0, 0.7 to 1.0, 1.0 to 1.0, 1.0 to 0.8, 1.0 to 0.6, 1.0 to 0.42)
-    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-        Column(Modifier.padding(10.dp)) {
-            if (recents.isNotEmpty()) {
-                PopupTitle("RECENT")
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    recents.take(8).forEach { Cell(it) { onPick(it) } }
-                }
-            }
-            PopupTitle("COLOUR")
-            shades.forEach { (s, v) ->
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    hues.forEach { h -> val c = ColorMath.hsvToRgb(h, s, v); Cell(c) { onPick(c) } }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                (0..10).forEach { i ->
-                    val g = (i * 255 / 10)
-                    val c = Rgba(g, g, g)
-                    Cell(c) { onPick(c) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Cell(color: Rgba, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(20.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .background(color.toComposeColor())
-            .border(0.5.dp, LocalPalette.current.border.toComposeColor(), RoundedCornerShape(2.dp))
-            .clickable(onClick = onClick),
+    ColorPickerPopup(
+        initial = editor.toolbarColors.getOrNull(index),
+        recents = editor.recentColors,
+        onDismiss = { editor.rememberSwatchColor(index); onDismiss() },
+        onPick = { editor.setSwatchColor(index, it) },
     )
 }
 

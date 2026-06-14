@@ -1691,10 +1691,16 @@ class Editor(context: Context) {
         refreshTextBar()
     }
 
+    /** Live swatch recolour while the picker is open: applies to the canvas but does *not* yet
+     *  commit to recents (a spectrum drag fires this on every sample and would flood the list). */
     fun setSwatchColor(index: Int, color: Rgba) {
         toolbarColors = toolbarColors.toMutableList().also { it[index] = color }
-        settings = settings.rememberColor(color)
         pickColor(index)
+    }
+
+    /** Commit the swatch's current colour to the recent-colours list — called once the picker closes. */
+    fun rememberSwatchColor(index: Int) {
+        toolbarColors.getOrNull(index)?.let { settings = settings.rememberColor(it) }
     }
 
     fun setShapeKind(kind: com.xnotes.core.tools.ShapeKind) {

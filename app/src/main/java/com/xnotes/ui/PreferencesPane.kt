@@ -156,7 +156,8 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                     prefs.pageColor,
                     custom = prefs.pageColor != null && prefs.pageColor !in pageColorPresets,
                     onPick = { update(prefs.copy(pageColor = it)) },
-                ) { onDismiss, onPick -> PageColorGridPopup(onDismiss, onPick) }
+                    dismissOnPick = false,
+                ) { onDismiss, onPick -> PageColorGridPopup(prefs.pageColor, onDismiss, onPick) }
             }
             CheckRow("Page colour follows the theme", prefs.pageColor == null) {
                 update(prefs.copy(pageColor = if (it) null else pageColorPresets.first()))
@@ -224,6 +225,7 @@ internal fun ColorPickerDot(
     current: Rgba?,
     custom: Boolean,
     onPick: (Rgba) -> Unit,
+    dismissOnPick: Boolean = true,
     grid: @Composable (onDismiss: () -> Unit, onPick: (Rgba) -> Unit) -> Unit,
 ) {
     val palette = LocalPalette.current
@@ -239,7 +241,9 @@ internal fun ColorPickerDot(
                 .border(1.dp, palette.border.toComposeColor(), CircleShape)
                 .clickable { open = true },
         )
-        if (open) grid({ open = false }, { onPick(it); open = false })
+        // A live picker (e.g. the page/ink popup) edits across several taps, so it stays open until a
+        // tap outside; a one-shot grid (the accent swatches) closes the moment a colour is chosen.
+        if (open) grid({ open = false }, { onPick(it); if (dismissOnPick) open = false })
     }
 }
 
@@ -273,28 +277,13 @@ private fun AccentColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) 
 }
 
 /**
- * Page-colour picker: the full range rather than only vivid hues. A greyscale row (white
- * through black) sits above every hue drawn from pale tint to deep shade, so paper-like and
- * muted page backgrounds are reachable, not just the saturated ones.
+ * Page/pattern colour picker: the shared [ColorPickerPopup] (Swatches + Spectrum tabs, full
+ * 13×13 range from pale tint to near-black plus a greyscale row, and HEX/RGB fields), so paper-like
+ * and muted page backgrounds are reachable, not just the saturated ones. It keeps no recents list.
  */
 @Composable
-internal fun PageColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
-    val hues = (0 until 12).map { it * 360.0 / 12.0 }
-    val tones = listOf(0.25 to 1.0, 0.5 to 1.0, 0.85 to 1.0, 1.0 to 1.0, 1.0 to 0.7, 1.0 to 0.45)
-    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                hues.indices.forEach { i ->
-                    Swatch(ColorMath.hsvToRgb(0.0, 0.0, 1.0 - i / (hues.size - 1.0)), onPick)
-                }
-            }
-            tones.forEach { (s, v) ->
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    hues.forEach { h -> Swatch(ColorMath.hsvToRgb(h, s, v), onPick) }
-                }
-            }
-        }
-    }
+internal fun PageColorGridPopup(initial: Rgba?, onDismiss: () -> Unit, onPick: (Rgba) -> Unit) {
+    ColorPickerPopup(initial = initial, recents = emptyList(), onDismiss = onDismiss, onPick = onPick)
 }
 
 @Composable
