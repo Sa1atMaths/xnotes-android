@@ -365,7 +365,7 @@ class Stroke(
         private const val NEON_BLOOM_TIGHT_ALPHA_SPAN = 0.85
 
         /** Fraction of the tube width filled by the solid white-hot core. */
-        private const val NEON_CORE_FRAC = 0.5
+        private const val NEON_CORE_FRAC = 0.3
 
         /** Body colour lifted this fraction toward white so the tube reads as lit. */
         private const val NEON_BODY_LIGHTEN = 0.10
