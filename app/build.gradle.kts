@@ -45,6 +45,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
             // R8 shrinks/optimises release builds (see proguard-rules.pro for the few keeps). R8 is
