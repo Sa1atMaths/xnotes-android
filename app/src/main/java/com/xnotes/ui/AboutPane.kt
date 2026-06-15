@@ -12,7 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -32,8 +32,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,12 +52,16 @@ import androidx.core.graphics.drawable.toBitmap
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private const val REPO_URL = "https://github.com/shardulvs/xnotes-android"
 private const val SPONSOR_URL = "https://github.com/sponsors/shardulvs"
 private const val ISSUES_URL = "https://github.com/shardulvs/xnotes-android/issues/new"
 private const val FDROID_URL = "https://f-droid.org/en/packages/com.xnotes"
 private const val LICENSE_URL = "https://github.com/shardulvs/xnotes-android/blob/master/LICENSE"
+private const val MIN_FILL_MS = 120L
 
 /**
  * The About backstage pane: app identity + the one place that points users back at the
@@ -154,7 +161,30 @@ fun AboutPane() {
 private fun RowScope.AboutButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     val palette = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
+    // Keep the accent fill visible for a minimum time so even a millisecond tap registers.
+    var pressed by remember { mutableStateOf(false) }
+    LaunchedEffect(interaction) {
+        val scope = this
+        var pressedAt = 0L
+        var clearJob: Job? = null
+        interaction.interactions.collect { event ->
+            when (event) {
+                is PressInteraction.Press -> {
+                    clearJob?.cancel()
+                    pressedAt = System.currentTimeMillis()
+                    pressed = true
+                }
+                is PressInteraction.Release, is PressInteraction.Cancel -> {
+                    val remaining = MIN_FILL_MS - (System.currentTimeMillis() - pressedAt)
+                    clearJob?.cancel()
+                    clearJob = scope.launch {
+                        if (remaining > 0) delay(remaining)
+                        pressed = false
+                    }
+                }
+            }
+        }
+    }
     val accent = palette.accent.toComposeColor()
     val onAccent = palette.bg.toComposeColor()
     Column(
