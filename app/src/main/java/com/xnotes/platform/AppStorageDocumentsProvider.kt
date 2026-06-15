@@ -141,7 +141,7 @@ class AppStorageDocumentsProvider : DocumentsProvider() {
 
     companion object {
         private const val ROOT_DOC_ID = "root"
-        private const val ROOT_DISPLAY_NAME = "Internal storage"
+        private const val ROOT_DISPLAY_NAME = "App storage"
         private const val DIR_NAME = "Notes"
 
         private val DEFAULT_ROOT_PROJECTION = arrayOf(
