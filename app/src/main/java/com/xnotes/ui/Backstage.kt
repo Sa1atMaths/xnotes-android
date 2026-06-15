@@ -462,7 +462,10 @@ private fun ExplorerSection(
             Spacer(Modifier.weight(1f))
             Text("Choose a folder to keep and browse your notes in.", color = palette.textDim.toComposeColor(), fontSize = 14.sp)
             Spacer(Modifier.height(16.dp))
-            PrimaryButton(XnotesIcons.folder, "Choose folder", onPickRoot)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PrimaryButton(XnotesIcons.folder, "Choose folder", onPickRoot)
+                PrimaryButton(XnotesIcons.save, "Internal storage") { editor.useInternalStorage() }
+            }
             Spacer(Modifier.weight(1f))
         }
         return

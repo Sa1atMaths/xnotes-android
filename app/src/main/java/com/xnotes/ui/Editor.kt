@@ -1079,6 +1079,11 @@ class Editor(context: Context) {
         rootNameCache.clear()
     }
 
+    /** Browse the app's own private storage instead of a granted folder; no SAF grant needed. */
+    fun useInternalStorage() {
+        updateBrowseRoot(com.xnotes.platform.AppStorageDocumentsProvider.treeUri(appContext).toString())
+    }
+
     /** Forget the granted folder: release its SAF permission and clear the root. */
     fun clearBrowseRoot() {
         browseRoot?.let { old ->
