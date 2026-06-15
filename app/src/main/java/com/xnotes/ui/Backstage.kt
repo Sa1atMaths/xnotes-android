@@ -946,7 +946,7 @@ private fun FolderChip(
             .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(XnotesIcons.folder, null, tint = if (selected) onAccent else accent, modifier = Modifier.size(20.dp))
+        Icon(XnotesIcons.folder, null, tint = if (selected) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(
             entryLabel(entry), color = if (selected) onAccent else palette.text.toComposeColor(), fontSize = 14.sp,
