@@ -992,10 +992,14 @@ private fun FileTile(
     val thumb by produceState<ImageBitmap?>(editor.cachedNoteTile(entry.documentUri), entry.documentUri, entry.modified) {
         value = editor.noteTileThumbnail(entry.documentUri)
     }
+    val accent = palette.accent.toComposeColor()
+    val onAccent = palette.bg.toComposeColor()
     Column(
         Modifier
             .alpha(if (dimmed) 0.4f else 1f)
-            .clip(RoundedCornerShape(10.dp))
+            // accent-fill family: one squared outline wraps the thumbnail and the label strip. border
+            // draws over its children, so it stays crisp on top of the full-bleed thumbnail.
+            .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
             // No tap ripple — the accent border + fill is the only selection cue.
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1008,12 +1012,7 @@ private fun FileTile(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(10.dp))
-                .background(palette.paper.toComposeColor())
-                .then(
-                    if (selected) Modifier.border(2.dp, palette.accent.toComposeColor(), RoundedCornerShape(10.dp))
-                    else Modifier.border(1.dp, palette.paperBorder.toComposeColor(), RoundedCornerShape(10.dp)),
-                ),
+                .background(palette.paper.toComposeColor()),
         ) {
             val img = thumb
             if (img != null) {
@@ -1021,7 +1020,7 @@ private fun FileTile(
             } else {
                 Icon(XnotesIcons.file, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(32.dp).align(Alignment.Center))
             }
-            // Selected: accent transparent fill over the thumbnail, on top of the accent border below.
+            // Selected: a translucent accent veil over the thumbnail, tying it to the accent label strip.
             if (selected) Box(Modifier.matchParentSize().background(palette.accentAlpha(38).toComposeColor()))
             if (!inSelectMode && onRename != null) {
                 Box(Modifier.align(Alignment.TopEnd)) {
@@ -1032,17 +1031,24 @@ private fun FileTile(
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            entryLabel(entry), color = palette.text.toComposeColor(), fontSize = 13.sp,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 2.dp),
-        )
-        val date = entryDate(entry)
-        if (date.isNotEmpty()) {
+        // Label strip inside the outline; selected fills accent with the text flipped to bg.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(if (selected) accent else Color.Transparent)
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        ) {
             Text(
-                date, color = palette.textDim.toComposeColor(), fontSize = 11.sp,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 2.dp),
+                entryLabel(entry), color = if (selected) onAccent else palette.text.toComposeColor(), fontSize = 13.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
+            val date = entryDate(entry)
+            if (date.isNotEmpty()) {
+                Text(
+                    date, color = if (selected) onAccent else palette.textDim.toComposeColor(), fontSize = 11.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
