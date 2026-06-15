@@ -464,7 +464,7 @@ private fun ExplorerSection(
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PrimaryButton(XnotesIcons.folder, "Choose folder", onPickRoot)
-                PrimaryButton(XnotesIcons.save, "App storage") { editor.useInternalStorage() }
+                PrimaryButton(XnotesIcons.database, "Use App Storage") { editor.useInternalStorage() }
             }
             Spacer(Modifier.weight(1f))
         }
