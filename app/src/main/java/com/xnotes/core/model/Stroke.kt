@@ -355,14 +355,14 @@ class Stroke(
         private const val NEON_BLOOM_WIDE_FACTOR_MIN = 1.8
         private const val NEON_BLOOM_WIDE_FACTOR_SPAN = 5.0
         private const val NEON_BLOOM_WIDE_MIN = 6.0
-        private const val NEON_BLOOM_WIDE_ALPHA_MIN = 0.10
-        private const val NEON_BLOOM_WIDE_ALPHA_SPAN = 0.32
+        private const val NEON_BLOOM_WIDE_ALPHA_MIN = 0.0
+        private const val NEON_BLOOM_WIDE_ALPHA_SPAN = 0.42
 
         private const val NEON_BLOOM_TIGHT_FACTOR_MIN = 0.7
         private const val NEON_BLOOM_TIGHT_FACTOR_SPAN = 1.8
         private const val NEON_BLOOM_TIGHT_MIN = 2.5
-        private const val NEON_BLOOM_TIGHT_ALPHA_MIN = 0.40
-        private const val NEON_BLOOM_TIGHT_ALPHA_SPAN = 0.45
+        private const val NEON_BLOOM_TIGHT_ALPHA_MIN = 0.0
+        private const val NEON_BLOOM_TIGHT_ALPHA_SPAN = 0.85
 
         /** Fraction of the tube width filled by the solid white-hot core. */
         private const val NEON_CORE_FRAC = 0.5
