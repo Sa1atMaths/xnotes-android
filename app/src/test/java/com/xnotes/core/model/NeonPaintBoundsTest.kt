@@ -35,8 +35,8 @@ class NeonPaintBoundsTest {
         assertTrue("paintBounds top should be smaller than bounds top", pb.top < b.top)
         assertTrue("paintBounds right should be larger than bounds right", pb.right > b.right)
         assertTrue("paintBounds bottom should be larger than bounds bottom", pb.bottom > b.bottom)
-        // glowR = max(4.0 * (0.9 + 2.0 * 0.6), 3.5) = max(8.4, 3.5) = 8.4; expansion = 8.4*2+4 = 20.8
-        val expectedExpansion = 20.8
+        // wide glowR = max(4.0 * (1.8 + 5.0 * 0.6), 6.0) = max(19.2, 6.0) = 19.2; expansion = 19.2*2+4 = 42.4
+        val expectedExpansion = 42.4
         assertEquals(expectedExpansion, b.left - pb.left, 0.01)
         assertEquals(expectedExpansion, pb.right - b.right, 0.01)
     }

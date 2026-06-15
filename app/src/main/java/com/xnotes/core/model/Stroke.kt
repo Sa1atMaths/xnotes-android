@@ -141,21 +141,22 @@ class Stroke(
     }
 
     /**
-     * Neon, as a glowing glass tube: a **white-hot centre** that bleeds out to the
-     * saturated ink colour at the rim, wrapped in a soft luminous **halo** that
-     * emanates from the edges. Three layers, back to front:
-     *   1. the outer halo — a blurred fill in the ink colour, composited once at a
-     *      glow-intensity alpha so a self-overlapping scribble doesn't blow out;
-     *   2. the tube body — the opaque, saturated ink colour (what shows at the rim);
-     *   3. the core — a white fill on a *concentric inner ribbon* (a fraction of the
-     *      tube's width), blurred inward so it's solid white at the centre yet stops
-     *      short of the rim, leaving a band of saturated colour around it.
-     * [config.neonStrength] scales the halo's size and brightness. Overrides the
-     * translucent path, so it works on any stroke tool.
+     * Neon as a laser trail. Four layers, back to front:
+     *   1. a wide, faint outer bloom (the blurred ribbon in the ink colour);
+     *   2. a tighter, brighter bloom that keeps the colour saturated at the line;
+     *   3. the tube body: the saturated colour, lifted slightly toward white so it
+     *      reads as lit;
+     *   4. the white-hot core: a thin *solid* white inner ribbon (no blur, so it
+     *      reaches full white even on a 1px line instead of smudging out).
+     * Each bloom composites once at a glow-intensity alpha so a self-overlapping
+     * scribble can't compound into a darker blob. [config.neonStrength] scales the
+     * bloom's size and brightness; it overrides the translucent path, so neon works
+     * on any stroke tool.
      */
     private fun neonGlowRadius(): Double {
         val s = config.neonStrength.coerceIn(0.0, 1.0)
-        return (config.baseWidth * (NEON_GLOW_FACTOR_MIN + NEON_GLOW_FACTOR_SPAN * s)).coerceAtLeast(NEON_GLOW_MIN)
+        return (config.baseWidth * (NEON_BLOOM_WIDE_FACTOR_MIN + NEON_BLOOM_WIDE_FACTOR_SPAN * s))
+            .coerceAtLeast(NEON_BLOOM_WIDE_MIN)
     }
 
     override fun paintBounds(): Rect =
@@ -163,30 +164,47 @@ class Stroke(
         else bounds()
 
     private fun paintNeon(r: Renderer, g: StrokeGeometry, color: Rgba) {
-        val glowR = neonGlowRadius()
         val s = config.neonStrength.coerceIn(0.0, 1.0)
         val body = color.withAlpha(255)
 
-        // 1) Outer halo (ink colour), wider and brighter as intensity rises.
-        val glowAlpha = NEON_GLOW_ALPHA_MIN + NEON_GLOW_ALPHA_SPAN * s
-        r.saveLayerAlpha(paintBounds(), glowAlpha)
-        if (g.outline.size >= 3) r.fillPolygonGlow(g.outline, body, FillRule.NONZERO, glowR)
-        for (cap in g.caps) if (cap.radius > 0.0) r.fillCircleGlow(cap.center, cap.radius, body, glowR)
-        r.restore()
+        // 1) Wide, faint outer bloom.
+        paintBloom(r, g, body, neonGlowRadius(), NEON_BLOOM_WIDE_ALPHA_MIN + NEON_BLOOM_WIDE_ALPHA_SPAN * s)
 
-        // 2) Tube body — the saturated colour shows at the rim.
-        paintFills(r, g, body)
+        // 2) Tight, brighter bloom: saturated colour hugging the line.
+        val tightR = (config.baseWidth * (NEON_BLOOM_TIGHT_FACTOR_MIN + NEON_BLOOM_TIGHT_FACTOR_SPAN * s))
+            .coerceAtLeast(NEON_BLOOM_TIGHT_MIN)
+        paintBloom(r, g, body, tightR, NEON_BLOOM_TIGHT_ALPHA_MIN + NEON_BLOOM_TIGHT_ALPHA_SPAN * s)
 
-        // 3) White-hot core on a concentric inner ribbon, blurred inward: solid white
-        //    at the centre, fading out before the rim so the saturated band survives.
-        val coreOutline = g.coreOutline(NEON_CORE_FRAC)
-        val coreR = (config.baseWidth * NEON_CORE_BLUR_FACTOR).coerceAtLeast(NEON_CORE_BLUR_MIN)
+        // 3) Tube body, lifted slightly toward white so it reads as lit.
+        paintFills(r, g, lighten(body, NEON_BODY_LIGHTEN))
+
+        // 4) Solid white-hot core (no blur, so thin lines still read pure white).
+        val core = g.coreOutline(NEON_CORE_FRAC)
         val white = Rgba(255, 255, 255, 255)
-        if (coreOutline.size >= 3) r.fillPolygonGlow(coreOutline, white, FillRule.NONZERO, coreR, inner = true)
+        if (core.size >= 3) r.fillPolygon(core, white, FillRule.NONZERO)
         for (cap in g.caps) {
             val cr = cap.radius * NEON_CORE_FRAC
-            if (cr > 0.0) r.fillCircleGlow(cap.center, cr, white, coreR, inner = true)
+            if (cr > 0.0) r.fillCircle(cap.center, cr, white)
         }
+    }
+
+    /** One bloom pass: the blurred ribbon + caps composited once at [alpha]. */
+    private fun paintBloom(r: Renderer, g: StrokeGeometry, color: Rgba, radius: Double, alpha: Double) {
+        r.saveLayerAlpha(paintBounds(), alpha)
+        if (g.outline.size >= 3) r.fillPolygonGlow(g.outline, color, FillRule.NONZERO, radius)
+        for (cap in g.caps) if (cap.radius > 0.0) r.fillCircleGlow(cap.center, cap.radius, color, radius)
+        r.restore()
+    }
+
+    /** [c] lerped a fraction [t] toward white (alpha preserved). */
+    private fun lighten(c: Rgba, t: Double): Rgba {
+        val f = t.coerceIn(0.0, 1.0)
+        return Rgba(
+            (c.r + (255 - c.r) * f).toInt(),
+            (c.g + (255 - c.g) * f).toInt(),
+            (c.b + (255 - c.b) * f).toInt(),
+            c.a,
+        )
     }
 
     override fun bounds(): Rect {
@@ -331,22 +349,25 @@ class Stroke(
     companion object {
         const val KIND = "stroke"
 
-        /** Halo radius = base_width × (MIN + SPAN × neonStrength), floored in page px. */
-        private const val NEON_GLOW_FACTOR_MIN = 0.9
-        private const val NEON_GLOW_FACTOR_SPAN = 2.0
-        private const val NEON_GLOW_MIN = 3.5
+        /** Neon bloom: two stacked NORMAL-blur passes, a wide faint halo under a
+         *  tighter brighter one. Radius = base_width * (MIN + SPAN * neonStrength),
+         *  floored in page px; alpha = MIN + SPAN * neonStrength. */
+        private const val NEON_BLOOM_WIDE_FACTOR_MIN = 1.8
+        private const val NEON_BLOOM_WIDE_FACTOR_SPAN = 5.0
+        private const val NEON_BLOOM_WIDE_MIN = 6.0
+        private const val NEON_BLOOM_WIDE_ALPHA_MIN = 0.10
+        private const val NEON_BLOOM_WIDE_ALPHA_SPAN = 0.32
 
-        /** Halo opacity = MIN + SPAN × neonStrength. */
-        private const val NEON_GLOW_ALPHA_MIN = 0.25
-        private const val NEON_GLOW_ALPHA_SPAN = 0.55
+        private const val NEON_BLOOM_TIGHT_FACTOR_MIN = 0.7
+        private const val NEON_BLOOM_TIGHT_FACTOR_SPAN = 1.8
+        private const val NEON_BLOOM_TIGHT_MIN = 2.5
+        private const val NEON_BLOOM_TIGHT_ALPHA_MIN = 0.40
+        private const val NEON_BLOOM_TIGHT_ALPHA_SPAN = 0.45
 
-        /** Fraction of the tube's half-width the white-hot core ribbon fills; the
-         *  outer remainder stays saturated ink colour — the neon sheath at the rim. */
-        private const val NEON_CORE_FRAC = 0.55
+        /** Fraction of the tube width filled by the solid white-hot core. */
+        private const val NEON_CORE_FRAC = 0.5
 
-        /** White core's inward blur as a multiple of base width, with a page-px floor —
-         *  small enough to leave a solid white plateau inside the (narrow) core ribbon. */
-        private const val NEON_CORE_BLUR_FACTOR = 0.14
-        private const val NEON_CORE_BLUR_MIN = 1.0
+        /** Body colour lifted this fraction toward white so the tube reads as lit. */
+        private const val NEON_BODY_LIGHTEN = 0.10
     }
 }
