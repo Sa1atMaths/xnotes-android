@@ -927,14 +927,15 @@ private fun FolderChip(
 ) {
     val palette = LocalPalette.current
     var menuOpen by remember { mutableStateOf(false) }
+    val accent = palette.accent.toComposeColor()
+    val onAccent = palette.bg.toComposeColor()
     Row(
         Modifier
             .widthIn(max = 220.dp)
-            .clip(RoundedCornerShape(8.dp))
-            // Selected: accent border AND accent transparent fill (matching the file tiles).
-            .background((if (selected) palette.accentAlpha(38) else palette.panel).toComposeColor())
-            .then(if (selected) Modifier.border(1.5.dp, palette.accent.toComposeColor(), RoundedCornerShape(8.dp)) else Modifier)
-            // No tap ripple — the accent border + fill is the only selection cue.
+            // accent-fill toggle: selected fills solid accent with content flipped to bg, otherwise a
+            // thin bordered transparent box. No tap ripple — the colour invert is the only selection cue.
+            .background(if (selected) accent else Color.Transparent)
+            .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -945,10 +946,10 @@ private fun FolderChip(
             .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(XnotesIcons.folder, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(20.dp))
+        Icon(XnotesIcons.folder, null, tint = if (selected) onAccent else accent, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(
-            entryLabel(entry), color = palette.text.toComposeColor(), fontSize = 14.sp,
+            entryLabel(entry), color = if (selected) onAccent else palette.text.toComposeColor(), fontSize = 14.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
         )
         // The overflow button is kept in select mode too, so the chip width (and the row layout) never
@@ -958,7 +959,7 @@ private fun FolderChip(
                 onClick = { if (inSelectMode) onDismissSelection() else menuOpen = true },
                 modifier = Modifier.size(32.dp),
             ) {
-                Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
+                Icon(XnotesIcons.more, "More", tint = if (selected) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
             }
             if (!inSelectMode) EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete)
         }
