@@ -37,8 +37,9 @@
         <provider
             android:name=".platform.AppStorageDocumentsProvider"
             android:authorities="${applicationId}.documents"
-            android:exported="false"
-            android:grantUriPermissions="true" />
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS" />
     </application>
 
 </manifest>
