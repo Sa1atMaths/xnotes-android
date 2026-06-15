@@ -996,6 +996,8 @@ private fun FileTile(
     val onAccent = palette.bg.toComposeColor()
     Column(
         Modifier
+            // Square the whole card; the thumbnail shrinks vertically to leave room for the label strip.
+            .aspectRatio(1f)
             .alpha(if (dimmed) 0.4f else 1f)
             // accent-fill family: one squared outline wraps the thumbnail and the label strip. border
             // draws over its children, so it stays crisp on top of the full-bleed thumbnail.
@@ -1011,7 +1013,7 @@ private fun FileTile(
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f)
+                .weight(1f)
                 .background(palette.paper.toComposeColor()),
         ) {
             val img = thumb
