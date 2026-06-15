@@ -20,6 +20,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -79,6 +80,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -103,6 +105,7 @@ import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -457,11 +460,9 @@ private fun ExplorerSection(
     if (root == null) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(1f))
-            Icon(XnotesIcons.folder, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(48.dp))
-            Spacer(Modifier.height(14.dp))
             Text("Choose a folder to keep and browse your notes in.", color = palette.textDim.toComposeColor(), fontSize = 14.sp)
             Spacer(Modifier.height(16.dp))
-            PrimaryButton("Choose folder", onPickRoot)
+            PrimaryButton(XnotesIcons.folder, "Choose folder", onPickRoot)
             Spacer(Modifier.weight(1f))
         }
         return
@@ -1103,13 +1104,50 @@ private fun NameDialog(
     )
 }
 
+private const val PRESS_FILL_MS = 120L
+
+/** Line glyph above a label in a bordered box; inverts to the accent while pressed. Matches the About pane buttons. */
 @Composable
-private fun PrimaryButton(label: String, onClick: () -> Unit) {
+private fun PrimaryButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     val palette = LocalPalette.current
-    Box(
-        Modifier.clip(RoundedCornerShape(8.dp)).background(palette.accent.toComposeColor()).clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 12.dp),
+    val interaction = remember { MutableInteractionSource() }
+    // Keep the accent fill visible for a minimum time so even a millisecond tap registers.
+    var pressed by remember { mutableStateOf(false) }
+    LaunchedEffect(interaction) {
+        val scope = this
+        var pressedAt = 0L
+        var clearJob: Job? = null
+        interaction.interactions.collect { event ->
+            when (event) {
+                is PressInteraction.Press -> {
+                    clearJob?.cancel()
+                    pressedAt = System.currentTimeMillis()
+                    pressed = true
+                }
+                is PressInteraction.Release, is PressInteraction.Cancel -> {
+                    val remaining = PRESS_FILL_MS - (System.currentTimeMillis() - pressedAt)
+                    clearJob?.cancel()
+                    clearJob = scope.launch {
+                        if (remaining > 0) delay(remaining)
+                        pressed = false
+                    }
+                }
+            }
+        }
+    }
+    val accent = palette.accent.toComposeColor()
+    val onAccent = palette.bg.toComposeColor()
+    Column(
+        Modifier
+            .background(if (pressed) accent else Color.Transparent)
+            .border(1.dp, if (pressed) accent else palette.border.toComposeColor(), RectangleShape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(vertical = 14.dp, horizontal = 22.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(label, color = palette.bg.toComposeColor(), fontWeight = FontWeight.Medium)
+        Icon(icon, null, tint = if (pressed) onAccent else accent, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(8.dp))
+        Text(label, color = if (pressed) onAccent else palette.text.toComposeColor(), fontWeight = FontWeight.Medium)
     }
 }
 
