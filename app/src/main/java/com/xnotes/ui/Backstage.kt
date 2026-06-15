@@ -598,7 +598,7 @@ private fun ExplorerSection(
         // A fixed column count per orientation, derived from the full screen width (not the pane), so
         // toggling the sidebar never changes how many tiles are in a row — closing it just widens the
         // pane and enlarges the tiles.
-        val gridColumns = (LocalConfiguration.current.screenWidthDp / 190).coerceIn(2, 8)
+        val gridColumns = (LocalConfiguration.current.screenWidthDp / 240).coerceIn(2, 8)
         Box(
             Modifier.weight(1f).fillMaxWidth().then(
                 // In select mode, tapping empty space (not a tile) clears the selection.
