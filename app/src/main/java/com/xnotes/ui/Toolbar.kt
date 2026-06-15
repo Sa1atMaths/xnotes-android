@@ -86,7 +86,6 @@ fun Toolbar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ToolbarIcon(XnotesIcons.prev, "Home") { onOpenBackstage() }
-        EditMenu(editor)
         // Notes autosave into the folder, so no dirty marker; long titles truncate with an ellipsis.
         // Tap to rename.
         Label(
@@ -284,21 +283,6 @@ private fun ImageMenu(editor: Editor, onInsertImage: () -> Unit) {
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("Paste image") }, onClick = { editor.pasteImage(); expanded = false })
             DropdownMenuItem(text = { Text("Insert image…") }, onClick = { onInsertImage(); expanded = false })
-        }
-    }
-}
-
-@Composable
-private fun EditMenu(editor: Editor) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        ToolbarIcon(XnotesIcons.edit, "Edit") { expanded = true }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("Undo") }, enabled = editor.canUndo, onClick = { editor.undo(); expanded = false })
-            DropdownMenuItem(text = { Text("Redo") }, enabled = editor.canRedo, onClick = { editor.redo(); expanded = false })
-            DropdownMenuItem(text = { Text("Delete selection") }, enabled = editor.hasSelection, onClick = { editor.deleteSelection(); expanded = false })
-            DropdownMenuItem(text = { Text("Bring to front") }, enabled = editor.hasSelection, onClick = { editor.bringToFront(); expanded = false })
-            DropdownMenuItem(text = { Text("Select all") }, onClick = { editor.selectAll(); expanded = false })
         }
     }
 }
