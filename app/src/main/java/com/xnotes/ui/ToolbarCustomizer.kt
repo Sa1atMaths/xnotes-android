@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -282,6 +283,14 @@ private fun ToolbarItemChip(
     onBoundsChanged: (Rect) -> Unit,
 ) {
     val palette = LocalPalette.current
+    // The pointerInput blocks key on the stable [item], so they never restart across
+    // recomposition; rememberUpdatedState keeps the gestures calling the latest callbacks
+    // (which close over the current layout) instead of the stale first-composition ones.
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
     Row(
         Modifier
             .alpha(
@@ -295,13 +304,13 @@ private fun ToolbarItemChip(
             .background(palette.surface.toComposeColor())
             .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(6.dp))
             .onGloballyPositioned { onBoundsChanged(it.boundsInRoot()) }
-            .pointerInput(item) { detectTapGestures(onTap = { onTap() }) }
+            .pointerInput(item) { detectTapGestures(onTap = { currentOnTap() }) }
             .pointerInput(item) {
                 detectDragGesturesAfterLongPress(
-                    onDragStart = { onDragStart(it) },
-                    onDrag = { _, delta -> onDrag(delta) },
-                    onDragEnd = onDragEnd,
-                    onDragCancel = onDragCancel,
+                    onDragStart = { currentOnDragStart(it) },
+                    onDrag = { _, delta -> currentOnDrag(delta) },
+                    onDragEnd = { currentOnDragEnd() },
+                    onDragCancel = { currentOnDragCancel() },
                 )
             }
             .padding(horizontal = 8.dp, vertical = 6.dp),
