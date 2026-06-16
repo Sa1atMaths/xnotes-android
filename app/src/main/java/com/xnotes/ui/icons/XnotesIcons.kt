@@ -62,17 +62,8 @@ object XnotesIcons {
     )
     val text = icon("M4 7V4h16v3", "M9 20h6", "M12 4v16")
     val image = icon(rect(3.0, 3.0, 18.0, 18.0), circle(8.5, 8.5, 1.5), "M21 15l-5-5L5 21")
-    // The screenshot tool: scissors snipping along a dashed line (Lucide "scissors-line-dashed"),
-    // deliberately distinct from the plain Cut scissors in the selection bar.
-    val scissors = icon(
-        circle(4.0, 8.0, 2.0),
-        circle(4.0, 16.0, 2.0),
-        "M5.42 9.42 8 12",
-        "m14 6-8.58 8.58",
-        "M10.8 14.8 14 18",
-        "M16 12h-2",
-        "M22 12h-2",
-    )
+    // The screenshot tool: plain scissors (Feather "scissors"), the same glyph as Cut.
+    val scissors = icon(circle(6.0, 6.0, 3.0), circle(6.0, 18.0, 3.0), "M20 4 8.12 15.88", "M14.47 14.48 20 20", "M8.12 8.12 12 12")
 
     // Shape-kind glyphs for the shape tool's kind picker (line / arrow / rect / ellipse / circle / triangle).
     val shapeLine = icon("M5 19 19 5")
