@@ -260,4 +260,85 @@ class ShapeRecognizerTest {
         assertEquals(ShapeKind.LINE, rec!!.kind)
         assertTrue(rec.start.x < rec.end.x)
     }
+
+    // --- axis snapping (horizontal / vertical) ---
+
+    @Test fun nearHorizontalLineSnapsFlat() {
+        // ~1.5° off horizontal: well inside the snap angle, so both ends level to one y.
+        val rec = ShapeRecognizer.recognizePoints(line(Pt(20.0, 100.0), Pt(320.0, 108.0), 30, 2.0))
+        assertNotNull(rec)
+        assertEquals(ShapeKind.LINE, rec!!.kind)
+        assertEquals(rec.start.y, rec.end.y, 1e-9)
+        assertTrue(rec.start.x < rec.end.x)
+    }
+
+    @Test fun nearVerticalLineSnapsFlat() {
+        // ~1.5° off vertical: both ends line up on one x.
+        val rec = ShapeRecognizer.recognizePoints(line(Pt(100.0, 20.0), Pt(108.0, 320.0), 30, 2.0))
+        assertNotNull(rec)
+        assertEquals(ShapeKind.LINE, rec!!.kind)
+        assertEquals(rec.start.x, rec.end.x, 1e-9)
+        assertTrue(rec.start.y < rec.end.y)
+    }
+
+    @Test fun tiltedLineBeyondThresholdStaysTilted() {
+        // ~27° off horizontal: too steep to snap, so the line keeps its drawn slant.
+        val rec = ShapeRecognizer.recognizePoints(line(Pt(40.0, 60.0), Pt(340.0, 210.0), 30, 2.0))
+        assertNotNull(rec)
+        assertEquals(ShapeKind.LINE, rec!!.kind)
+        assertTrue("a clearly slanted line is left alone", abs(rec.end.y - rec.start.y) > 100.0)
+    }
+
+    @Test fun zigZagStaircaseSnapsAxisAligned() {
+        // A slightly skewed staircase: every run is near an axis, so all three edges square up.
+        val stair = polyline(
+            listOf(Pt(40.0, 100.0), Pt(200.0, 108.0), Pt(208.0, 260.0), Pt(368.0, 268.0)),
+            perEdge = 18, noise = 3.0,
+        )
+        val rec = ShapeRecognizer.recognizePoints(stair)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.POLYLINE, rec!!.kind)
+        val v = rec.vertices!!
+        assertEquals(4, v.size)
+        assertEquals("first run is horizontal", v[0].y, v[1].y, 1e-9)
+        assertEquals("middle run is vertical", v[1].x, v[2].x, 1e-9)
+        assertEquals("last run is horizontal", v[2].y, v[3].y, 1e-9)
+    }
+
+    @Test fun triangleNearHorizontalBaseLevels() {
+        // A triangle whose base is ~1.5° off level: the base flattens, the steep sides are left alone.
+        val tri = polygon(
+            listOf(Pt(200.0, 40.0), Pt(360.0, 344.0), Pt(40.0, 336.0)),
+            perEdge = 22, noise = 3.0,
+        )
+        val rec = ShapeRecognizer.recognizePoints(tri)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.POLYGON, rec!!.kind)
+        val v = rec.vertices!!
+        assertEquals(3, v.size)
+        var horiz = 0
+        for (i in v.indices) {
+            val a = v[i]
+            val b = v[(i + 1) % v.size]
+            if (abs(a.y - b.y) < 1e-9) horiz++
+        }
+        assertEquals("exactly the base levels to horizontal", 1, horiz)
+    }
+
+    @Test fun diagonalEdgesAreNotSnapped() {
+        // A 45°-rotated square: every edge is far from both axes, so none should be straightened.
+        val diamond = polygon(
+            listOf(Pt(200.0, 60.0), Pt(340.0, 200.0), Pt(200.0, 340.0), Pt(60.0, 200.0)),
+            perEdge = 18, noise = 4.0,
+        )
+        val rec = ShapeRecognizer.recognizePoints(diamond)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.POLYGON, rec!!.kind)
+        val v = rec.vertices!!
+        for (i in v.indices) {
+            val a = v[i]
+            val b = v[(i + 1) % v.size]
+            assertTrue("a 45° edge keeps both components", abs(a.x - b.x) > 20.0 && abs(a.y - b.y) > 20.0)
+        }
+    }
 }

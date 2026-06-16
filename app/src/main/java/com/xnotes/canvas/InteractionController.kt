@@ -1120,8 +1120,25 @@ class InteractionController(
     private fun extendShape(content: Pt) {
         val shape = pendingShape ?: return
         val pr = state.pageRects.getOrNull(shapePageIndex ?: -1) ?: return
-        shape.end = Pt(content.x - pr.left, content.y - pr.top)
+        val raw = Pt(content.x - pr.left, content.y - pr.top)
+        // Line/arrow: pin the dragged end flat when it lands near an axis (closed shapes keep their box).
+        shape.end = if (shape.shape.isEndpointShape) snapAxisEndpoint(shape.start, raw) else raw
         requestRender()
+    }
+
+    /** Snap a line/arrow's dragged endpoint to an exactly horizontal or vertical run from [anchor]
+     *  when it lands within [SHAPE_AXIS_SNAP_DEG] of one (mirrors the recognizer's axis snap). */
+    private fun snapAxisEndpoint(anchor: Pt, p: Pt): Pt {
+        val dx = p.x - anchor.x
+        val dy = p.y - anchor.y
+        if (dx == 0.0 && dy == 0.0) return p
+        val snap = Math.toRadians(SHAPE_AXIS_SNAP_DEG)
+        val fromHoriz = atan2(abs(dy), abs(dx)) // 0 = horizontal, PI/2 = vertical
+        return when {
+            fromHoriz <= snap -> Pt(p.x, anchor.y)
+            fromHoriz >= Math.PI / 2.0 - snap -> Pt(anchor.x, p.y)
+            else -> p
+        }
     }
 
     private fun endShape() {
@@ -2265,6 +2282,9 @@ class InteractionController(
         /** Shape size -> thickness: the midpoint of the default pen's pressure width range (m=0.35..1.0),
          *  so a shape reads as thick as a same-size pen instead of as a flat full-width line. */
         const val SHAPE_PEN_PARITY = 0.675
+
+        /** A line/arrow drawn with the shape tool snaps flat when within this angle (deg) of an axis. */
+        const val SHAPE_AXIS_SNAP_DEG = 8.0
 
         // Inertial fling tuning (viewport px/s).
         const val VEL_SMOOTH = 0.4 // EMA weight on the previous velocity estimate

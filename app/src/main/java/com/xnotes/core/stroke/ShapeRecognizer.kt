@@ -5,7 +5,9 @@ import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.tools.ShapeKind
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -29,8 +31,8 @@ data class RecognizedShape(
  * match (the caller then leaves the stroke as ink).
  *
  * Pure and deterministic so it can be unit-tested on the plain JVM, like [StrokeEngine].
- * Works in page-local content px; every threshold is a fraction of the stroke's
- * bounding-box diagonal, so recognition is scale- (and zoom-) independent.
+ * Works in page-local content px; thresholds are fractions of the stroke's bounding-box
+ * diagonal or plain angles, so recognition is scale- (and zoom-) independent.
  *
  * Shapes recognized:
  *  - open straight stroke -> [ShapeKind.LINE]
@@ -43,6 +45,9 @@ data class RecognizedShape(
  *
  * Corners drive the closed-shape decision: a smooth outline (no sharp turns) is the only
  * thing that becomes an ellipse, so a hexagon stays a polygon and a circle never does.
+ *
+ * A line, and every polygon/polyline edge, that lands within [AXIS_SNAP_DEG] of horizontal or
+ * vertical is straightened flat ([snapAxisAligned]), the way a near-round blob squares to a circle.
  */
 object ShapeRecognizer {
 
@@ -80,6 +85,12 @@ object ShapeRecognizer {
     /** A 4-gon whose corners each sit within this·diagonal of a distinct bbox corner is an upright rectangle. */
     private const val RECT_CORNER_FRAC = 0.12
 
+    /** A line, or a polygon/polyline edge, within this angle of horizontal or vertical snaps flat.
+     *  Matches the rectangle's corner tolerance (RECT_CORNER_FRAC·diag is about a 10° edge tilt). */
+    private const val AXIS_SNAP_DEG = 8.0
+
+    private val AXIS_SNAP_RAD = AXIS_SNAP_DEG * PI / 180.0
+
     /** Max edge bow / diagonal for a polygon/polyline edge to count as straight. */
     private const val EDGE_DEV_FRAC = 0.06
 
@@ -116,7 +127,10 @@ object ShapeRecognizer {
         val chord = first.distanceTo(last)
         if (chord > 1e-6) {
             val maxDev = points.maxOf { Geometry.distancePointToSegment(it, first, last) }
-            if (maxDev / chord <= LINE_DEV_FRAC) return RecognizedShape(ShapeKind.LINE, first, last)
+            if (maxDev / chord <= LINE_DEV_FRAC) {
+                val ends = snapAxisAligned(listOf(first, last), closed = false)
+                return RecognizedShape(ShapeKind.LINE, ends[0], ends[1])
+            }
         }
         val path = resample(points, RESAMPLE_N)
         // A multi-segment zig-zag has sharp corners joined by straight runs -> polyline.
@@ -124,7 +138,7 @@ object ShapeRecognizer {
         if (peaks.isNotEmpty() && peaks.size <= MAX_POLY_VERTS) {
             val vertIdx = listOf(0) + peaks + listOf(path.size - 1)
             if (edgesStraight(path, vertIdx, wrap = false, diag)) {
-                val verts = vertIdx.map { path[it] }
+                val verts = snapAxisAligned(vertIdx.map { path[it] }, closed = false)
                 val box = Rect.bounding(verts)
                 return RecognizedShape(ShapeKind.POLYLINE, box.topLeft, Pt(box.right, box.bottom), verts)
             }
@@ -157,7 +171,9 @@ object ShapeRecognizer {
             return if (verts.size == 4 && isAxisAlignedRect(verts, bbox, diag)) {
                 RecognizedShape(ShapeKind.RECTANGLE, topLeft, bottomRight)
             } else {
-                RecognizedShape(ShapeKind.POLYGON, topLeft, bottomRight, verts)
+                val snapped = snapAxisAligned(verts, closed = true)
+                val box = Rect.bounding(snapped)
+                RecognizedShape(ShapeKind.POLYGON, box.topLeft, Pt(box.right, box.bottom), snapped)
             }
         }
 
@@ -293,6 +309,65 @@ object ShapeRecognizer {
             }
         }
         return true
+    }
+
+    /**
+     * Straighten every edge within [AXIS_SNAP_RAD] of horizontal or vertical, sharing the move
+     * across the corners each edge owns so the path stays connected (a closed polygon stays
+     * closed). Each edge is classified once; then the two axes are solved independently by
+     * union-find: vertices tied by horizontal edges take their group's mean y, those tied by
+     * vertical edges their mean x, so a snapped corner only ever moves along the axis being
+     * straightened.
+     */
+    private fun snapAxisAligned(verts: List<Pt>, closed: Boolean): List<Pt> {
+        val m = verts.size
+        if (m < 2) return verts
+        val xGroup = IntArray(m) { it }
+        val yGroup = IntArray(m) { it }
+        val edges = if (closed) m else m - 1
+        for (e in 0 until edges) {
+            val a = verts[e]
+            val b = verts[(e + 1) % m]
+            val dx = b.x - a.x
+            val dy = b.y - a.y
+            if (hypot(dx, dy) < 1e-9) continue
+            val fromHoriz = atan2(abs(dy), abs(dx)) // 0 = horizontal, PI/2 = vertical
+            when {
+                fromHoriz <= AXIS_SNAP_RAD -> ufUnion(yGroup, e, (e + 1) % m)
+                fromHoriz >= PI / 2.0 - AXIS_SNAP_RAD -> ufUnion(xGroup, e, (e + 1) % m)
+            }
+        }
+        val xMean = groupMeans(xGroup, DoubleArray(m) { verts[it].x })
+        val yMean = groupMeans(yGroup, DoubleArray(m) { verts[it].y })
+        return List(m) { Pt(xMean[it], yMean[it]) }
+    }
+
+    private fun ufFind(group: IntArray, i: Int): Int {
+        var root = i
+        while (group[root] != root) root = group[root]
+        var cur = i
+        while (group[cur] != cur) {
+            val next = group[cur]
+            group[cur] = root
+            cur = next
+        }
+        return root
+    }
+
+    private fun ufUnion(group: IntArray, a: Int, b: Int) {
+        group[ufFind(group, a)] = ufFind(group, b)
+    }
+
+    /** Replace each coordinate with the mean of its union-find group (so a group lands on one line). */
+    private fun groupMeans(group: IntArray, coords: DoubleArray): DoubleArray {
+        val sum = HashMap<Int, Double>()
+        val count = HashMap<Int, Int>()
+        for (i in coords.indices) {
+            val root = ufFind(group, i)
+            sum[root] = (sum[root] ?: 0.0) + coords[i]
+            count[root] = (count[root] ?: 0) + 1
+        }
+        return DoubleArray(coords.size) { val root = ufFind(group, it); sum[root]!! / count[root]!! }
     }
 
     /** RMS of `sqrt((x/rx)^2 + (y/ry)^2) - 1` about the bbox centre: 0 on a perfect inscribed ellipse. */
