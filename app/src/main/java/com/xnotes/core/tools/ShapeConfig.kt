@@ -9,7 +9,8 @@ enum class ShapeKind(val id: String) {
     ELLIPSE("ellipse"),
     TRIANGLE("triangle"),
     POLYGON("polygon"),
-    POLYLINE("polyline");
+    POLYLINE("polyline"),
+    CURVE("curve");
 
     /** Closed shapes are stroked and optionally filled; open shapes never fill. */
     val isClosed: Boolean get() = this == RECTANGLE || this == ELLIPSE || this == TRIANGLE || this == POLYGON

@@ -35,6 +35,8 @@ data class RecognizedShape(
  * Shapes recognized:
  *  - open straight stroke -> [ShapeKind.LINE]
  *  - open multi-segment zig-zag -> [ShapeKind.POLYLINE] (vertices preserved)
+ *  - any other smooth open stroke (a C, an S, ...) -> [ShapeKind.CURVE] (a fitted Bézier
+ *    spline, sampled to a dense polyline)
  *  - closed round blob -> [ShapeKind.ELLIPSE] (snapped to a circle when nearly round)
  *  - closed n-gon with sharp corners -> [ShapeKind.RECTANGLE] when it is an upright box,
  *    else [ShapeKind.POLYGON] (vertices preserved, including 3-corner triangles)
@@ -67,6 +69,11 @@ object ShapeRecognizer {
 
     private val CORNER_ANGLE_RAD = CORNER_ANGLE_DEG * PI / 180.0
 
+    /** A corner candidate must also turn this sharply over a tight window, else it is a smooth bend. */
+    private const val SHARP_CORNER_DEG = 42.0
+
+    private val SHARP_CORNER_RAD = SHARP_CORNER_DEG * PI / 180.0
+
     /** Shorter axis / longer axis at or above this snaps a recognized ellipse to a circle. */
     private const val CIRCLE_ASPECT_MIN = 0.80
 
@@ -78,6 +85,12 @@ object ShapeRecognizer {
 
     /** More inferred corners than this means a noisy blob, not a drawn polygon. */
     private const val MAX_POLY_VERTS = 12
+
+    /** Cubic-fit error tolerance for a snapped curve, as a fraction of the bbox diagonal. */
+    private const val CURVE_FIT_TOL_FRAC = 0.03
+
+    /** Points sampled per fitted Bézier segment when a curve is turned back into a polyline. */
+    private const val CURVE_SAMPLES_PER_SEG = 16
 
     /** Recognize from raw stroke samples (the page-local positions are what matter). */
     fun recognize(samples: List<Sample>): RecognizedShape? = recognizePoints(samples.map { it.pos })
@@ -104,16 +117,27 @@ object ShapeRecognizer {
             val maxDev = points.maxOf { Geometry.distancePointToSegment(it, first, last) }
             if (maxDev / chord <= LINE_DEV_FRAC) return RecognizedShape(ShapeKind.LINE, first, last)
         }
-        // Otherwise a multi-segment zig-zag with sharp corners and straight runs; a smooth arc
-        // has no sharp corners, so it falls through to null and stays ink.
         val path = resample(points, RESAMPLE_N)
+        // A multi-segment zig-zag has sharp corners joined by straight runs -> polyline.
         val peaks = cornerPeaks(path, wrap = false)
-        if (peaks.isEmpty() || peaks.size > MAX_POLY_VERTS) return null
-        val vertIdx = listOf(0) + peaks + listOf(path.size - 1)
-        if (!edgesStraight(path, vertIdx, wrap = false, diag)) return null
-        val verts = vertIdx.map { path[it] }
-        val box = Rect.bounding(verts)
-        return RecognizedShape(ShapeKind.POLYLINE, box.topLeft, Pt(box.right, box.bottom), verts)
+        if (peaks.isNotEmpty() && peaks.size <= MAX_POLY_VERTS) {
+            val vertIdx = listOf(0) + peaks + listOf(path.size - 1)
+            if (edgesStraight(path, vertIdx, wrap = false, diag)) {
+                val verts = vertIdx.map { path[it] }
+                val box = Rect.bounding(verts)
+                return RecognizedShape(ShapeKind.POLYLINE, box.topLeft, Pt(box.right, box.bottom), verts)
+            }
+        }
+        // Otherwise a smooth freehand curve (a C, an S, any flowing open stroke): fit a clean
+        // Bézier spline and hand it back sampled as a dense polyline.
+        return curveFrom(path, diag)
+    }
+
+    private fun curveFrom(path: List<Pt>, diag: Double): RecognizedShape? {
+        val curve = CurveFit.fitSampled(path, CURVE_FIT_TOL_FRAC * diag, CURVE_SAMPLES_PER_SEG)
+        if (curve.size < 3) return null
+        val box = Rect.bounding(curve)
+        return RecognizedShape(ShapeKind.CURVE, box.topLeft, Pt(box.right, box.bottom), curve)
     }
 
     // --- closed paths: polygon (incl. rectangle) or ellipse/circle ---
@@ -230,8 +254,22 @@ object ShapeRecognizer {
                 i++
             }
         }
+        // Keep only peaks that are genuinely sharp (a localized turn), dropping smooth bends that
+        // a wide window can read as corners. This is what separates a tight S-curve from a zig-zag.
+        peaks.retainAll { isSharpCorner(path, it, wrap) }
         peaks.sort()
         return peaks
+    }
+
+    /** True if the turn at [i] is sharp over a tight window (a real corner, not a flowing bend). */
+    private fun isSharpCorner(path: List<Pt>, i: Int, wrap: Boolean): Boolean {
+        val n = path.size
+        val kt = 2
+        if (!wrap && (i - kt < 0 || i + kt >= n)) return true // at an open end; endpoints handled elsewhere
+        val prev = path[(i - kt + n) % n]
+        val cur = path[i]
+        val next = path[(i + kt) % n]
+        return angleBetween(cur - prev, next - cur) >= SHARP_CORNER_RAD
     }
 
     /** True if every edge between consecutive vertices stays within [EDGE_DEV_FRAC]·diag of straight. */

@@ -388,7 +388,7 @@ private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRan
 
 /** Glyph shown in the shape-kind picker for each [ShapeKind]. */
 private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
-    ShapeKind.LINE, ShapeKind.POLYLINE -> XnotesIcons.shapeLine
+    ShapeKind.LINE, ShapeKind.POLYLINE, ShapeKind.CURVE -> XnotesIcons.shapeLine
     ShapeKind.ARROW -> XnotesIcons.shapeArrow
     ShapeKind.RECTANGLE -> XnotesIcons.shapeRect
     ShapeKind.ELLIPSE -> XnotesIcons.shapeEllipse

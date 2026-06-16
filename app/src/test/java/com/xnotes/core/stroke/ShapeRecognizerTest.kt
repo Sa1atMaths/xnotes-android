@@ -190,13 +190,31 @@ class ShapeRecognizerTest {
         assertNull(ShapeRecognizer.recognizePoints(circle(10.0, 10.0, 6.0, 40, 0.5)))
     }
 
-    @Test fun openArcIsNotAShape() {
-        // Half circle: ends sit a diameter apart (open) and it bows far from its chord (not a line).
+    @Test fun openArcSnapsToCurve() {
+        // Half circle: ends sit a diameter apart (open) and it bows far from its chord (not a line);
+        // with no sharp corners it is a smooth curve, not a polyline.
         val arc = (0..40).map { i ->
             val a = PI * i / 40.0
             Pt(200.0 + 150.0 * cos(a), 200.0 + 150.0 * sin(a))
         }
-        assertNull(ShapeRecognizer.recognizePoints(arc))
+        val rec = ShapeRecognizer.recognizePoints(arc)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.CURVE, rec!!.kind)
+        assertTrue(rec.vertices!!.size >= 4)
+    }
+
+    @Test fun sCurveSnapsToCurve() {
+        // One sine period over a descending y: a flowing S with two bends and no sharp corners.
+        val s = (0..60).map { i ->
+            val t = i / 60.0
+            Pt(200.0 + 90.0 * sin(2.0 * PI * t) + jit(3.0), 40.0 + 320.0 * t + jit(3.0))
+        }
+        val rec = ShapeRecognizer.recognizePoints(s)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.CURVE, rec!!.kind)
+        // The fit keeps the stroke's endpoints.
+        assertEquals(s.first().x, rec.vertices!!.first().x, 18.0)
+        assertEquals(s.last().x, rec.vertices!!.last().x, 18.0)
     }
 
     // --- properties ---

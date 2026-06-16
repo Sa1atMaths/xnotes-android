@@ -98,7 +98,7 @@ class ShapeItem(
             ShapeKind.ELLIPSE -> r.fillEllipse(b.center, b.w / 2.0, b.h / 2.0, fill)
             ShapeKind.TRIANGLE -> r.fillPolygon(triangleVertices(), fill)
             ShapeKind.POLYGON -> r.fillPolygon(absPoints(), fill)
-            ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.POLYLINE -> {}
+            ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.POLYLINE, ShapeKind.CURVE -> {}
         }
     }
 
@@ -111,7 +111,7 @@ class ShapeItem(
             ShapeKind.ELLIPSE -> r.strokeEllipse(b.center, b.w / 2.0, b.h / 2.0, pen)
             ShapeKind.TRIANGLE -> r.strokePolygon(triangleVertices(), pen)
             ShapeKind.POLYGON -> r.strokePolygon(absPoints(), pen)
-            ShapeKind.POLYLINE -> r.strokePolyline(absPoints(), pen)
+            ShapeKind.POLYLINE, ShapeKind.CURVE -> r.strokePolyline(absPoints(), pen)
         }
     }
 
@@ -193,7 +193,7 @@ class ShapeItem(
                 val v = absPoints()
                 if (fillRgba != null) Geometry.pointInPolygon(v, p) else nearPolyOutline(v, p, tol)
             }
-            ShapeKind.POLYLINE -> nearPolyOutline(absPoints(), p, tol, closed = false)
+            ShapeKind.POLYLINE, ShapeKind.CURVE -> nearPolyOutline(absPoints(), p, tol, closed = false)
         }
     }
 
@@ -239,7 +239,7 @@ class ShapeItem(
                 val v = absPoints()
                 if (fillRgba != null && Geometry.pointInPolygon(v, p)) true else nearPolyOutline(v, p, tol)
             }
-            ShapeKind.POLYLINE -> nearPolyOutline(absPoints(), p, tol, closed = false)
+            ShapeKind.POLYLINE, ShapeKind.CURVE -> nearPolyOutline(absPoints(), p, tol, closed = false)
         }
     }
 
