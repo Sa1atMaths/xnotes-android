@@ -45,6 +45,7 @@ import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolDefaults
+import com.xnotes.core.tools.ToolbarLayout
 import com.xnotes.format.DocumentCodec
 import com.xnotes.format.XNoteFormatException
 import com.xnotes.platform.AndroidImageCodec
@@ -183,6 +184,8 @@ class Editor(context: Context) {
     var activeColorIndex by mutableStateOf(0)
         private set
     var toolbarColors by mutableStateOf(InkPalette.toolbarDefaults)
+        private set
+    var toolbarLayout by mutableStateOf(ToolbarLayout.DEFAULT)
         private set
     var renderScale by mutableStateOf(1.0)
         private set
@@ -651,6 +654,7 @@ class Editor(context: Context) {
 
     private fun applySettings() {
         toolbarColors = settings.toolbarColors
+        toolbarLayout = settings.toolbarLayout
         activeColorIndex = settings.activeColor.coerceIn(0, toolbarColors.lastIndex)
         // Render always at 1x (the DPI/supersampling control was removed).
         renderScale = 1.0
@@ -687,6 +691,13 @@ class Editor(context: Context) {
         }
         settingsRepo.save(settings)
         view.requestRender()
+    }
+
+    /** Apply an edited toolbar layout live and persist (used by the toolbar customiser). */
+    fun applyToolbarLayout(layout: ToolbarLayout) {
+        toolbarLayout = layout
+        settings = settings.copy(toolbarLayout = layout)
+        settingsRepo.save(settings)
     }
 
     /** Snapshot live state into settings and save (call on pause/stop). */
