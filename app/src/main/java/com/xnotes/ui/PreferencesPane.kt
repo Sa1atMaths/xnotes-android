@@ -64,7 +64,7 @@ private val penButtonOptions = listOf("eraser" to "Eraser", "pan" to "Pan", "sel
  * immediately, including in the surrounding backstage.
  */
 @Composable
-fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> Unit) {
+fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> Unit, onOpenToolbar: () -> Unit) {
     val palette = LocalPalette.current
     var prefs by remember { mutableStateOf(editor.preferences) }
     fun update(p: Preferences) {
@@ -92,6 +92,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SectionTitle("General")
+            ToolbarEntry(onOpenToolbar)
             FieldLabel("UI theme")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("Dark", prefs.uiAppearance == "dark") { update(prefs.copy(uiAppearance = "dark")) }
@@ -164,6 +165,24 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             }
             Spacer(Modifier.size(8.dp))
         }
+    }
+}
+
+@Composable
+private fun ToolbarEntry(onClick: () -> Unit) {
+    val palette = LocalPalette.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(XnotesIcons.sliders, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(12.dp))
+        Text("Customize toolbar", color = palette.text.toComposeColor(), fontSize = 14.sp)
+        Spacer(Modifier.weight(1f))
+        Icon(XnotesIcons.next, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
     }
 }
 
