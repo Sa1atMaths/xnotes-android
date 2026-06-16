@@ -102,6 +102,10 @@ fun Toolbar(
 
         // Tools (P C H E | Pan V L | S T); re-clicking the armed stroke/shape tool opens its popup.
         toolIcons.forEachIndexed { i, (tool, icon) ->
+            // Magic wand toggle sits immediately before the shape tool (the ruler sits after it).
+            if (tool == Tool.SHAPE) {
+                ToolbarIcon(XnotesIcons.magicWand, "Magic wand", active = editor.wandEnabled) { editor.toggleWand() }
+            }
             Box {
                 ToolbarIcon(icon, tool.name, active = editor.tool == tool) {
                     if (editor.tool == tool && (tool.isStroke || tool == Tool.SHAPE || tool == Tool.ERASER)) {

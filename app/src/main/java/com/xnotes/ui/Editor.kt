@@ -202,6 +202,8 @@ class Editor(context: Context) {
         private set
     var rulerVisible by mutableStateOf(false)
         private set
+    var wandEnabled by mutableStateOf(false)
+        private set
     var hasSelection by mutableStateOf(false)
         private set
     var shapeConfig by mutableStateOf(ShapeConfig())
@@ -1778,6 +1780,11 @@ class Editor(context: Context) {
     fun toggleRuler() {
         controller.toggleRuler()
         rulerVisible = controller.rulerVisible()
+    }
+
+    fun toggleWand() {
+        controller.toggleWand()
+        wandEnabled = controller.wandEnabled()
     }
 
     /** Show (or re-arm) the transient "lock zoom" hint after a pinch snaps to fit-to-width. */
