@@ -200,7 +200,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 TextButton(onClick = { editor.applyToolbarLayout(ToolbarLayout.DEFAULT) }) { Text("Reset", fontSize = 13.sp) }
             }
             Text(
-                "Tap a tool to show or hide it. Long-press to drag it within or across sections. Use a section's X to remove it (its tools move to the neighbour).",
+                "Tap a tool to show or hide it. Long-press to drag it within or across sections.",
                 color = palette.textDim.toComposeColor(),
                 fontSize = 12.sp,
             )
