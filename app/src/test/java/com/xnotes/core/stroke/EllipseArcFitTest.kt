@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sin
 
@@ -47,6 +48,39 @@ class EllipseArcFitTest {
             val ux = dx * cos(th) + dy * sin(th)
             val uy = -dx * sin(th) + dy * cos(th)
             assertEquals(1.0, (ux / 180.0).pow(2) + (uy / 90.0).pow(2), 0.08)
+        }
+    }
+
+    @Test fun fitsLargeArcAtPageScale() {
+        // A big C high in page coordinates: the direct fit must stay conditioned and trace the arc,
+        // not collapse to straight chords. Radius 600 sampled points must stay near radius 600.
+        val cx = 1500.0
+        val cy = 1200.0
+        val r = 600.0
+        val arc = (0..50).map { i ->
+            val a = -PI * 0.7 + (1.4 * PI) * i / 50
+            Pt(cx + r * cos(a), cy + r * sin(a))
+        }
+        val sampled = EllipseArcFit.fitSampled(arc, 18.0, 20)
+        for (p in sampled) assertEquals(r, hypot(p.x - cx, p.y - cy), 14.0)
+    }
+
+    @Test fun nonEllipticalCurveStaysDenseNotChords() {
+        // A parabola arc (not a true ellipse): the fitter must approximate it with smooth arcs,
+        // never collapse short sub-segments to straight chords (the "joined straight lines" bug).
+        val pts = (0..60).map { i ->
+            val x = -150.0 + 300.0 * i / 60
+            Pt(400.0 + x, 300.0 + x * x / 300.0)
+        }
+        val sampled = EllipseArcFit.fitSampled(pts, 0.05 * hypot(300.0, 75.0), 18)
+        assertTrue("expected a dense smooth curve, got ${sampled.size} points", sampled.size >= 14)
+        for (p in pts) {
+            var nearest = Double.MAX_VALUE
+            for (j in 0 until sampled.size - 1) {
+                val d = Geometry.distancePointToSegment(p, sampled[j], sampled[j + 1])
+                if (d < nearest) nearest = d
+            }
+            assertTrue("point strayed from the fit: $nearest", nearest <= 8.0)
         }
     }
 

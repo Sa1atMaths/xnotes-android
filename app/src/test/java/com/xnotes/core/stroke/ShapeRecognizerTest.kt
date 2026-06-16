@@ -11,6 +11,7 @@ import java.util.Random
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
 
 /** Synthetic, seeded handwriting vectors exercising [ShapeRecognizer]. */
@@ -155,6 +156,20 @@ class ShapeRecognizerTest {
         assertNotNull(rec)
         assertEquals(ShapeKind.POLYLINE, rec!!.kind)
         assertTrue("expected the zig-zag corners preserved", rec.vertices!!.size in 4..6)
+    }
+
+    @Test fun handDrawnCStaysSmoothCurve() {
+        val cx = 400.0
+        val cy = 400.0
+        val r = 250.0
+        val c = (0..70).map { i ->
+            val a = -PI * 0.55 + (1.3 * PI) * i / 70
+            Pt(cx + r * cos(a) + jit(3.0), cy + r * sin(a) + jit(3.0))
+        }
+        val rec = ShapeRecognizer.recognizePoints(c)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.CURVE, rec!!.kind)
+        for (p in rec.vertices!!) assertEquals(r, hypot(p.x - cx, p.y - cy), 34.0)
     }
 
     @Test fun clearOvalStaysEllipse() {

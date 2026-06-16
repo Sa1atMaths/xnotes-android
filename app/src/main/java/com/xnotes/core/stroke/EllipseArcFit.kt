@@ -27,6 +27,9 @@ object EllipseArcFit {
     /** Fewer points than this can't pin down an ellipse, so the run is treated as straight. */
     private const val MIN_SEG_PTS = 6
 
+    /** A run counts as straight only if it bows less than this fraction of its own chord. */
+    private const val STRAIGHT_REL = 0.04
+
     /** Conic A x² + B xy + C y² + D x + E y + F = 0. */
     private class Conic(
         val a: Double, val b: Double, val c: Double,
@@ -54,7 +57,7 @@ object EllipseArcFit {
 
     /** Append the arc(s) for pts[[first]..[last]] to [out], which already ends with pts[first]. */
     private fun fitArcs(pts: List<Pt>, first: Int, last: Int, tol: Double, samples: Int, out: MutableList<Pt>) {
-        if (isStraight(pts, first, last, tol)) {
+        if (isStraight(pts, first, last)) {
             out.add(pts[last])
             return
         }
@@ -79,10 +82,14 @@ object EllipseArcFit {
         }
     }
 
-    private fun isStraight(pts: List<Pt>, first: Int, last: Int, tol: Double): Boolean {
+    // Straight relative to its OWN chord, so a short sub-segment of a curve is not mistaken for a
+    // line and flattened to a chord (which made a snapped curve look like joined straight pieces).
+    private fun isStraight(pts: List<Pt>, first: Int, last: Int): Boolean {
         val a = pts[first]
         val b = pts[last]
-        if (a.distanceTo(b) < 1e-6) return false
+        val chord = a.distanceTo(b)
+        if (chord < 1e-6) return false
+        val tol = STRAIGHT_REL * chord
         for (i in (first + 1) until last) {
             if (Geometry.distancePointToSegment(pts[i], a, b) > tol) return false
         }

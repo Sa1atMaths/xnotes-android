@@ -86,8 +86,9 @@ object ShapeRecognizer {
     /** More inferred corners than this means a noisy blob, not a drawn polygon. */
     private const val MAX_POLY_VERTS = 12
 
-    /** Cubic-fit error tolerance for a snapped curve, as a fraction of the bbox diagonal. */
-    private const val CURVE_FIT_TOL_FRAC = 0.03
+    /** Arc-fit error tolerance for a snapped curve (when to split into another arc), as a
+     *  fraction of the bbox diagonal. */
+    private const val CURVE_FIT_TOL_FRAC = 0.05
 
     /** Points sampled per fitted Bézier segment when a curve is turned back into a polyline. */
     private const val CURVE_SAMPLES_PER_SEG = 16
