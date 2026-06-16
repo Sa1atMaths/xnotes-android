@@ -59,7 +59,7 @@ import kotlin.math.sin
 
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode {
-    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHAPE, MOVE, RESIZE, PAN, PINCH, TEXT_DRAG,
+    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, PAN, PINCH, TEXT_DRAG,
     RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE,
 }
 
@@ -106,6 +106,8 @@ class InteractionController(
     private val onTextEditEnd: () -> Unit = {},
     /** Selection menu: a viewport rect to show it anchored to, or null to hide. */
     private val onSelectionMenu: (Rect?) -> Unit = {},
+    /** Screenshot menu: a viewport rect to anchor the "copy as image" bar to, or null to hide. */
+    private val onScreenshotMenu: (Rect?) -> Unit = {},
     /** Long-press on empty space: open a context menu at (viewport, content). */
     private val onContextMenu: (Pt, Pt) -> Unit = { _, _ -> },
     /** Pulled past the document's bottom end far enough and released: append a new page. */
@@ -225,6 +227,13 @@ class InteractionController(
     private var moveOrigin = Pt.ZERO
     private var moveOffset = Pt.ZERO
 
+    // SCREENSHOT (drag a rectangle; on release it stays frozen and offers "copy as image")
+    /** The capture rectangle in content space: live while dragging (mode == SHOT), then frozen
+     *  with its menu showing until copied, dismissed, or the tool changes. */
+    var screenshotRect: Rect? = null
+        private set
+    private var screenshotOrigin = Pt.ZERO
+
     // ERASE
     private val eraseRemovals = mutableListOf<Pair<Page, CanvasItem>>()
     /** AREA mode: each touched page's item list snapshotted on first contact this gesture, so the
@@ -304,6 +313,7 @@ class InteractionController(
         commitTextEdit()
         abortGesture()
         clearSelection()
+        clearScreenshot()
         eraserCursor = null
         tool = t
         onToolChanged(t)
@@ -456,6 +466,7 @@ class InteractionController(
             }
             effectiveTool == Tool.SELECT -> beginSelect(content)
             effectiveTool == Tool.LASSO -> beginLasso(content)
+            effectiveTool == Tool.SCREENSHOT -> beginScreenshot(content)
             effectiveTool == Tool.SHAPE -> beginShape(content)
             effectiveTool == Tool.TEXT -> beginTextGesture(content)
             else -> Unit
@@ -499,6 +510,7 @@ class InteractionController(
             PointerMode.ERASE -> eraseAt(vx, vy)
             PointerMode.BAND -> extendBand(content)
             PointerMode.LASSO_DRAW -> extendLasso(content)
+            PointerMode.SHOT -> extendScreenshot(content)
             PointerMode.MOVE -> extendMove(content)
             PointerMode.RESIZE -> extendResize(content)
             PointerMode.SHAPE -> extendShape(content)
@@ -549,6 +561,7 @@ class InteractionController(
             PointerMode.ERASE -> { endErase(); maybeSwitchBackAfterErase() }
             PointerMode.BAND -> endBand()
             PointerMode.LASSO_DRAW -> endLasso()
+            PointerMode.SHOT -> endScreenshot()
             PointerMode.MOVE -> endMove(content)
             PointerMode.RESIZE -> endResize()
             PointerMode.SHAPE -> endShape()
@@ -1013,6 +1026,48 @@ class InteractionController(
         mode = PointerMode.IDLE
         refreshSelectionMenu()
         requestRender()
+    }
+
+    // --- SCREENSHOT ---
+
+    private fun beginScreenshot(content: Pt) {
+        clearScreenshot() // drop any previous frozen capture + its menu
+        mode = PointerMode.SHOT
+        screenshotOrigin = content
+        screenshotRect = Rect.fromPoints(content, content)
+    }
+
+    private fun extendScreenshot(content: Pt) {
+        screenshotRect = Rect.fromPoints(screenshotOrigin, content)
+        requestRender()
+    }
+
+    private fun endScreenshot() {
+        mode = PointerMode.IDLE
+        val rect = screenshotRect
+        // A tap or a sliver isn't a capture: drop it. Otherwise freeze the rect and show its menu.
+        if (rect == null || rect.w < SHOT_MIN || rect.h < SHOT_MIN) clearScreenshot()
+        else refreshScreenshotMenu()
+        requestRender()
+    }
+
+    /** Drop the capture rectangle and hide its menu (after a copy, a tool change, or a re-drag). */
+    fun clearScreenshot() {
+        if (screenshotRect == null) return
+        screenshotRect = null
+        onScreenshotMenu(null)
+        requestRender()
+    }
+
+    private fun refreshScreenshotMenu() {
+        val rect = screenshotRect
+        onScreenshotMenu(if (rect != null && mode == PointerMode.IDLE) screenshotRectViewport(rect) else null)
+    }
+
+    private fun screenshotRectViewport(rect: Rect): Rect {
+        val tl = state.contentToViewport(rect.topLeft)
+        val br = state.contentToViewport(Pt(rect.right, rect.bottom))
+        return Rect.fromPoints(tl, br)
     }
 
     // --- MOVE ---
@@ -1848,6 +1903,7 @@ class InteractionController(
         dwellEligible = false
         bandRect = null
         lassoPoints.clear()
+        if (mode == PointerMode.SHOT) clearScreenshot() // a second finger turns the drag into a zoom
         clearOverscroll() // a second finger ends any bottom-pull; the elastic snaps away
         mode = PointerMode.PINCH
         val a = Pt(e.getX(0).toDouble(), e.getY(0).toDouble())
@@ -1915,6 +1971,8 @@ class InteractionController(
         shapePageIndex = null
         bandRect = null
         lassoPoints.clear()
+        // Cancel an in-progress capture drag; a frozen capture (mode IDLE) survives, like lassoPolygon.
+        if (mode == PointerMode.SHOT) { screenshotRect = null; onScreenshotMenu(null) }
         textDragRect = null
         if (mode == PointerMode.PINCH) {
             state.zoomingInProgress = false
@@ -1957,6 +2015,9 @@ class InteractionController(
                     r.restore()
                 }
             }
+
+            // Screenshot capture region: the live drag rect, kept frozen until "copy as image" is used.
+            screenshotRect?.let { r.strokeRect(it, Pen(state.palette.accent, 1.6, cosmetic = true, dashed = true)) }
 
             // Selection chrome.
             val accent = Pen(state.palette.accent, 1.3, cosmetic = true, dashed = true)
@@ -2277,6 +2338,9 @@ class InteractionController(
          *  square so a fingertip can grab it without the squares obscuring content. */
         const val HANDLE_HIT = 24.0
         const val SHAPE_MIN_DRAG = 3.0
+
+        /** Min capture size (content px, both axes) for the screenshot tool; below it a drag is a tap. */
+        const val SHOT_MIN = 6.0
 
         /** Min drag (viewport px, either axis) for a Text-tool gesture to size a box rather than tap-create. */
         const val TEXT_DRAG_SLOP = 14.0

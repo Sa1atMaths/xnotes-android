@@ -220,6 +220,10 @@ class Editor(context: Context) {
     var selectionMenu by mutableStateOf<com.xnotes.core.geometry.Rect?>(null)
         private set
 
+    /** Viewport rect to anchor the screenshot tool's "copy as image" menu, or null when hidden. */
+    var screenshotMenu by mutableStateOf<com.xnotes.core.geometry.Rect?>(null)
+        private set
+
     /** Long-press paste context menu target, or null when hidden. */
     var contextMenu by mutableStateOf<ContextMenuTarget?>(null)
         private set
@@ -284,6 +288,7 @@ class Editor(context: Context) {
         onTextEditStart = { field -> editingField = field; refreshTextBar() },
         onTextEditEnd = { editingField = null; refreshTextBar() },
         onSelectionMenu = { rect -> selectionMenu = rect },
+        onScreenshotMenu = { rect -> screenshotMenu = rect },
         onContextMenu = { vp, content -> contextMenu = ContextMenuTarget(vp.x, vp.y, content) },
         onAddPageAtEnd = { addPageAtEnd() },
         onHaptic = { runCatching { view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } },
@@ -349,6 +354,63 @@ class Editor(context: Context) {
     fun duplicateSelection() = controller.duplicateSelection()
     fun dismissSelectionMenu() { selectionMenu = null }
     fun dismissContextMenu() { contextMenu = null }
+    fun dismissScreenshot() = controller.clearScreenshot()
+
+    /** Render the screenshot tool's capture rectangle to a PNG and put it on the system clipboard. */
+    fun copyScreenshotAsImage() {
+        val rect = controller.screenshotRect ?: return
+        val bmp = renderRegionBitmap(rect)
+        val ok = bmp != null && putBitmapOnClipboard(bmp, "xnotes capture")
+        controller.clearScreenshot()
+        message = if (ok) "Image copied. Paste it anywhere." else "Couldn’t copy the image."
+    }
+
+    /** Render a content-space rectangle (whatever it overlaps: pages, backgrounds, ink, the gap)
+     *  into a bitmap, the screenshot tool's "what I see" capture. */
+    private fun renderRegionBitmap(content: com.xnotes.core.geometry.Rect): android.graphics.Bitmap? {
+        if (content.w <= 0.0 || content.h <= 0.0) return null
+        // 2x content for crispness, but cap the longest side so a big capture can't blow up memory.
+        val maxDim = 4096.0
+        val res = minOf(2.0, maxDim / content.w, maxDim / content.h).coerceAtLeast(0.05)
+        val w = kotlin.math.ceil(content.w * res).toInt().coerceIn(1, maxDim.toInt())
+        val h = kotlin.math.ceil(content.h * res).toInt().coerceIn(1, maxDim.toInt())
+        val surface = com.xnotes.platform.AndroidRasterSurface.create(w, h)
+        surface.fill(state.palette.bg) // the canvas/gap colour shows through any off-page area
+        val r = surface.renderer()
+        r.scale(res, res)
+        r.translate(-content.left, -content.top) // content (left, top) -> output (0, 0)
+        for (i in state.document.pages.indices) {
+            val pr = state.pageRects.getOrNull(i) ?: continue
+            if (!pr.intersects(content)) continue
+            val page = state.document.pages[i]
+            r.withSave {
+                r.clipRect(pr)
+                r.fillRect(pr, state.paperColor(page))
+                r.translate(pr.left, pr.top) // into page-local space for the background + items
+                val local = com.xnotes.core.geometry.Rect.ltrb(
+                    (content.left - pr.left).coerceAtLeast(0.0),
+                    (content.top - pr.top).coerceAtLeast(0.0),
+                    (content.right - pr.left).coerceAtMost(page.width),
+                    (content.bottom - pr.top).coerceAtMost(page.height),
+                )
+                if (local.w > 0.0 && local.h > 0.0) state.paintPageBackground?.invoke(page, r, res, local)
+                for (item in itemsSnapshot(page)) item.paint(r)
+            }
+        }
+        return surface.bitmap
+    }
+
+    /** Write [bmp] to the FileProvider-exposed cache and set it as the primary clip (an image uri). */
+    private fun putBitmapOnClipboard(bmp: android.graphics.Bitmap, label: String): Boolean = runCatching {
+        val dir = java.io.File(appContext.cacheDir, "clipboard").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val file = java.io.File(dir, "capture.png")
+        java.io.FileOutputStream(file).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        val uri = androidx.core.content.FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", file)
+        val cm = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newUri(appContext.contentResolver, label, uri))
+        true
+    }.getOrDefault(false)
 
     fun pasteItemsAt(content: com.xnotes.core.geometry.Pt) {
         controller.pasteItemsAt(content)

@@ -70,6 +70,7 @@ fun Toolbar(
         Tool.PAN to XnotesIcons.pan,
         Tool.SELECT to XnotesIcons.select,
         Tool.LASSO to XnotesIcons.lasso,
+        Tool.SCREENSHOT to XnotesIcons.crop,
         Tool.SHAPE to XnotesIcons.shape,
         Tool.TEXT to XnotesIcons.text,
     )
@@ -123,7 +124,7 @@ fun Toolbar(
                     }
                 }
             }
-            if (i == 6 || i == 9) Separator()
+            if (i == 6 || i == 10) Separator()
             if (tool == Tool.SHAPE) {
                 ToolbarIcon(XnotesIcons.ruler, "Ruler", active = editor.rulerVisible) { editor.toggleRuler() }
             }
