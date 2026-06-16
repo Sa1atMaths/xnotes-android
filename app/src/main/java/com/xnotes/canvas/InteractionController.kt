@@ -2170,7 +2170,7 @@ class InteractionController(
         const val MOVE_EPS = 0.01
 
         /** Magic wand: idle time (ms) after the last stroke before the held batch fades. */
-        const val WAND_HOLD_MS = 2000L
+        const val WAND_HOLD_MS = 1000L
 
         /** Magic wand: fade-out duration (ms) once the batch starts disappearing. */
         const val WAND_FADE_MS = 500.0
