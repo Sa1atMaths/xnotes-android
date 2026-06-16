@@ -362,6 +362,7 @@ class Editor(context: Context) {
         val bmp = renderRegionBitmap(rect)
         val ok = bmp != null && putBitmapOnClipboard(bmp, "xnotes capture")
         controller.clearScreenshot()
+        controller.switchBackAfterScreenshot() // return to the previous pen, like the eraser
         message = if (ok) "Image copied. Paste it anywhere." else "Couldn’t copy the image."
     }
 

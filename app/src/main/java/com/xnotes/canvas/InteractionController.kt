@@ -242,6 +242,8 @@ class InteractionController(
     private var eraserCursor: Pt? = null // viewport pixels
     /** Tool armed just before the eraser was selected, for the "switch back after erasing" option. */
     private var toolBeforeEraser: Tool? = null
+    /** Tool armed just before the screenshot tool, to return to after a capture is copied. */
+    private var toolBeforeScreenshot: Tool? = null
     /** Whether the live erase is finger-driven (vs the stylus eraser tip / side button): a finger
      *  erase yields to a two-finger pinch, a stylus erase ignores incidental finger/palm contact. */
     private var erasingWithFinger = false
@@ -308,8 +310,9 @@ class InteractionController(
         if (t == tool) {
             return
         }
-        // Remember what to re-arm if the eraser later switches back (only the tool it replaced).
+        // Remember what to re-arm if the eraser/screenshot later switches back (the tool it replaced).
         if (t == Tool.ERASER) toolBeforeEraser = tool
+        if (t == Tool.SCREENSHOT) toolBeforeScreenshot = tool
         commitTextEdit()
         abortGesture()
         clearSelection()
@@ -1057,6 +1060,13 @@ class InteractionController(
         screenshotRect = null
         onScreenshotMenu(null)
         requestRender()
+    }
+
+    /** After a capture is copied, return to the previous pen, mirroring the eraser's switch-back. */
+    fun switchBackAfterScreenshot() {
+        if (tool != Tool.SCREENSHOT) return
+        val back = toolBeforeScreenshot ?: return
+        if (back.isStroke) setTool(back)
     }
 
     private fun refreshScreenshotMenu() {
