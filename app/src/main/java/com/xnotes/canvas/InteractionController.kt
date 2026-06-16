@@ -651,8 +651,11 @@ class InteractionController(
         val local = Pt(content.x - pr.left, content.y - pr.top)
         if (stroke.straight) {
             // Straight-line mode: the stroke is always pen-down → current point, so the moving
-            // endpoint just tracks the pointer (decimation/spacing gates don't apply).
-            stroke.setStraightEnd(Sample(local.x, local.y, pressure.coerceIn(0.0, 1.0), (timeMs - strokeStartTimeMs).toDouble()))
+            // endpoint just tracks the pointer (decimation/spacing gates don't apply). Near an axis
+            // it snaps flat like a dragged line, unless the ruler is already steering the angle.
+            val start = stroke.samples.firstOrNull()
+            val end = if (start != null && !ruler.visible) snapAxisEndpoint(Pt(start.x, start.y), local) else local
+            stroke.setStraightEnd(Sample(end.x, end.y, pressure.coerceIn(0.0, 1.0), (timeMs - strokeStartTimeMs).toDouble()))
             return
         }
         val last = stroke.samples.lastOrNull()
