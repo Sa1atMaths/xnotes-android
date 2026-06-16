@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,12 +45,11 @@ import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 
 /**
- * The toolbar customizer, rendered inline inside Preferences. It mirrors the real bar: a single
- * wrapping [FlowRow] where each section's chips flow left-to-right and a tappable divider sits
- * between sections (tap = merge). Chips tap to show/hide and long-press to drag (within or across
- * sections). The drag ghost and the edge auto-scroll live in the caller (PreferencesPane) so the
- * ghost can float above the scroll; this body only paints chips, captures bounds, and forwards the
- * raw gesture events back up.
+ * The toolbar customizer, rendered inline inside Preferences. Each section is a bordered card with
+ * a delete X; the cards sit side by side in a wrapping [FlowRow], and within a card the tool chips
+ * flow like the real bar. Chips tap to show/hide and long-press to drag (within or across cards).
+ * The drag ghost and the edge auto-scroll live in the caller (PreferencesPane) so the ghost can
+ * float above the scroll; this body only paints, captures bounds, and forwards gesture events up.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -57,47 +58,58 @@ fun ToolbarCustomizerBody(
     dragItem: ToolbarItem?,
     dropTarget: Pair<Int, Int>?,
     chipBounds: MutableMap<ToolbarItem, Rect>,
-    sepBounds: MutableMap<Int, Rect>,
-    emptyBounds: MutableMap<Int, Rect>,
+    sectionBounds: MutableMap<Int, Rect>,
     onToggle: (Int, Int) -> Unit,
-    onMerge: (Int) -> Unit,
+    onDelete: (Int) -> Unit,
     onAdd: () -> Unit,
     onDragStart: (ToolbarItem, Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDrop: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val palette = LocalPalette.current
     val dragging = dragItem != null
     FlowRow(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         layout.sections.forEachIndexed { sec, section ->
-            if (section.entries.isEmpty()) {
-                EmptySectionSlot(
-                    active = dragging && dropTarget == sec to 0,
-                    onBounds = { emptyBounds[sec] = it },
-                )
-            } else {
-                section.entries.forEachIndexed { idx, entry ->
-                    if (dragging && dropTarget == sec to idx) InsertionCaret()
-                    ChipCell(
-                        item = entry.item,
-                        visible = entry.visible,
-                        dragging = dragItem == entry.item,
-                        onTap = { onToggle(sec, idx) },
-                        onDragStart = { local -> onDragStart(entry.item, local) },
-                        onDrag = onDrag,
-                        onDrop = onDrop,
-                        onCancel = onCancel,
-                        onBounds = { chipBounds[entry.item] = it },
+            SectionCard(
+                canDelete = layout.sections.size > 1,
+                targeted = dragging && dropTarget?.first == sec,
+                onDelete = { onDelete(sec) },
+                onBounds = { sectionBounds[sec] = it },
+            ) {
+                if (section.entries.isEmpty()) {
+                    Text(
+                        "drop here",
+                        color = (if (dragging && dropTarget == sec to 0) palette.accent else palette.textDim).toComposeColor(),
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                     )
+                } else {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        section.entries.forEachIndexed { idx, entry ->
+                            if (dragging && dropTarget == sec to idx) InsertionCaret()
+                            ChipCell(
+                                item = entry.item,
+                                visible = entry.visible,
+                                dragging = dragItem == entry.item,
+                                onTap = { onToggle(sec, idx) },
+                                onDragStart = { local -> onDragStart(entry.item, local) },
+                                onDrag = onDrag,
+                                onDrop = onDrop,
+                                onCancel = onCancel,
+                                onBounds = { chipBounds[entry.item] = it },
+                            )
+                        }
+                        if (dragging && dropTarget == sec to section.entries.size) InsertionCaret()
+                    }
                 }
-                if (dragging && dropTarget == sec to section.entries.size) InsertionCaret()
-            }
-            if (sec < layout.sections.lastIndex) {
-                SectionDivider(onClick = { onMerge(sec) }, onBounds = { sepBounds[sec] = it })
             }
         }
         AddSectionChip(onClick = onAdd)
@@ -105,37 +117,69 @@ fun ToolbarCustomizerBody(
 }
 
 /**
- * Resolve the drop slot (sectionIndex, entryIndex) for a finger position in root coordinates by
- * walking sections in render order: the first chip the finger sits "before" (an earlier row, or
- * left of its centre on the same row) wins; a divider claims the end of its left section; an empty
- * section claims its own slot 0. Falls through to the end of the last section.
+ * Resolve the drop slot (sectionIndex, entryIndex) for a finger position in root coordinates. The
+ * section is the card the finger is inside, else the nearest card. Within it, the first chip the
+ * finger sits "before" (an earlier row, or left of its centre on the same row) wins; an empty card
+ * takes slot 0. Returns null only when no card has been measured yet.
  */
 internal fun toolbarDropTarget(
     layout: ToolbarLayout,
     finger: Offset,
     chipBounds: Map<ToolbarItem, Rect>,
-    sepBounds: Map<Int, Rect>,
-    emptyBounds: Map<Int, Rect>,
-): Pair<Int, Int> {
-    fun before(r: Rect): Boolean = finger.y < r.top || (finger.y <= r.bottom && finger.x < r.center.x)
-    for (sec in layout.sections.indices) {
-        val entries = layout.sections[sec].entries
-        if (entries.isEmpty()) {
-            val r = emptyBounds[sec]
-            if (r != null && (before(r) || r.contains(finger))) return sec to 0
-        } else {
-            for (idx in entries.indices) {
-                val r = chipBounds[entries[idx].item] ?: continue
-                if (before(r)) return sec to idx
-            }
-        }
-        if (sec < layout.sections.lastIndex) {
-            val sr = sepBounds[sec]
-            if (sr != null && before(sr)) return sec to entries.size
+    sectionBounds: Map<Int, Rect>,
+): Pair<Int, Int>? {
+    var sec = layout.sections.indices.firstOrNull { sectionBounds[it]?.contains(finger) == true } ?: -1
+    if (sec < 0) {
+        var best = Float.MAX_VALUE
+        for (i in layout.sections.indices) {
+            val r = sectionBounds[i] ?: continue
+            val dx = maxOf(r.left - finger.x, 0f, finger.x - r.right)
+            val dy = maxOf(r.top - finger.y, 0f, finger.y - r.bottom)
+            val d = dx * dx + dy * dy
+            if (d < best) { best = d; sec = i }
         }
     }
-    val last = layout.sections.lastIndex
-    return last to layout.sections[last].entries.size
+    if (sec < 0) return null
+    val entries = layout.sections[sec].entries
+    if (entries.isEmpty()) return sec to 0
+    fun before(r: Rect): Boolean = finger.y < r.top || (finger.y <= r.bottom && finger.x < r.center.x)
+    for (idx in entries.indices) {
+        val r = chipBounds[entries[idx].item] ?: continue
+        if (before(r)) return sec to idx
+    }
+    return sec to entries.size
+}
+
+/** A bordered section box with a delete X at its top-right corner. */
+@Composable
+private fun SectionCard(
+    canDelete: Boolean,
+    targeted: Boolean,
+    onDelete: () -> Unit,
+    onBounds: (Rect) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val palette = LocalPalette.current
+    Column(
+        Modifier
+            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, (if (targeted) palette.accent else palette.border).toComposeColor(), RoundedCornerShape(8.dp))
+            .padding(start = 6.dp, top = 2.dp, end = 2.dp, bottom = 6.dp),
+    ) {
+        IconButton(
+            onClick = onDelete,
+            enabled = canDelete,
+            modifier = Modifier.align(Alignment.End).size(26.dp),
+        ) {
+            Icon(
+                XnotesIcons.close, "Delete section",
+                tint = (if (canDelete) palette.textDim else palette.border).toComposeColor(),
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        content()
+    }
 }
 
 @Composable
@@ -202,46 +246,15 @@ fun ToolbarDragGhost(item: ToolbarItem) {
     }
 }
 
-/** A tappable section boundary; tapping merges the two sections it divides. */
-@Composable
-private fun SectionDivider(onClick: () -> Unit, onBounds: (Rect) -> Unit) {
-    val palette = LocalPalette.current
-    Box(
-        Modifier
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
-            .clip(RoundedCornerShape(3.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 5.dp, vertical = 2.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.width(1.dp).height(26.dp).background(palette.border.toComposeColor()))
-    }
-}
-
-/** Placeholder for a section with no items: a visible drop target so an empty section is reachable. */
-@Composable
-private fun EmptySectionSlot(active: Boolean, onBounds: (Rect) -> Unit) {
-    val palette = LocalPalette.current
-    Box(
-        Modifier
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
-            .clip(RoundedCornerShape(6.dp))
-            .border(1.dp, (if (active) palette.accent else palette.border).toComposeColor(), RoundedCornerShape(6.dp))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("drop here", color = palette.textDim.toComposeColor(), fontSize = 11.sp)
-    }
-}
-
 @Composable
 private fun AddSectionChip(onClick: () -> Unit) {
     val palette = LocalPalette.current
     Row(
         Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, palette.accent.toComposeColor(), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(XnotesIcons.plus, "Add section", tint = palette.accent.toComposeColor(), modifier = Modifier.size(14.dp))

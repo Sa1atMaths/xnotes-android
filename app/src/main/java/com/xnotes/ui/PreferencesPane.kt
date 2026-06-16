@@ -93,12 +93,11 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
     var dragGrab by remember { mutableStateOf(Offset.Zero) }
     var dropTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val chipBounds = remember { mutableMapOf<ToolbarItem, Rect>() }
-    val sepBounds = remember { mutableMapOf<Int, Rect>() }
-    val emptyBounds = remember { mutableMapOf<Int, Rect>() }
+    val sectionBounds = remember { mutableMapOf<Int, Rect>() }
     var paneTopLeft by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(Rect.Zero) }
     fun retarget() {
-        dropTarget = toolbarDropTarget(editor.toolbarLayout, dragFinger, chipBounds, sepBounds, emptyBounds)
+        dropTarget = toolbarDropTarget(editor.toolbarLayout, dragFinger, chipBounds, sectionBounds)
     }
 
     Box(Modifier.fillMaxSize().onGloballyPositioned { paneTopLeft = it.boundsInRoot().topLeft }) {
@@ -201,7 +200,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 TextButton(onClick = { editor.applyToolbarLayout(ToolbarLayout.DEFAULT) }) { Text("Reset", fontSize = 13.sp) }
             }
             Text(
-                "Tap a tool to show or hide it. Long-press to drag it within or across sections. Tap a divider to merge two sections.",
+                "Tap a tool to show or hide it. Long-press to drag it within or across sections. Use a section's X to remove it (its tools move to the neighbour).",
                 color = palette.textDim.toComposeColor(),
                 fontSize = 12.sp,
             )
@@ -210,10 +209,9 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 dragItem = dragItem,
                 dropTarget = dropTarget,
                 chipBounds = chipBounds,
-                sepBounds = sepBounds,
-                emptyBounds = emptyBounds,
+                sectionBounds = sectionBounds,
                 onToggle = { s, i -> editor.applyToolbarLayout(editor.toolbarLayout.toggleVisible(s, i)) },
-                onMerge = { s -> editor.applyToolbarLayout(editor.toolbarLayout.removeSection(s + 1)) },
+                onDelete = { s -> editor.applyToolbarLayout(editor.toolbarLayout.removeSection(s)) },
                 onAdd = { editor.applyToolbarLayout(editor.toolbarLayout.addSection()) },
                 onDragStart = { item, local ->
                     dragItem = item
