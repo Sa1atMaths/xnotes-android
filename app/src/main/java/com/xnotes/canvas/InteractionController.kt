@@ -2283,8 +2283,9 @@ class InteractionController(
          *  so a shape reads as thick as a same-size pen instead of as a flat full-width line. */
         const val SHAPE_PEN_PARITY = 0.675
 
-        /** A line/arrow drawn with the shape tool snaps flat when within this angle (deg) of an axis. */
-        const val SHAPE_AXIS_SNAP_DEG = 8.0
+        /** A line/arrow drawn with the shape tool snaps flat when within this angle (deg) of an axis.
+         *  Half the recognizer's hold-to-snap angle: a live drag is steadier, so it needs less help. */
+        const val SHAPE_AXIS_SNAP_DEG = 4.0
 
         // Inertial fling tuning (viewport px/s).
         const val VEL_SMOOTH = 0.4 // EMA weight on the previous velocity estimate
