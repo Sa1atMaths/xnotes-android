@@ -159,6 +159,10 @@ class InteractionController(
     private var dwellEligible = false
     /** A mid-stroke snap auto-selected a shape; show its menu once the pen lifts (endDraw). */
     private var snappedSelectionPendingMenu = false
+    /** This stroke began by dismissing an active selection; a bare tap then leaves no dot. */
+    private var strokeDismissedSelection = false
+    /** Viewport-px down point of the current stroke, for the tap-vs-drag dismiss test. */
+    private var drawDownViewport = Pt.ZERO
 
     // PAN + inertial fling
     private var lastPan = Pt.ZERO
@@ -374,6 +378,11 @@ class InteractionController(
         val effectiveTool: Tool = when {
             toolType == MotionEvent.TOOL_TYPE_ERASER -> Tool.ERASER
             buttonHeld && penButtonTool != null -> penButtonTool!!
+            // While something is selected, the stylus grabs that selection (resize on a handle,
+            // move on the body) instead of inking through it, matching the finger. Off the
+            // selection it falls through to draw and dismisses the selection (see beginDraw).
+            hasSelection && drawingIsStylus && (tool.isStroke || tool == Tool.SHAPE) &&
+                fingerHitsSelection(content) -> Tool.SELECT
             // A finger may grab/resize the ACTIVE selection even when finger-draw is off;
             // off the selection it still pans.
             toolType == MotionEvent.TOOL_TYPE_FINGER && !fingerDraws && tool.fingerPansWhenOff &&
@@ -563,6 +572,11 @@ class InteractionController(
     private fun beginDraw(content: Pt, pressure: Double, drawTool: Tool, timeMs: Long, downViewport: Pt) {
         val pageIndex = state.pageIndexAtContent(content) ?: return
         val pr = state.pageRects[pageIndex]
+        // Reaching here with a live selection means the press landed off it (on it the stylus would
+        // have grabbed it): dismiss it. A bare tap that only dismissed is dropped in endDraw.
+        strokeDismissedSelection = hasSelection
+        drawDownViewport = downViewport
+        if (hasSelection) clearSelection()
         // Capture content-px → dp scale now, so the speed pen judges gesture speed in
         // zoom- and density-independent dp regardless of how the stroke is later viewed.
         val speedScale = state.zoom / state.devicePxPerDp
@@ -672,23 +686,30 @@ class InteractionController(
         // skipped and the freehand stroke is intentionally not also committed.
         val stroke = liveStroke
         val pi = strokePageIndex
+        val up = Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble())
         if (stroke != null && pi != null && !stroke.isEmpty) {
-            if (wandMode && stroke.tool.isStroke) {
-                // Disappearing ink: held ephemerally, never committed to the model/undo/cache/save.
-                // A stroke drawn mid-fade cancels the fade and re-solidifies the whole held batch.
-                fadingStrokes.add(FadingStroke(stroke, pi))
-                stopFade()
-                fadeAlpha = 1.0
-                scheduleFade()
-            } else {
-                val page = state.document.pages[pi]
-                page.items.add(stroke)
-                state.appendToCache(page, stroke)
-                history.push(AddItem(page, stroke))
-                state.document.dirty = true
-                onContentChanged()
+            when {
+                // A bare tap whose only job was to dismiss the selection: drop the dot it would leave.
+                strokeDismissedSelection && up.distanceTo(drawDownViewport) <= TAP_SLOP -> Unit
+                wandMode && stroke.tool.isStroke -> {
+                    // Disappearing ink: held ephemerally, never committed to the model/undo/cache/save.
+                    // A stroke drawn mid-fade cancels the fade and re-solidifies the whole held batch.
+                    fadingStrokes.add(FadingStroke(stroke, pi))
+                    stopFade()
+                    fadeAlpha = 1.0
+                    scheduleFade()
+                }
+                else -> {
+                    val page = state.document.pages[pi]
+                    page.items.add(stroke)
+                    state.appendToCache(page, stroke)
+                    history.push(AddItem(page, stroke))
+                    state.document.dirty = true
+                    onContentChanged()
+                }
             }
         }
+        strokeDismissedSelection = false
         liveStroke = null
         strokePageIndex = null
         snapEngaged = false
@@ -1084,6 +1105,9 @@ class InteractionController(
     private fun beginShape(content: Pt) {
         val pageIndex = state.pageIndexAtContent(content) ?: return
         val pr = state.pageRects[pageIndex]
+        // Off-selection press with the shape tool: dismiss first (a tap makes no shape; endShape's
+        // min-drag gate drops it), so dragging out a new shape also clears the old selection.
+        clearSelection()
         val startLocal = Pt(content.x - pr.left, content.y - pr.top)
         val kind = shapeConfig.shape
         val fill = if (shapeConfig.fill && kind.isClosed) inkColor.scaleAlpha(ShapeConfig.FILL_ALPHA) else null
@@ -1844,6 +1868,7 @@ class InteractionController(
         cancelDwell()
         dwellEligible = false
         snappedSelectionPendingMenu = false
+        strokeDismissedSelection = false
         stopFling()
         clearOverscroll()
         liveStroke = null
