@@ -54,6 +54,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.max
 import kotlin.math.sin
 
 /** The pointer state machine modes (spec 06 §1). */
@@ -1071,10 +1072,10 @@ class InteractionController(
                 item.setGeometry(TextHandle(pos, w, h))
             }
             is ShapeItem -> {
-                val (s, en) = if (item.shape.isEndpointShape) {
-                    ResizeMath.resizeOpenShape(item.start, item.end, handle, local)
-                } else {
-                    ResizeMath.resizeClosedShape(item.start, item.end, handle, local)
+                val (s, en) = when {
+                    item.shape.isEndpointShape -> ResizeMath.resizeOpenShape(item.start, item.end, handle, local)
+                    item.shape == ShapeKind.CIRCLE -> ResizeMath.resizeSquareShape(item.start, item.end, handle, local)
+                    else -> ResizeMath.resizeClosedShape(item.start, item.end, handle, local)
                 }
                 item.setGeometry(ShapeHandle(s, en))
             }
@@ -1124,9 +1125,22 @@ class InteractionController(
         val shape = pendingShape ?: return
         val pr = state.pageRects.getOrNull(shapePageIndex ?: -1) ?: return
         val raw = Pt(content.x - pr.left, content.y - pr.top)
-        // Line/arrow: pin the dragged end flat when it lands near an axis (closed shapes keep their box).
-        shape.end = if (shape.shape.isEndpointShape) snapAxisEndpoint(shape.start, raw) else raw
+        shape.end = when {
+            // Line/arrow: pin the dragged end flat when it lands near an axis.
+            shape.shape.isEndpointShape -> snapAxisEndpoint(shape.start, raw)
+            // Circle: keep the box square so it stays a perfect circle.
+            shape.shape == ShapeKind.CIRCLE -> squareCorner(shape.start, raw)
+            else -> raw
+        }
         requestRender()
+    }
+
+    /** Constrain a dragged corner [p] to a square box anchored at [anchor] (the perfect-circle shape). */
+    private fun squareCorner(anchor: Pt, p: Pt): Pt {
+        val side = max(abs(p.x - anchor.x), abs(p.y - anchor.y))
+        val sx = if (p.x >= anchor.x) 1.0 else -1.0
+        val sy = if (p.y >= anchor.y) 1.0 else -1.0
+        return Pt(anchor.x + sx * side, anchor.y + sy * side)
     }
 
     /** Snap a line/arrow's dragged endpoint to an exactly horizontal or vertical run from [anchor]

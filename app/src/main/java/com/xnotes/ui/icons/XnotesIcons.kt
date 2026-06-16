@@ -63,11 +63,12 @@ object XnotesIcons {
     val text = icon("M4 7V4h16v3", "M9 20h6", "M12 4v16")
     val image = icon(rect(3.0, 3.0, 18.0, 18.0), circle(8.5, 8.5, 1.5), "M21 15l-5-5L5 21")
 
-    // Shape-kind glyphs for the shape tool's kind picker (line / arrow / rect / ellipse / triangle).
+    // Shape-kind glyphs for the shape tool's kind picker (line / arrow / rect / ellipse / circle / triangle).
     val shapeLine = icon("M5 19 19 5")
     val shapeArrow = icon("M5 19 19 5", "M9 5h10v10")
     val shapeRect = icon(rect(4.0, 6.0, 16.0, 12.0))
     val shapeEllipse = icon(ellipse(12.0, 12.0, 9.0, 6.0))
+    val shapeCircle = icon(circle(12.0, 12.0, 8.0))
     val shapeTriangle = icon("M12 4 21 19 3 19 Z")
     val undo = icon("M9 14 4 9l5-5", "M20 20v-7a4 4 0 0 0-4-4H4")
     val redo = icon("M15 14l5-5-5-5", "M4 20v-7a4 4 0 0 1 4-4h12")

@@ -97,7 +97,7 @@ class ShapeItem(
         val b = box
         when (shape) {
             ShapeKind.RECTANGLE -> r.fillRect(b, fill)
-            ShapeKind.ELLIPSE -> r.fillEllipse(b.center, b.w / 2.0, b.h / 2.0, fill)
+            ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> r.fillEllipse(b.center, b.w / 2.0, b.h / 2.0, fill)
             ShapeKind.TRIANGLE -> r.fillPolygon(triangleVertices(), fill)
             ShapeKind.POLYGON -> r.fillPolygon(absPoints(), fill)
             ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.POLYLINE, ShapeKind.CURVE -> {}
@@ -110,7 +110,7 @@ class ShapeItem(
         when (shape) {
             ShapeKind.LINE, ShapeKind.ARROW -> r.strokePolyline(listOf(start, end), pen)
             ShapeKind.RECTANGLE -> r.strokeRect(b, pen)
-            ShapeKind.ELLIPSE -> r.strokeEllipse(b.center, b.w / 2.0, b.h / 2.0, pen)
+            ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> r.strokeEllipse(b.center, b.w / 2.0, b.h / 2.0, pen)
             ShapeKind.TRIANGLE -> r.strokePolygon(triangleVertices(), pen)
             ShapeKind.POLYGON -> r.strokePolygon(absPoints(), pen)
             ShapeKind.POLYLINE, ShapeKind.CURVE -> r.strokePolyline(absPoints(), pen)
@@ -188,7 +188,7 @@ class ShapeItem(
                 val v = triangleVertices()
                 if (fillRgba != null) Geometry.pointInPolygon(v, p) else nearPolyOutline(v, p, tol)
             }
-            ShapeKind.ELLIPSE -> {
+            ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> {
                 val poly = ellipsePolygon()
                 if (fillRgba != null) Geometry.pointInPolygon(poly, p) else nearPolyOutline(poly, p, tol)
             }
@@ -234,7 +234,7 @@ class ShapeItem(
                 val v = triangleVertices()
                 if (fillRgba != null && Geometry.pointInPolygon(v, p)) true else nearPolyOutline(v, p, tol)
             }
-            ShapeKind.ELLIPSE -> {
+            ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> {
                 val poly = ellipsePolygon()
                 if (fillRgba != null && Geometry.pointInPolygon(poly, p)) true else nearPolyOutline(poly, p, tol)
             }

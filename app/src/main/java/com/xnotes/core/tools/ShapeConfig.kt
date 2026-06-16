@@ -7,13 +7,14 @@ enum class ShapeKind(val id: String) {
     ARROW("arrow"),
     RECTANGLE("rectangle"),
     ELLIPSE("ellipse"),
+    CIRCLE("circle"),
     TRIANGLE("triangle"),
     POLYGON("polygon"),
     POLYLINE("polyline"),
     CURVE("curve");
 
     /** Closed shapes are stroked and optionally filled; open shapes never fill. */
-    val isClosed: Boolean get() = this == RECTANGLE || this == ELLIPSE || this == TRIANGLE || this == POLYGON
+    val isClosed: Boolean get() = this == RECTANGLE || this == ELLIPSE || this == CIRCLE || this == TRIANGLE || this == POLYGON
     val isOpen: Boolean get() = !isClosed
 
     /** Line/arrow resize by dragging their two endpoints; every other kind resizes by its box. */
@@ -21,7 +22,7 @@ enum class ShapeKind(val id: String) {
 
     companion object {
         /** Kinds the shape tool offers; polygon/polyline arrive only from recognition. */
-        val DRAW_TOOL_KINDS = listOf(LINE, ARROW, RECTANGLE, ELLIPSE, TRIANGLE)
+        val DRAW_TOOL_KINDS = listOf(LINE, ARROW, RECTANGLE, ELLIPSE, CIRCLE, TRIANGLE)
 
         fun fromId(id: String?): ShapeKind = entries.firstOrNull { it.id == id } ?: RECTANGLE
     }

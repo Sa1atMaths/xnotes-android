@@ -98,6 +98,16 @@ object ResizeMath {
     fun resizeOpenShape(start: Pt, end: Pt, handle: HandleId, pointer: Pt): Pair<Pt, Pt> =
         if (handle == HandleId.START) pointer to end else start to pointer
 
+    /** Square-locked closed-shape resize (the perfect circle): the box stays square, sized by the
+     *  larger pointer delta from the anchored corner. Returns new (start, end). */
+    fun resizeSquareShape(start: Pt, end: Pt, handle: HandleId, pointer: Pt): Pair<Pt, Pt> {
+        val anchor = cornerAnchor(Rect.fromPoints(start, end), handle)
+        val side = max(max(abs(pointer.x - anchor.x), abs(pointer.y - anchor.y)), MIN_SIZE)
+        val sx = if (pointer.x >= anchor.x) 1.0 else -1.0
+        val sy = if (pointer.y >= anchor.y) 1.0 else -1.0
+        return anchor to Pt(anchor.x + sx * side, anchor.y + sy * side)
+    }
+
     /**
      * Text box rect resize via any of the 8 handles (page-local pointer). [width] is
      * the wrap width; [height] is the reserved minimum (the box still grows to fit its

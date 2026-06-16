@@ -323,7 +323,7 @@ fun ShapeConfigPopup(editor: Editor, onDismiss: () -> Unit) {
     )
 
     DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-        Column(Modifier.width(260.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Column(Modifier.width(284.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
             PopupTitle("SHAPE")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ShapeKind.DRAW_TOOL_KINDS.forEach { k ->
@@ -392,6 +392,7 @@ private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
     ShapeKind.ARROW -> XnotesIcons.shapeArrow
     ShapeKind.RECTANGLE -> XnotesIcons.shapeRect
     ShapeKind.ELLIPSE -> XnotesIcons.shapeEllipse
+    ShapeKind.CIRCLE -> XnotesIcons.shapeCircle
     ShapeKind.TRIANGLE, ShapeKind.POLYGON -> XnotesIcons.shapeTriangle
 }
 
