@@ -33,6 +33,7 @@ import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextHandle
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.model.TextStyle
+import com.xnotes.core.pal.BlendMode
 import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
@@ -198,6 +199,17 @@ class InteractionController(
     private var snapCurrentEdge: Pt? = null          // current point on the edge (viewport)
     private var snapPenViewport: Pt? = null          // actual (unprojected) pen, for readout placement
 
+    // MAGIC WAND (ephemeral "disappearing ink"; no model/undo/cache/save state)
+    private var wandMode = false
+    private val fadingStrokes = mutableListOf<FadingStroke>()
+    private var fadeAlpha = 1.0                       // shared multiplier, 1 = solid, 0 = gone
+    private var fading = false                        // true while the fade loop runs
+    private var fadeStartMs = 0L
+    private val fadeFrame = Choreographer.FrameCallback { t -> stepFade(t) }
+    private var fadeTimerRunnable: Runnable? = null
+
+    private class FadingStroke(val stroke: Stroke, val pageIndex: Int)
+
     // SELECTION
     private val selection = mutableListOf<Selected>()
     private var lassoPolygon: List<Pt>? = null
@@ -299,6 +311,15 @@ class InteractionController(
         if (ruler.visible && !ruler.initialized) {
             ruler.placeDefault(state.viewportW.toDouble(), state.viewportH.toDouble(), state.devicePxPerDp)
         }
+        requestRender()
+    }
+
+    fun wandEnabled(): Boolean = wandMode
+
+    /** Toggle disappearing-ink mode; turning it off vanishes anything currently held or fading. */
+    fun toggleWand() {
+        wandMode = !wandMode
+        if (!wandMode) clearFading()
         requestRender()
     }
 
@@ -650,12 +671,21 @@ class InteractionController(
         val stroke = liveStroke
         val pi = strokePageIndex
         if (stroke != null && pi != null && !stroke.isEmpty) {
-            val page = state.document.pages[pi]
-            page.items.add(stroke)
-            state.appendToCache(page, stroke)
-            history.push(AddItem(page, stroke))
-            state.document.dirty = true
-            onContentChanged()
+            if (wandMode && stroke.tool.isStroke) {
+                // Disappearing ink: held ephemerally, never committed to the model/undo/cache/save.
+                // A stroke drawn mid-fade cancels the fade and re-solidifies the whole held batch.
+                fadingStrokes.add(FadingStroke(stroke, pi))
+                stopFade()
+                fadeAlpha = 1.0
+                scheduleFade()
+            } else {
+                val page = state.document.pages[pi]
+                page.items.add(stroke)
+                state.appendToCache(page, stroke)
+                history.push(AddItem(page, stroke))
+                state.document.dirty = true
+                onContentChanged()
+            }
         }
         liveStroke = null
         strokePageIndex = null
@@ -1623,6 +1653,57 @@ class InteractionController(
         }
     }
 
+    // --- disappearing ink (magic wand) ---
+
+    /** Drop all held ephemeral strokes and stop any pending or running fade. */
+    private fun clearFading() {
+        cancelFadeTimer()
+        stopFade()
+        fadingStrokes.clear()
+        fadeAlpha = 1.0
+    }
+
+    /** (Re)start the debounce so the held batch fades only once drawing has paused. */
+    private fun scheduleFade() {
+        cancelFadeTimer()
+        val r = Runnable { startFade() }
+        fadeTimerRunnable = r
+        handler.postDelayed(r, WAND_HOLD_MS)
+    }
+
+    private fun cancelFadeTimer() {
+        fadeTimerRunnable?.let { handler.removeCallbacks(it) }
+        fadeTimerRunnable = null
+    }
+
+    private fun startFade() {
+        fadeTimerRunnable = null
+        if (fadingStrokes.isEmpty()) return
+        fading = true
+        fadeAlpha = 1.0
+        fadeStartMs = System.nanoTime() / 1_000_000L
+        choreographer.postFrameCallback(fadeFrame)
+    }
+
+    private fun stopFade() {
+        fading = false
+    }
+
+    private fun stepFade(frameTimeNanos: Long) {
+        if (!fading) return
+        val now = frameTimeNanos / 1_000_000L
+        val t = ((now - fadeStartMs).toDouble() / WAND_FADE_MS).coerceIn(0.0, 1.0)
+        fadeAlpha = (1.0 - t) * (1.0 - t) // ease-out so the batch melts away rather than blinking off
+        requestRender()
+        if (t >= 1.0) {
+            fadingStrokes.clear()
+            fadeAlpha = 1.0
+            fading = false
+        } else {
+            choreographer.postFrameCallback(fadeFrame)
+        }
+    }
+
     // --- elastic overscroll release ---
 
     /** Finger lifted while the bottom elastic was stretched: add a page if pulled far enough, then spring back. */
@@ -1658,6 +1739,7 @@ class InteractionController(
         stopFling()
         clearOverscroll()
         cancelDwell()
+        clearFading()
         dwellEligible = false
         mode = PointerMode.IDLE
         lastPan = Pt.ZERO
@@ -1785,6 +1867,17 @@ class InteractionController(
             // Live in-progress stroke / shape preview, clipped to its page.
             liveStroke?.let { stroke -> paintClippedToPage(r, strokePageIndex) { stroke.paint(r) } }
             pendingShape?.let { shape -> paintClippedToPage(r, shapePageIndex) { shape.paint(r) } }
+
+            // Disappearing ink (magic wand): ephemeral strokes drawn live at the shared fade alpha,
+            // without mutating their stored colour. Highlighters keep their MULTIPLY look while fading.
+            for (fs in fadingStrokes) {
+                paintClippedToPage(r, fs.pageIndex) {
+                    val blend = if (fs.stroke.tool == Tool.HIGHLIGHTER) BlendMode.MULTIPLY else BlendMode.SRC_OVER
+                    r.saveLayerBlended(fs.stroke.paintBounds(), fadeAlpha, blend)
+                    fs.stroke.paint(r)
+                    r.restore()
+                }
+            }
 
             // Selection chrome.
             val accent = Pen(state.palette.accent, 1.3, cosmetic = true, dashed = true)
@@ -2075,6 +2168,12 @@ class InteractionController(
     companion object {
         const val MIN_SAMPLE_DIST = 1.0
         const val MOVE_EPS = 0.01
+
+        /** Magic wand: idle time (ms) after the last stroke before the held batch fades. */
+        const val WAND_HOLD_MS = 2000L
+
+        /** Magic wand: fade-out duration (ms) once the batch starts disappearing. */
+        const val WAND_FADE_MS = 500.0
 
         /** Ruler: a stylus-down within this (dp) of a long edge snaps the stroke to that edge. */
         const val RULER_SNAP_DP = 12.0
