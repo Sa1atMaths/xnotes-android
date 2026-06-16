@@ -698,7 +698,7 @@ class InteractionController(
             start = rec.start,
             end = rec.end,
             strokeRgba = stroke.config.rgba, // the as-drawn ink colour (not renderColor's alpha-scaled one)
-            strokeWidth = stroke.config.baseWidth,
+            strokeWidth = stroke.config.baseWidth * SHAPE_PEN_PARITY,
             fillRgba = null,
         )
         page.items.add(shape)
@@ -1036,7 +1036,7 @@ class InteractionController(
         val startLocal = Pt(content.x - pr.left, content.y - pr.top)
         val kind = shapeConfig.shape
         val fill = if (shapeConfig.fill && kind.isClosed) inkColor.scaleAlpha(ShapeConfig.FILL_ALPHA) else null
-        pendingShape = ShapeItem(kind, startLocal, startLocal, inkColor, shapeConfig.strokeWidth, fill, shapeConfig.neon, shapeConfig.neonStrength)
+        pendingShape = ShapeItem(kind, startLocal, startLocal, inkColor, shapeConfig.strokeWidth * SHAPE_PEN_PARITY, fill, shapeConfig.neon, shapeConfig.neonStrength)
         shapePageIndex = pageIndex
         mode = PointerMode.SHAPE
         requestRender()
@@ -2115,6 +2115,10 @@ class InteractionController(
 
         /** Hold-to-snap: minimum samples before recognition is even attempted (mirrors the recognizer). */
         const val SHAPE_MIN_SAMPLES = 8
+
+        /** Shape size -> thickness: the midpoint of the default pen's pressure width range (m=0.35..1.0),
+         *  so a shape reads as thick as a same-size pen instead of as a flat full-width line. */
+        const val SHAPE_PEN_PARITY = 0.675
 
         // Inertial fling tuning (viewport px/s).
         const val VEL_SMOOTH = 0.4 // EMA weight on the previous velocity estimate
