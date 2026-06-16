@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.R
 import com.xnotes.core.tools.Tool
+import com.xnotes.core.tools.ToolbarItem
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -59,7 +60,7 @@ fun Toolbar(
     val palette = LocalPalette.current
     // The five stroke tools use the designed vector drawables (res/drawable/ic_stroke_*),
     // tinted at the call site like every other icon; the rest use the built-in line set.
-    val toolIcons: List<Pair<Tool, ImageVector>> = listOf(
+    val toolIcons: Map<Tool, ImageVector> = mapOf(
         Tool.PEN to ImageVector.vectorResource(R.drawable.ic_stroke_regular),
         Tool.DASHED to ImageVector.vectorResource(R.drawable.ic_stroke_dashed),
         Tool.CALLIGRAPHY to ImageVector.vectorResource(R.drawable.ic_stroke_calligraphy),
@@ -86,93 +87,27 @@ fun Toolbar(
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ToolbarIcon(XnotesIcons.prev, "Home") { onOpenBackstage() }
-        // Notes autosave into the folder, so no dirty marker; long titles truncate with an ellipsis.
-        // Tap to rename.
-        Label(
-            editor.title,
-            modifier = Modifier
-                .widthIn(max = 160.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .clickable { renaming = true },
-        )
-        Separator()
-
-        ToolbarIcon(XnotesIcons.sidebar, "Side panel", active = editor.sidebarVisible) { editor.toggleSidebar() }
-        Separator()
-
-        // Tools (P C H E | Pan V L | S T); re-clicking the armed stroke/shape tool opens its popup.
-        toolIcons.forEachIndexed { i, (tool, icon) ->
-            // Magic wand toggle sits immediately before the shape tool (the ruler sits after it).
-            if (tool == Tool.SHAPE) {
-                ToolbarIcon(XnotesIcons.magicWand, "Magic wand", active = editor.wandEnabled) { editor.toggleWand() }
-            }
-            Box {
-                ToolbarIcon(icon, tool.name, active = editor.tool == tool) {
-                    if (editor.tool == tool && (tool.isStroke || tool == Tool.SHAPE || tool == Tool.ERASER)) {
-                        configForTool = tool
-                    } else {
-                        editor.selectTool(tool)
-                        configForTool = null
-                    }
-                }
-                if (configForTool == tool) {
-                    when {
-                        tool == Tool.SHAPE -> ShapeConfigPopup(editor) { configForTool = null }
-                        tool == Tool.ERASER -> EraserConfigPopup(editor) { configForTool = null }
-                        else -> ToolConfigPopup(editor, tool) { configForTool = null }
-                    }
-                }
-            }
-            if (i == 6 || i == 10) Separator()
-            if (tool == Tool.SHAPE) {
-                ToolbarIcon(XnotesIcons.ruler, "Ruler", active = editor.rulerVisible) { editor.toggleRuler() }
-            }
-        }
-        Separator()
-
-        ImageMenu(editor, onInsertImage)
-        Separator()
-
-        // Ink swatches; re-clicking the active swatch opens the colour switcher.
-        editor.toolbarColors.forEachIndexed { i, color ->
-            Box {
-                Swatch(
-                    color = color.toComposeColor(),
-                    active = i == editor.activeColorIndex,
-                    onClick = { if (i == editor.activeColorIndex) switcherIndex = i else editor.pickColor(i) },
+        // The bar is driven by the user-customisable layout; separators sit between non-empty
+        // sections, and each item dispatches to its renderer (see ToolbarItemView).
+        editor.toolbarLayout.visibleSections.forEachIndexed { si, section ->
+            if (si > 0) Separator()
+            section.visibleEntries.forEach { entry ->
+                ToolbarItemView(
+                    editor = editor,
+                    item = entry.item,
+                    toolIcons = toolIcons,
+                    configForTool = configForTool,
+                    setConfigForTool = { configForTool = it },
+                    switcherIndex = switcherIndex,
+                    setSwitcherIndex = { switcherIndex = it },
+                    onRename = { renaming = true },
+                    onOpenBackstage = onOpenBackstage,
+                    onInsertImage = onInsertImage,
+                    onPresent = onPresent,
+                    onToggleFullscreen = onToggleFullscreen,
                 )
-                if (switcherIndex == i) ColorSwitcherPopup(editor, i) { switcherIndex = null }
             }
         }
-        Separator()
-
-        ToolbarIcon(XnotesIcons.undo, "Undo", enabled = editor.canUndo) { editor.undo() }
-        ToolbarIcon(XnotesIcons.redo, "Redo", enabled = editor.canRedo) { editor.redo() }
-        Separator()
-
-        // Page navigation
-        ToolbarIcon(XnotesIcons.prev, "Previous page") { editor.prevPage() }
-        Label("${editor.pageIndex + 1} / ${editor.pageCount}")
-        ToolbarIcon(XnotesIcons.next, "Next page") { editor.nextPage() }
-        PageMenu(editor)
-        StylesButton(editor)
-        Separator()
-
-        // Zoom
-        ToolbarIcon(XnotesIcons.zoomOut, "Zoom out", enabled = !editor.zoomLocked) { editor.zoomOut() }
-        Label("${editor.zoomPercent}%")
-        ToolbarIcon(XnotesIcons.zoomIn, "Zoom in", enabled = !editor.zoomLocked) { editor.zoomIn() }
-        FitMenu(editor)
-        ToolbarIcon(
-            if (editor.zoomLocked) XnotesIcons.lock else XnotesIcons.unlock,
-            "Zoom lock",
-            active = editor.zoomLocked,
-        ) { editor.toggleZoomLock() }
-        Separator()
-
-        ToolbarIcon(XnotesIcons.fullscreen, "Full screen") { onToggleFullscreen() }
-        ToolbarIcon(XnotesIcons.present, "Present", active = editor.presentationRunning) { onPresent() }
     }
 
     if (renaming) {
@@ -184,6 +119,118 @@ fun Toolbar(
             },
             onDismiss = { renaming = false },
         )
+    }
+}
+
+/** Renders one toolbar item by id, reusing the same controls/popups the bar has always used. */
+@Composable
+private fun ToolbarItemView(
+    editor: Editor,
+    item: ToolbarItem,
+    toolIcons: Map<Tool, ImageVector>,
+    configForTool: Tool?,
+    setConfigForTool: (Tool?) -> Unit,
+    switcherIndex: Int?,
+    setSwitcherIndex: (Int?) -> Unit,
+    onRename: () -> Unit,
+    onOpenBackstage: () -> Unit,
+    onInsertImage: () -> Unit,
+    onPresent: () -> Unit,
+    onToggleFullscreen: () -> Unit,
+) {
+    when (item) {
+        ToolbarItem.HOME -> ToolbarIcon(XnotesIcons.prev, "Home") { onOpenBackstage() }
+        ToolbarItem.TITLE -> Label(
+            editor.title,
+            modifier = Modifier
+                .widthIn(max = 160.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { onRename() },
+        )
+        ToolbarItem.SIDEBAR ->
+            ToolbarIcon(XnotesIcons.sidebar, "Side panel", active = editor.sidebarVisible) { editor.toggleSidebar() }
+
+        ToolbarItem.PEN, ToolbarItem.DASHED, ToolbarItem.CALLIGRAPHY, ToolbarItem.SPEED,
+        ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER, ToolbarItem.PAN,
+        ToolbarItem.SELECT, ToolbarItem.LASSO, ToolbarItem.SCREENSHOT, ToolbarItem.SHAPE,
+        ToolbarItem.TEXT -> {
+            val tool = Tool.fromId(item.id)
+            if (tool != null) ToolButton(editor, tool, toolIcons[tool], configForTool, setConfigForTool)
+        }
+
+        ToolbarItem.WAND ->
+            ToolbarIcon(XnotesIcons.magicWand, "Magic wand", active = editor.wandEnabled) { editor.toggleWand() }
+        ToolbarItem.RULER ->
+            ToolbarIcon(XnotesIcons.ruler, "Ruler", active = editor.rulerVisible) { editor.toggleRuler() }
+
+        ToolbarItem.IMAGE -> ImageMenu(editor, onInsertImage)
+
+        ToolbarItem.UNDO -> ToolbarIcon(XnotesIcons.undo, "Undo", enabled = editor.canUndo) { editor.undo() }
+        ToolbarItem.REDO -> ToolbarIcon(XnotesIcons.redo, "Redo", enabled = editor.canRedo) { editor.redo() }
+
+        ToolbarItem.PAGE_NAV -> {
+            ToolbarIcon(XnotesIcons.prev, "Previous page") { editor.prevPage() }
+            Label("${editor.pageIndex + 1} / ${editor.pageCount}")
+            ToolbarIcon(XnotesIcons.next, "Next page") { editor.nextPage() }
+        }
+        ToolbarItem.PAGE_MENU -> PageMenu(editor)
+        ToolbarItem.STYLES -> StylesButton(editor)
+
+        ToolbarItem.ZOOM -> {
+            ToolbarIcon(XnotesIcons.zoomOut, "Zoom out", enabled = !editor.zoomLocked) { editor.zoomOut() }
+            Label("${editor.zoomPercent}%")
+            ToolbarIcon(XnotesIcons.zoomIn, "Zoom in", enabled = !editor.zoomLocked) { editor.zoomIn() }
+        }
+        ToolbarItem.FIT -> FitMenu(editor)
+        ToolbarItem.ZOOM_LOCK -> ToolbarIcon(
+            if (editor.zoomLocked) XnotesIcons.lock else XnotesIcons.unlock,
+            "Zoom lock",
+            active = editor.zoomLocked,
+        ) { editor.toggleZoomLock() }
+
+        ToolbarItem.FULLSCREEN -> ToolbarIcon(XnotesIcons.fullscreen, "Full screen") { onToggleFullscreen() }
+        ToolbarItem.PRESENT ->
+            ToolbarIcon(XnotesIcons.present, "Present", active = editor.presentationRunning) { onPresent() }
+
+        ToolbarItem.COLORS -> editor.toolbarColors.forEachIndexed { i, color ->
+            Box {
+                Swatch(
+                    color = color.toComposeColor(),
+                    active = i == editor.activeColorIndex,
+                    onClick = { if (i == editor.activeColorIndex) setSwitcherIndex(i) else editor.pickColor(i) },
+                )
+                if (switcherIndex == i) ColorSwitcherPopup(editor, i) { setSwitcherIndex(null) }
+            }
+        }
+    }
+}
+
+/** A stroke/edit tool button: arms the tool, and re-clicking an armed config tool opens its popup. */
+@Composable
+private fun ToolButton(
+    editor: Editor,
+    tool: Tool,
+    icon: ImageVector?,
+    configForTool: Tool?,
+    setConfigForTool: (Tool?) -> Unit,
+) {
+    if (icon == null) return
+    Box {
+        ToolbarIcon(icon, tool.name, active = editor.tool == tool) {
+            if (editor.tool == tool && (tool.isStroke || tool == Tool.SHAPE || tool == Tool.ERASER)) {
+                setConfigForTool(tool)
+            } else {
+                editor.selectTool(tool)
+                setConfigForTool(null)
+            }
+        }
+        if (configForTool == tool) {
+            when {
+                tool == Tool.SHAPE -> ShapeConfigPopup(editor) { setConfigForTool(null) }
+                tool == Tool.ERASER -> EraserConfigPopup(editor) { setConfigForTool(null) }
+                else -> ToolConfigPopup(editor, tool) { setConfigForTool(null) }
+            }
+        }
     }
 }
 
