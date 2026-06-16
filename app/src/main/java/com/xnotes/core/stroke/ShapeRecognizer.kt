@@ -91,7 +91,7 @@ object ShapeRecognizer {
     private const val CURVE_FIT_TOL_FRAC = 0.09
 
     /** Points the single fitted cubic is sampled to when turned back into a polyline. */
-    private const val CURVE_SAMPLES = 32
+    private const val CURVE_SAMPLES = 64
 
     /** Recognize from raw stroke samples (the page-local positions are what matter). */
     fun recognize(samples: List<Sample>): RecognizedShape? = recognizePoints(samples.map { it.pos })
