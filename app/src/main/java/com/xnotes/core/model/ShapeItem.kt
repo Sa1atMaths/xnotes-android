@@ -3,7 +3,6 @@ package com.xnotes.core.model
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
-import com.xnotes.core.pal.FillRule
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.tools.ShapeKind
@@ -61,14 +60,17 @@ class ShapeItem(
         return listOf(Pt(b.centerX, b.top), Pt(b.left, b.bottom), Pt(b.right, b.bottom))
     }
 
-    /** Filled-arrowhead triangle at [end], sized from the stroke width. */
+    /** Open ">" arrowhead as the chevron polyline barbLeft -> tip -> barbRight (stroked, not filled),
+     *  sized from the stroke width. The tip sits just past [end] so the point clears the shaft's
+     *  round cap and reads slightly forward instead of buried under the line end. */
     private fun arrowHead(): List<Pt> {
         val dir = (end - start).normalized()
         if (dir.length() < 1e-9) return emptyList()
         val headLen = max(12.0, strokeWidth * 3.5)
-        val back = end - dir * headLen
+        val tip = end + dir * (strokeWidth * 0.5)
+        val back = tip - dir * headLen
         val perp = dir.perp() * (headLen * 0.5)
-        return listOf(end, back + perp, back - perp)
+        return listOf(back + perp, tip, back - perp)
     }
 
     private fun ellipsePolygon(segments: Int = 48): List<Pt> {
@@ -87,7 +89,7 @@ class ShapeItem(
         if (neon) return paintNeon(r)
         fillRgba?.let { drawFill(r, it) }
         drawOutline(r, pen())
-        if (shape == ShapeKind.ARROW) drawArrowHead(r, strokeRgba)
+        if (shape == ShapeKind.ARROW) drawArrowHead(r, pen())
     }
 
     /** Fill the closed-shape interior (no-op for open line/arrow). */
@@ -115,11 +117,10 @@ class ShapeItem(
         }
     }
 
-    /** Fill the arrowhead in [color], optionally with a soft glow of [blur] (0 = crisp). */
-    private fun drawArrowHead(r: Renderer, color: Rgba, blur: Double = 0.0, inner: Boolean = false) {
+    /** Stroke the open ">" arrowhead with [pen], mirroring the shaft so the head and shaft share one tube. */
+    private fun drawArrowHead(r: Renderer, pen: Pen) {
         val head = arrowHead()
-        if (head.size != 3) return
-        if (blur > 0.0) r.fillPolygonGlow(head, color, FillRule.NONZERO, blur, inner) else r.fillPolygon(head, color)
+        if (head.size == 3) r.strokePolyline(head, pen)
     }
 
     /**
@@ -149,17 +150,19 @@ class ShapeItem(
 
         // 1) Outer halo (ink colour), bounded in its own glow-alpha layer.
         r.saveLayerAlpha(paintBounds(), glowAlpha)
-        drawOutline(r, Pen(color = color, width = strokeWidth, cosmetic = false, glowRadius = glowR))
-        if (shape == ShapeKind.ARROW) drawArrowHead(r, color, glowR)
+        val haloPen = Pen(color = color, width = strokeWidth, cosmetic = false, glowRadius = glowR)
+        drawOutline(r, haloPen)
+        if (shape == ShapeKind.ARROW) drawArrowHead(r, haloPen)
         r.restore()
 
         // 2) Tube body — saturated colour shows at the rim.
         drawOutline(r, pen())
-        if (shape == ShapeKind.ARROW) drawArrowHead(r, strokeRgba)
+        if (shape == ShapeKind.ARROW) drawArrowHead(r, pen())
 
-        // 3) White-hot core — a thinner white line (and an inward-blurred white head).
-        drawOutline(r, Pen(color = white, width = coreW, cosmetic = false))
-        if (shape == ShapeKind.ARROW) drawArrowHead(r, white, strokeWidth * CORE_WIDTH_FRAC + 0.5, inner = true)
+        // 3) White-hot core — a thinner white line down the centre of the shaft and the chevron.
+        val corePen = Pen(color = white, width = coreW, cosmetic = false)
+        drawOutline(r, corePen)
+        if (shape == ShapeKind.ARROW) drawArrowHead(r, corePen)
     }
 
     override fun bounds(): Rect {
