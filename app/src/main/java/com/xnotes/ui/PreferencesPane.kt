@@ -3,6 +3,7 @@ package com.xnotes.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +31,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,19 +39,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.tools.ToolbarItem
+import com.xnotes.core.tools.ToolbarLayout
 import com.xnotes.settings.Preferences
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
+import kotlinx.coroutines.delay
 
 private val accentPresets = listOf(
     Rgba(0, 230, 118), Rgba(255, 138, 30), Rgba(255, 77, 77), Rgba(255, 210, 30),
@@ -64,7 +75,7 @@ private val penButtonOptions = listOf("eraser" to "Eraser", "pan" to "Pan", "sel
  * immediately, including in the surrounding backstage.
  */
 @Composable
-fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> Unit, onOpenToolbar: () -> Unit) {
+fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> Unit) {
     val palette = LocalPalette.current
     var prefs by remember { mutableStateOf(editor.preferences) }
     fun update(p: Preferences) {
@@ -72,6 +83,25 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
         editor.applyPreferences(p)
     }
 
+    val scrollState = rememberScrollState()
+    val layout = editor.toolbarLayout
+    // Toolbar drag state, hoisted here so the floating "ghost" chip can be drawn at the pane
+    // root (above and outside the scroll, so it is never clipped). Bounds are plain maps read
+    // only at drag time; observable state is just the dragged item, finger, and drop slot.
+    var dragItem by remember { mutableStateOf<ToolbarItem?>(null) }
+    var dragFinger by remember { mutableStateOf(Offset.Zero) }
+    var dragGrab by remember { mutableStateOf(Offset.Zero) }
+    var dropTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    val chipBounds = remember { mutableMapOf<ToolbarItem, Rect>() }
+    val sepBounds = remember { mutableMapOf<Int, Rect>() }
+    val emptyBounds = remember { mutableMapOf<Int, Rect>() }
+    var paneTopLeft by remember { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(Rect.Zero) }
+    fun retarget() {
+        dropTarget = toolbarDropTarget(editor.toolbarLayout, dragFinger, chipBounds, sepBounds, emptyBounds)
+    }
+
+    Box(Modifier.fillMaxSize().onGloballyPositioned { paneTopLeft = it.boundsInRoot().topLeft }) {
     Column(Modifier.fillMaxSize()) {
         // Hamburger sits inline with the title (shown only when the sidebar is hidden); the row keeps
         // a constant height either way so toggling the sidebar never shifts the settings below.
@@ -88,11 +118,11 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
         }
         Spacer(Modifier.height(12.dp))
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            Modifier.fillMaxSize().verticalScroll(scrollState)
+                .onGloballyPositioned { viewport = it.boundsInRoot() },
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SectionTitle("General")
-            ToolbarEntry(onOpenToolbar)
             FieldLabel("UI theme")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("Dark", prefs.uiAppearance == "dark") { update(prefs.copy(uiAppearance = "dark")) }
@@ -163,26 +193,80 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             CheckRow("Page colour follows the theme", prefs.pageColor == null) {
                 update(prefs.copy(pageColor = if (it) null else pageColorPresets.first()))
             }
+
+            HorizontalDivider(color = palette.border.toComposeColor())
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionTitle("Toolbar")
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { editor.applyToolbarLayout(ToolbarLayout.DEFAULT) }) { Text("Reset", fontSize = 13.sp) }
+            }
+            Text(
+                "Tap a tool to show or hide it. Long-press to drag it within or across sections. Tap a divider to merge two sections.",
+                color = palette.textDim.toComposeColor(),
+                fontSize = 12.sp,
+            )
+            ToolbarCustomizerBody(
+                layout = layout,
+                dragItem = dragItem,
+                dropTarget = dropTarget,
+                chipBounds = chipBounds,
+                sepBounds = sepBounds,
+                emptyBounds = emptyBounds,
+                onToggle = { s, i -> editor.applyToolbarLayout(editor.toolbarLayout.toggleVisible(s, i)) },
+                onMerge = { s -> editor.applyToolbarLayout(editor.toolbarLayout.removeSection(s + 1)) },
+                onAdd = { editor.applyToolbarLayout(editor.toolbarLayout.addSection()) },
+                onDragStart = { item, local ->
+                    dragItem = item
+                    dragGrab = local
+                    dragFinger = (chipBounds[item]?.topLeft ?: Offset.Zero) + local
+                    retarget()
+                },
+                onDrag = { delta -> dragFinger += delta; retarget() },
+                onDrop = {
+                    val target = dropTarget
+                    val moving = dragItem
+                    if (target != null && moving != null) {
+                        val cur = editor.toolbarLayout
+                        val fSec = cur.sections.indexOfFirst { s -> s.entries.any { it.item == moving } }
+                        val fIdx = if (fSec >= 0) cur.sections[fSec].entries.indexOfFirst { it.item == moving } else -1
+                        if (fSec >= 0 && fIdx >= 0) {
+                            editor.applyToolbarLayout(cur.moveItem(fSec, fIdx, target.first, target.second))
+                        }
+                    }
+                    dragItem = null
+                    dropTarget = null
+                },
+                onCancel = {
+                    dragItem = null
+                    dropTarget = null
+                },
+            )
             Spacer(Modifier.size(8.dp))
         }
     }
-}
+        // The dragged chip's floating copy: a pane-root sibling so the scroll never clips it.
+        val ghost = dragItem
+        if (ghost != null) {
+            val gx = (dragFinger.x - dragGrab.x - paneTopLeft.x).toInt()
+            val gy = (dragFinger.y - dragGrab.y - paneTopLeft.y).toInt()
+            Box(Modifier.offset { IntOffset(gx, gy) }) { ToolbarDragGhost(ghost) }
+        }
+    }
 
-@Composable
-private fun ToolbarEntry(onClick: () -> Unit) {
-    val palette = LocalPalette.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(XnotesIcons.sliders, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(12.dp))
-        Text("Customize toolbar", color = palette.text.toComposeColor(), fontSize = 14.sp)
-        Spacer(Modifier.weight(1f))
-        Icon(XnotesIcons.next, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
+    // While dragging near a vertical edge of the scroll viewport, ease the list along so items
+    // off-screen can be reached without lifting the finger.
+    LaunchedEffect(dragItem != null) {
+        while (dragItem != null) {
+            val band = 90f
+            val y = dragFinger.y
+            val delta = when {
+                y < viewport.top + band -> -((viewport.top + band - y) / band) * 14f
+                y > viewport.bottom - band -> ((y - (viewport.bottom - band)) / band) * 14f
+                else -> 0f
+            }
+            if (delta != 0f) scrollState.scrollBy(delta)
+            delay(16L)
+        }
     }
 }
 

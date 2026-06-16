@@ -111,7 +111,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Which pane the backstage shows on the right. */
-enum class BackstageView { HOME, PREFERENCES, ABOUT, TOOLBAR }
+enum class BackstageView { HOME, PREFERENCES, ABOUT }
 
 /** Whether the Home explorer is awaiting a new file/folder name. */
 private enum class CreateMode { NONE, FILE, FOLDER }
@@ -213,8 +213,6 @@ private fun BackstageContent(
     BackHandler {
         when {
             compact && sidebarOpen -> sidebarOpen = false
-            // Toolbar customizer is a sub-page of Preferences: back returns to Preferences.
-            view == BackstageView.TOOLBAR -> selectView(BackstageView.PREFERENCES)
             // Preferences and About are sub-pages of Home: back lands on Home rather than leaving the app.
             view == BackstageView.PREFERENCES || view == BackstageView.ABOUT -> selectView(BackstageView.HOME)
             createMode != CreateMode.NONE -> createMode = CreateMode.NONE
@@ -225,7 +223,7 @@ private fun BackstageContent(
     if (compact) {
         Box(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
             BackstageMain(
-                Modifier.fillMaxSize(), editor, view, sidebarOpen, { sidebarOpen = true }, selectView,
+                Modifier.fillMaxSize(), editor, view, sidebarOpen, { sidebarOpen = true },
                 onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
             )
             AnimatedVisibility(visible = sidebarOpen, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
@@ -249,7 +247,7 @@ private fun BackstageContent(
                 BackstageSidebar(Modifier.width(264.dp), view, { sidebarOpen = false }, selectView, newNote, importPdf, openSystem)
             }
             BackstageMain(
-                Modifier.weight(1f).fillMaxHeight(), editor, view, sidebarOpen, { sidebarOpen = true }, selectView,
+                Modifier.weight(1f).fillMaxHeight(), editor, view, sidebarOpen, { sidebarOpen = true },
                 onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
             )
         }
@@ -301,7 +299,6 @@ private fun BackstageMain(
     view: BackstageView,
     sidebarOpen: Boolean,
     onShowSidebar: () -> Unit,
-    onSelectView: (BackstageView) -> Unit,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
     onImportPdf: () -> Unit,
@@ -314,7 +311,7 @@ private fun BackstageMain(
     val palette = LocalPalette.current
     Column(modifier) {
         // About keeps a slim top bar for the hamburger, reserved at a constant height so toggling
-        // the sidebar never shifts it. Home, Preferences, and Toolbar host the hamburger inline.
+        // the sidebar never shifts it. Home and Preferences host the hamburger inline with their headers.
         if (view == BackstageView.ABOUT) {
             Box(
                 Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 6.dp, end = 12.dp),
@@ -333,8 +330,7 @@ private fun BackstageMain(
                     editor, onOpenFile, onPickRoot, onImportPdf,
                     onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode, sidebarOpen, onShowSidebar,
                 )
-                BackstageView.PREFERENCES -> PreferencesPane(editor, sidebarOpen, onShowSidebar) { onSelectView(BackstageView.TOOLBAR) }
-                BackstageView.TOOLBAR -> ToolbarCustomizer(editor, sidebarOpen, onShowSidebar)
+                BackstageView.PREFERENCES -> PreferencesPane(editor, sidebarOpen, onShowSidebar)
                 BackstageView.ABOUT -> AboutPane()
             }
         }
