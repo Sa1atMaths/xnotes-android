@@ -35,8 +35,8 @@ data class RecognizedShape(
  * Shapes recognized:
  *  - open straight stroke -> [ShapeKind.LINE]
  *  - open multi-segment zig-zag -> [ShapeKind.POLYLINE] (vertices preserved)
- *  - any other smooth open stroke (a C, an S, ...) -> [ShapeKind.CURVE] (a fitted Bézier
- *    spline, sampled to a dense polyline)
+ *  - any other smooth open stroke (a C, an S, ...) -> [ShapeKind.CURVE] (one or more fitted
+ *    elliptical arcs, sampled to a dense polyline)
  *  - closed round blob -> [ShapeKind.ELLIPSE] (snapped to a circle when nearly round)
  *  - closed n-gon with sharp corners -> [ShapeKind.RECTANGLE] when it is an upright box,
  *    else [ShapeKind.POLYGON] (vertices preserved, including 3-corner triangles)
@@ -128,13 +128,13 @@ object ShapeRecognizer {
                 return RecognizedShape(ShapeKind.POLYLINE, box.topLeft, Pt(box.right, box.bottom), verts)
             }
         }
-        // Otherwise a smooth freehand curve (a C, an S, any flowing open stroke): fit a clean
-        // Bézier spline and hand it back sampled as a dense polyline.
+        // Otherwise a smooth freehand curve (a C, an S, any flowing open stroke): snap it to a
+        // clean elliptical arc, or a chain of arcs where one ellipse can't span it (e.g. an S).
         return curveFrom(path, diag)
     }
 
     private fun curveFrom(path: List<Pt>, diag: Double): RecognizedShape? {
-        val curve = CurveFit.fitSampled(path, CURVE_FIT_TOL_FRAC * diag, CURVE_SAMPLES_PER_SEG)
+        val curve = EllipseArcFit.fitSampled(path, CURVE_FIT_TOL_FRAC * diag, CURVE_SAMPLES_PER_SEG)
         if (curve.size < 3) return null
         val box = Rect.bounding(curve)
         return RecognizedShape(ShapeKind.CURVE, box.topLeft, Pt(box.right, box.bottom), curve)
