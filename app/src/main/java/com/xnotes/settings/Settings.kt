@@ -8,6 +8,7 @@ import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConfig
 import com.xnotes.core.tools.ToolDefaults
+import com.xnotes.core.tools.ToolbarLayout
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -42,6 +43,7 @@ data class Settings(
     val tools: Map<Tool, ToolConfig> = emptyMap(),
     val shapeConfig: ShapeConfig = ShapeConfig(),
     val toolbarColors: List<Rgba> = InkPalette.toolbarDefaults,
+    val toolbarLayout: ToolbarLayout = ToolbarLayout.DEFAULT,
     val activeColor: Int = 0,
     val recentColors: List<Rgba> = emptyList(),
     /** Persisted SAF tree URI for the in-app file explorer's root folder, or null. */
@@ -70,6 +72,7 @@ data class Settings(
         return JSONObject()
             .put("tools", toolsObj)
             .put("toolbar_colors", JSONArray().apply { toolbarColors.forEach { put(rgbaArr(it)) } })
+            .put("toolbar_layout", toolbarLayoutJson(toolbarLayout))
             .put("active_color", activeColor)
             .put("recent_colors", JSONArray().apply { recentColors.forEach { put(rgbaArr(it)) } })
             .apply { browseRoot?.let { put("browse_root", it) } }
@@ -99,6 +102,7 @@ data class Settings(
                 tools = tools,
                 shapeConfig = shape,
                 toolbarColors = colors.take(5),
+                toolbarLayout = toolbarLayout(o.optJSONObject("toolbar_layout")),
                 activeColor = o.optInt("active_color", 0).coerceIn(0, 4),
                 recentColors = rgbaList(o.optJSONArray("recent_colors")).take(24),
                 browseRoot = o.optString("browse_root", "").ifEmpty { null },
@@ -176,5 +180,33 @@ data class Settings(
             neon = o.optBoolean("neon", false),
             neonStrength = o.optDouble("neon_strength", 0.6),
         )
+
+        private fun toolbarLayoutJson(layout: ToolbarLayout): JSONObject {
+            val secArr = JSONArray()
+            for (sec in layout.sections) {
+                val entryArr = JSONArray()
+                for (e in sec.entries) {
+                    entryArr.put(JSONObject().put("id", e.item.id).put("visible", e.visible))
+                }
+                secArr.put(entryArr)
+            }
+            return JSONObject().put("sections", secArr)
+        }
+
+        private fun toolbarLayout(o: JSONObject?): ToolbarLayout {
+            if (o == null) return ToolbarLayout.DEFAULT
+            val secArr = o.optJSONArray("sections") ?: return ToolbarLayout.DEFAULT
+            val raw = ArrayList<List<Pair<String, Boolean>>>()
+            for (i in 0 until secArr.length()) {
+                val entryArr = secArr.optJSONArray(i) ?: continue
+                val entries = ArrayList<Pair<String, Boolean>>()
+                for (j in 0 until entryArr.length()) {
+                    val e = entryArr.optJSONObject(j) ?: continue
+                    entries.add(e.optString("id") to e.optBoolean("visible", true))
+                }
+                raw.add(entries)
+            }
+            return ToolbarLayout.fromRaw(raw)
+        }
     }
 }

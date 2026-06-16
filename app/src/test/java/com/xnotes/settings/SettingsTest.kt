@@ -4,6 +4,7 @@ import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.tools.Tool
+import com.xnotes.core.tools.ToolbarLayout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -83,5 +84,15 @@ class SettingsTest {
     @Test fun fingerDrawAutoCheckedRoundTrips() {
         val back = Settings.fromJson(Settings(fingerDrawAutoChecked = true).toJson())
         assertTrue(back.fingerDrawAutoChecked)
+    }
+
+    @Test fun toolbarLayoutDefaultsWhenAbsent() {
+        assertEquals(ToolbarLayout.DEFAULT, Settings.fromJson(JSONObject()).toolbarLayout)
+    }
+
+    @Test fun toolbarLayoutRoundTrips() {
+        val custom = ToolbarLayout.DEFAULT.toggleVisible(2, 0).addSection()
+        val back = Settings.fromJson(Settings(toolbarLayout = custom).toJson())
+        assertEquals(custom, back.toolbarLayout)
     }
 }
