@@ -700,6 +700,8 @@ class InteractionController(
             strokeRgba = stroke.config.rgba, // the as-drawn ink colour (not renderColor's alpha-scaled one)
             strokeWidth = stroke.config.baseWidth * SHAPE_PEN_PARITY,
             fillRgba = null,
+            neon = stroke.config.neon, // a neon pen snaps to a neon shape (highlighter never snaps)
+            neonStrength = stroke.config.neonStrength,
         )
         page.items.add(shape)
         state.appendToCache(page, shape)
