@@ -264,7 +264,10 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 y > viewport.bottom - band -> ((y - (viewport.bottom - band)) / band) * 14f
                 else -> 0f
             }
-            if (delta != 0f) scrollState.scrollBy(delta)
+            if (delta != 0f) {
+                scrollState.scrollBy(delta)
+                retarget()
+            }
             delay(16L)
         }
     }
