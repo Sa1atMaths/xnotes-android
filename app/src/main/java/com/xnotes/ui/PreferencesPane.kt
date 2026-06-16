@@ -94,10 +94,18 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
     var dropTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val chipBounds = remember { mutableMapOf<ToolbarItem, Rect>() }
     val sectionBounds = remember { mutableMapOf<Int, Rect>() }
+    val sectionGrabBounds = remember { mutableMapOf<Int, Rect>() }
+    // Section-drag state (the whole card, by its grip handle); shares the finger/grab with the
+    // chip drag since only one gesture runs at a time. The drop slot is an insertion index.
+    var dragSection by remember { mutableStateOf<Int?>(null) }
+    var sectionDropTarget by remember { mutableStateOf<Int?>(null) }
     var paneTopLeft by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(Rect.Zero) }
     fun retarget() {
         dropTarget = toolbarDropTarget(editor.toolbarLayout, dragFinger, chipBounds, sectionBounds)
+    }
+    fun retargetSection() {
+        sectionDropTarget = toolbarSectionDropTarget(editor.toolbarLayout, dragFinger, sectionBounds)
     }
 
     Box(Modifier.fillMaxSize().onGloballyPositioned { paneTopLeft = it.boundsInRoot().topLeft }) {
@@ -200,7 +208,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 TextButton(onClick = { editor.applyToolbarLayout(ToolbarLayout.DEFAULT) }) { Text("Reset", fontSize = 13.sp) }
             }
             Text(
-                "Tap a tool to show or hide it. Long-press to drag it within or across sections.",
+                "Tap a tool to show or hide it. Long-press to drag it within or across sections. Long-press a section's top to move the whole section.",
                 color = palette.textDim.toComposeColor(),
                 fontSize = 12.sp,
             )
@@ -208,8 +216,11 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 layout = layout,
                 dragItem = dragItem,
                 dropTarget = dropTarget,
+                dragSection = dragSection,
+                sectionDropTarget = sectionDropTarget,
                 chipBounds = chipBounds,
                 sectionBounds = sectionBounds,
+                sectionGrabBounds = sectionGrabBounds,
                 onToggle = { s, i -> editor.applyToolbarLayout(editor.toolbarLayout.toggleVisible(s, i)) },
                 onDelete = { s -> editor.applyToolbarLayout(editor.toolbarLayout.removeSection(s)) },
                 onAdd = { editor.applyToolbarLayout(editor.toolbarLayout.addSection()) },
@@ -238,23 +249,54 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                     dragItem = null
                     dropTarget = null
                 },
+                onSectionDragStart = { sec, local ->
+                    dragSection = sec
+                    val grab = sectionGrabBounds[sec]?.topLeft ?: sectionBounds[sec]?.topLeft ?: Offset.Zero
+                    val card = sectionBounds[sec]?.topLeft ?: Offset.Zero
+                    dragFinger = grab + local
+                    dragGrab = dragFinger - card
+                    retargetSection()
+                },
+                onSectionDrag = { delta -> dragFinger += delta; retargetSection() },
+                onSectionDrop = {
+                    val from = dragSection
+                    val insertAt = sectionDropTarget
+                    if (from != null && insertAt != null) {
+                        val cur = editor.toolbarLayout
+                        val to = (if (insertAt > from) insertAt - 1 else insertAt).coerceIn(0, cur.sections.lastIndex)
+                        if (to != from) editor.applyToolbarLayout(cur.moveSection(from, to))
+                    }
+                    dragSection = null
+                    sectionDropTarget = null
+                },
+                onSectionCancel = {
+                    dragSection = null
+                    sectionDropTarget = null
+                },
             )
             Spacer(Modifier.size(8.dp))
         }
     }
-        // The dragged chip's floating copy: a pane-root sibling so the scroll never clips it.
-        val ghost = dragItem
-        if (ghost != null) {
-            val gx = (dragFinger.x - dragGrab.x - paneTopLeft.x).toInt()
-            val gy = (dragFinger.y - dragGrab.y - paneTopLeft.y).toInt()
-            Box(Modifier.offset { IntOffset(gx, gy) }) { ToolbarDragGhost(ghost) }
+        // The dragged chip/section's floating copy: a pane-root sibling so the scroll never clips it.
+        val gx = (dragFinger.x - dragGrab.x - paneTopLeft.x).toInt()
+        val gy = (dragFinger.y - dragGrab.y - paneTopLeft.y).toInt()
+        val ghostChip = dragItem
+        val ghostSecIdx = dragSection
+        if (ghostChip != null) {
+            Box(Modifier.offset { IntOffset(gx, gy) }) { ToolbarDragGhost(ghostChip) }
+        } else if (ghostSecIdx != null) {
+            val sectionG = editor.toolbarLayout.sections.getOrNull(ghostSecIdx)
+            val widthG = sectionBounds[ghostSecIdx]?.width
+            if (sectionG != null && widthG != null) {
+                Box(Modifier.offset { IntOffset(gx, gy) }) { SectionCardGhost(sectionG, widthG) }
+            }
         }
     }
 
     // While dragging near a vertical edge of the scroll viewport, ease the list along so items
     // off-screen can be reached without lifting the finger.
-    LaunchedEffect(dragItem != null) {
-        while (dragItem != null) {
+    LaunchedEffect(dragItem != null || dragSection != null) {
+        while (dragItem != null || dragSection != null) {
             val band = 90f
             val y = dragFinger.y
             val delta = when {
@@ -264,7 +306,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             }
             if (delta != 0f) {
                 scrollState.scrollBy(delta)
-                retarget()
+                if (dragItem != null) retarget() else retargetSection()
             }
             delay(16L)
         }
