@@ -115,11 +115,11 @@ object ToolConversions {
 
     fun highlighterAlphaToIntensity(a: Double): Double = a * 100.0
 
-    /** WIDTH slider range per tool (spec 04 §5): 4..40 for the highlighter, 8..80 for the eraser
+    /** WIDTH slider range per tool (spec 04 §5): 4..40 for the highlighter, 1..80 for the eraser
      *  (its radius, default 24), else 1..20. */
     fun widthRange(tool: Tool): ClosedFloatingPointRange<Double> = when (tool) {
         Tool.HIGHLIGHTER -> 4.0..40.0
-        Tool.ERASER -> 8.0..80.0
+        Tool.ERASER -> 1.0..80.0
         else -> 1.0..20.0
     }
 }
