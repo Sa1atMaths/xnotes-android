@@ -263,6 +263,12 @@ class DocumentCodec(
             .put("stroke_rgba", rgbaToJson(s.strokeRgba))
             .put("stroke_width", s.strokeWidth)
             .put("fill_rgba", s.fillRgba?.let { rgbaToJson(it) } ?: JSONObject.NULL)
+        // Polygon/polyline carry their vertices (absolute content px); other kinds omit them.
+        s.vertices()?.let { verts ->
+            val arr = JSONArray()
+            for (p in verts) arr.put(JSONArray().put(p.x).put(p.y))
+            obj.put("points", arr)
+        }
         // Glow is additive: a plain shape serializes exactly as before.
         if (s.neon) {
             obj.put("neon", true)
@@ -335,18 +341,32 @@ class DocumentCodec(
     }
 
     private fun parseShape(o: JSONObject): ShapeItem {
-        val start = readPt(o.optJSONArray("start")) ?: Pt.ZERO
-        val end = readPt(o.optJSONArray("end")) ?: Pt.ZERO
+        val kind = ShapeKind.fromId(o.optString("shape"))
+        val strokeRgba = readRgba(o.optJSONArray("stroke_rgba")) ?: Rgba(0, 230, 118, 255)
+        val strokeWidth = o.optDouble("stroke_width", 3.0)
+        val fillRgba = if (o.isNull("fill_rgba")) null else readRgba(o.optJSONArray("fill_rgba"))
+        val neon = o.optBoolean("neon", false)
+        val neonStrength = o.optDouble("neon_strength", 0.6)
+        readPoints(o.optJSONArray("points"))?.let { verts ->
+            return ShapeItem.poly(kind, verts, strokeRgba, strokeWidth, fillRgba, neon, neonStrength)
+        }
         return ShapeItem(
-            shape = ShapeKind.fromId(o.optString("shape")),
-            start = start,
-            end = end,
-            strokeRgba = readRgba(o.optJSONArray("stroke_rgba")) ?: Rgba(0, 230, 118, 255),
-            strokeWidth = o.optDouble("stroke_width", 3.0),
-            fillRgba = if (o.isNull("fill_rgba")) null else readRgba(o.optJSONArray("fill_rgba")),
-            neon = o.optBoolean("neon", false),
-            neonStrength = o.optDouble("neon_strength", 0.6),
+            shape = kind,
+            start = readPt(o.optJSONArray("start")) ?: Pt.ZERO,
+            end = readPt(o.optJSONArray("end")) ?: Pt.ZERO,
+            strokeRgba = strokeRgba,
+            strokeWidth = strokeWidth,
+            fillRgba = fillRgba,
+            neon = neon,
+            neonStrength = neonStrength,
         )
+    }
+
+    private fun readPoints(arr: JSONArray?): List<Pt>? {
+        if (arr == null || arr.length() < 2) return null
+        val out = ArrayList<Pt>(arr.length())
+        for (i in 0 until arr.length()) out.add(readPt(arr.optJSONArray(i)) ?: continue)
+        return if (out.size >= 2) out else null
     }
 
     // --- json helpers ---

@@ -21,9 +21,12 @@ class ShapeRecognizerTest {
     private fun jit(amp: Double) = (rnd.nextDouble() * 2.0 - 1.0) * amp
 
     private fun circle(cx: Double, cy: Double, r: Double, n: Int, noise: Double): List<Pt> =
+        ellipse(cx, cy, r, r, n, noise)
+
+    private fun ellipse(cx: Double, cy: Double, rx: Double, ry: Double, n: Int, noise: Double): List<Pt> =
         (0 until n).map { i ->
             val a = 2.0 * PI * i / n
-            Pt(cx + r * cos(a) + jit(noise), cy + r * sin(a) + jit(noise))
+            Pt(cx + rx * cos(a) + jit(noise), cy + ry * sin(a) + jit(noise))
         }
 
     private fun line(a: Pt, b: Pt, n: Int, noise: Double): List<Pt> =
@@ -43,6 +46,21 @@ class ShapeRecognizerTest {
                 out.add(Pt(a.x + t * (b.x - a.x) + jit(noise), a.y + t * (b.y - a.y) + jit(noise)))
             }
         }
+        return out
+    }
+
+    /** Walk the edges without the closing one, so first and last stay apart ⇒ an open polyline. */
+    private fun polyline(vertices: List<Pt>, perEdge: Int, noise: Double): List<Pt> {
+        val out = ArrayList<Pt>()
+        for (e in 0 until vertices.size - 1) {
+            val a = vertices[e]
+            val b = vertices[e + 1]
+            for (s in 0 until perEdge) {
+                val t = s.toDouble() / perEdge
+                out.add(Pt(a.x + t * (b.x - a.x) + jit(noise), a.y + t * (b.y - a.y) + jit(noise)))
+            }
+        }
+        out.add(vertices.last())
         return out
     }
 
@@ -94,14 +112,72 @@ class ShapeRecognizerTest {
         assertEquals(150.0, abs(rec.end.y - rec.start.y), 35.0)
     }
 
-    @Test fun threeCornerStrokeSnapsToTriangle() {
+    @Test fun threeCornerStrokeSnapsToFreePolygon() {
         val tri = polygon(
             listOf(Pt(200.0, 40.0), Pt(360.0, 340.0), Pt(40.0, 340.0)),
             perEdge = 22, noise = 5.0,
         )
         val rec = ShapeRecognizer.recognizePoints(tri)
         assertNotNull(rec)
-        assertEquals(ShapeKind.TRIANGLE, rec!!.kind)
+        assertEquals(ShapeKind.POLYGON, rec!!.kind)
+        assertEquals(3, rec.vertices!!.size)
+    }
+
+    @Test fun pentagonSnapsToPolygon() {
+        val verts = listOf(
+            Pt(200.0, 50.0), Pt(342.7, 153.6), Pt(288.2, 321.4), Pt(111.8, 321.4), Pt(57.3, 153.6),
+        )
+        val rec = ShapeRecognizer.recognizePoints(polygon(verts, perEdge = 18, noise = 4.0))
+        assertNotNull(rec)
+        assertEquals(ShapeKind.POLYGON, rec!!.kind)
+        assertEquals(5, rec.vertices!!.size)
+    }
+
+    @Test fun tiltedSquareStaysPolygon() {
+        // A 45°-rotated square: its corners sit at the bbox edge midpoints, not the bbox corners,
+        // so the hybrid rectangle test must reject it and keep the real (tilted) 4-gon.
+        val diamond = polygon(
+            listOf(Pt(200.0, 60.0), Pt(340.0, 200.0), Pt(200.0, 340.0), Pt(60.0, 200.0)),
+            perEdge = 18, noise = 4.0,
+        )
+        val rec = ShapeRecognizer.recognizePoints(diamond)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.POLYGON, rec!!.kind)
+        assertEquals(4, rec.vertices!!.size)
+    }
+
+    @Test fun openZigZagSnapsToPolyline() {
+        val zig = polyline(
+            listOf(Pt(40.0, 200.0), Pt(120.0, 80.0), Pt(200.0, 200.0), Pt(280.0, 80.0), Pt(360.0, 200.0)),
+            perEdge = 16, noise = 4.0,
+        )
+        val rec = ShapeRecognizer.recognizePoints(zig)
+        assertNotNull(rec)
+        assertEquals(ShapeKind.POLYLINE, rec!!.kind)
+        assertTrue("expected the zig-zag corners preserved", rec.vertices!!.size in 4..6)
+    }
+
+    @Test fun clearOvalStaysEllipse() {
+        val rec = ShapeRecognizer.recognizePoints(ellipse(200.0, 200.0, 200.0, 80.0, 56, 4.0))
+        assertNotNull(rec)
+        assertEquals(ShapeKind.ELLIPSE, rec!!.kind)
+        val w = abs(rec.end.x - rec.start.x)
+        val h = abs(rec.end.y - rec.start.y)
+        assertEquals(400.0, w, 40.0)
+        assertEquals(160.0, h, 40.0)
+        assertTrue("a clear oval keeps its aspect", w - h > 100.0)
+    }
+
+    @Test fun nearCircleOvalSnapsToCircle() {
+        // Aspect ~0.87 is within the balanced circle threshold, so it squares up to a circle.
+        val rec = ShapeRecognizer.recognizePoints(ellipse(200.0, 200.0, 150.0, 130.0, 56, 4.0))
+        assertNotNull(rec)
+        assertEquals(ShapeKind.ELLIPSE, rec!!.kind)
+        val w = abs(rec.end.x - rec.start.x)
+        val h = abs(rec.end.y - rec.start.y)
+        assertEquals("near-circle squares up", w, h, 6.0)
+        assertEquals(200.0, (rec.start.x + rec.end.x) / 2.0, 12.0)
+        assertEquals(200.0, (rec.start.y + rec.end.y) / 2.0, 12.0)
     }
 
     // --- negatives (stay ink) ---
@@ -112,14 +188,6 @@ class ShapeRecognizerTest {
 
     @Test fun tinyStrokeIsNotAShape() {
         assertNull(ShapeRecognizer.recognizePoints(circle(10.0, 10.0, 6.0, 40, 0.5)))
-    }
-
-    @Test fun openZigZagIsNotAShape() {
-        val zig = listOf(
-            Pt(0.0, 0.0), Pt(60.0, 80.0), Pt(120.0, 0.0),
-            Pt(180.0, 80.0), Pt(240.0, 0.0), Pt(300.0, 80.0),
-        )
-        assertNull(ShapeRecognizer.recognizePoints(zig))
     }
 
     @Test fun openArcIsNotAShape() {

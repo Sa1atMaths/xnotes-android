@@ -5,33 +5,42 @@ import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.tools.ShapeKind
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
  * A geometric shape inferred from a freehand stroke (the "hold to snap" gesture).
- * [start]/[end] are the same two points a [com.xnotes.core.model.ShapeItem] takes:
- * the two endpoints for [ShapeKind.LINE], or opposite corners of the bounding box
- * for the closed kinds.
+ * [start]/[end] are opposite corners of the bounding box (or the two endpoints for
+ * [ShapeKind.LINE]); [vertices] carries the corner list (content px) for the
+ * [ShapeKind.POLYGON] and [ShapeKind.POLYLINE] kinds and is null for the rest.
  */
-data class RecognizedShape(val kind: ShapeKind, val start: Pt, val end: Pt)
+data class RecognizedShape(
+    val kind: ShapeKind,
+    val start: Pt,
+    val end: Pt,
+    val vertices: List<Pt>? = null,
+)
 
 /**
- * Classifies a freehand stroke into one of a few simple shapes, or `null` when it
- * is not a confident match (in which case the caller leaves the stroke as ink).
+ * Classifies a freehand stroke into a clean shape, or `null` when it is not a confident
+ * match (the caller then leaves the stroke as ink).
  *
- * Pure and deterministic so it can be unit-tested on the plain JVM, like
- * [StrokeEngine]. Works in page-local content px; every threshold is a fraction of
- * the stroke's bounding-box diagonal, so recognition is scale- (and zoom-)
- * independent.
+ * Pure and deterministic so it can be unit-tested on the plain JVM, like [StrokeEngine].
+ * Works in page-local content px; every threshold is a fraction of the stroke's
+ * bounding-box diagonal, so recognition is scale- (and zoom-) independent.
  *
- * Two model limitations to keep in mind when reading the results:
- *  - [ShapeItem][com.xnotes.core.model.ShapeItem] geometry is axis-aligned, so a
- *    tilted rectangle/ellipse necessarily snaps to its upright bounding box.
- *  - A [ShapeKind.TRIANGLE] always renders as an upward isosceles triangle inscribed
- *    in its box, so the recognizer cannot preserve a triangle's orientation.
+ * Shapes recognized:
+ *  - open straight stroke -> [ShapeKind.LINE]
+ *  - open multi-segment zig-zag -> [ShapeKind.POLYLINE] (vertices preserved)
+ *  - closed round blob -> [ShapeKind.ELLIPSE] (snapped to a circle when nearly round)
+ *  - closed n-gon with sharp corners -> [ShapeKind.RECTANGLE] when it is an upright box,
+ *    else [ShapeKind.POLYGON] (vertices preserved, including 3-corner triangles)
+ *
+ * Corners drive the closed-shape decision: a smooth outline (no sharp turns) is the only
+ * thing that becomes an ellipse, so a hexagon stays a polygon and a circle never does.
  */
 object ShapeRecognizer {
 
@@ -47,19 +56,28 @@ object ShapeRecognizer {
     /** max perpendicular deviation / chord length at or under this is a straight line. */
     private const val LINE_DEV_FRAC = 0.08
 
-    /** Points the closed loop is resampled to before measuring roundness / corners. */
+    /** Points the path is resampled to before measuring roundness / corners. */
     private const val RESAMPLE_N = 64
 
     /** RMS normalized ellipse residual at or under this is an ellipse/circle. */
     private const val ELLIPSE_RESIDUAL_FRAC = 0.11
 
-    /** Enclosed-area / bbox-area at or above this (with 4 corners) is a rectangle. */
-    private const val RECT_FILL_MIN = 0.78
-
     /** Turn (direction change) at a vertex at or above this counts as a corner. */
     private const val CORNER_ANGLE_DEG = 50.0
 
     private val CORNER_ANGLE_RAD = CORNER_ANGLE_DEG * PI / 180.0
+
+    /** Shorter axis / longer axis at or above this snaps a recognized ellipse to a circle. */
+    private const val CIRCLE_ASPECT_MIN = 0.80
+
+    /** A 4-gon whose corners each sit within this·diagonal of a distinct bbox corner is an upright rectangle. */
+    private const val RECT_CORNER_FRAC = 0.12
+
+    /** Max edge bow / diagonal for a polygon/polyline edge to count as straight. */
+    private const val EDGE_DEV_FRAC = 0.06
+
+    /** More inferred corners than this means a noisy blob, not a drawn polygon. */
+    private const val MAX_POLY_VERTS = 12
 
     /** Recognize from raw stroke samples (the page-local positions are what matter). */
     fun recognize(samples: List<Sample>): RecognizedShape? = recognizePoints(samples.map { it.pos })
@@ -71,41 +89,171 @@ object ShapeRecognizer {
         val diag = hypot(bbox.w, bbox.h)
         if (diag < MIN_DIAGONAL) return null
 
+        val closed = points.first().distanceTo(points.last()) <= CLOSED_GAP_FRAC * diag
+        return if (closed) recognizeClosed(points, bbox, diag) else recognizeOpen(points, diag)
+    }
+
+    // --- open paths: straight line or zig-zag polyline ---
+
+    private fun recognizeOpen(points: List<Pt>, diag: Double): RecognizedShape? {
         val first = points.first()
         val last = points.last()
-        val closed = first.distanceTo(last) <= CLOSED_GAP_FRAC * diag
-
-        if (!closed) {
-            // Open path: the only thing we snap is a straight line that hugs its chord.
-            val chord = first.distanceTo(last)
-            if (chord > 1e-6) {
-                val maxDev = points.maxOf { Geometry.distancePointToSegment(it, first, last) }
-                if (maxDev / chord <= LINE_DEV_FRAC) return RecognizedShape(ShapeKind.LINE, first, last)
-            }
-            return null
+        // A stroke hugging its chord snaps to a straight line.
+        val chord = first.distanceTo(last)
+        if (chord > 1e-6) {
+            val maxDev = points.maxOf { Geometry.distancePointToSegment(it, first, last) }
+            if (maxDev / chord <= LINE_DEV_FRAC) return RecognizedShape(ShapeKind.LINE, first, last)
         }
+        // Otherwise a multi-segment zig-zag with sharp corners and straight runs; a smooth arc
+        // has no sharp corners, so it falls through to null and stays ink.
+        val path = resample(points, RESAMPLE_N)
+        val peaks = cornerPeaks(path, wrap = false)
+        if (peaks.isEmpty() || peaks.size > MAX_POLY_VERTS) return null
+        val vertIdx = listOf(0) + peaks + listOf(path.size - 1)
+        if (!edgesStraight(path, vertIdx, wrap = false, diag)) return null
+        val verts = vertIdx.map { path[it] }
+        val box = Rect.bounding(verts)
+        return RecognizedShape(ShapeKind.POLYLINE, box.topLeft, Pt(box.right, box.bottom), verts)
+    }
 
-        // Closed path: resample evenly around the loop (including the closing segment) so the
-        // roundness/corner tests are insensitive to where the stroke happened to start and to
-        // uneven sampling speed.
+    // --- closed paths: polygon (incl. rectangle) or ellipse/circle ---
+
+    private fun recognizeClosed(points: List<Pt>, bbox: Rect, diag: Double): RecognizedShape? {
+        // Resample evenly around the loop (including the closing segment) so the corner/roundness
+        // tests are insensitive to where the stroke started and to uneven sampling speed.
         val loop = resampleClosed(points, RESAMPLE_N)
         val topLeft = bbox.topLeft
         val bottomRight = Pt(bbox.right, bbox.bottom)
 
-        if (ellipseResidual(loop, bbox) <= ELLIPSE_RESIDUAL_FRAC) {
-            return RecognizedShape(ShapeKind.ELLIPSE, topLeft, bottomRight)
+        // Sharp, straight-edged corners win: that is what tells a hexagon from a circle.
+        val peaks = cornerPeaks(loop, wrap = true)
+        if (peaks.size in 3..MAX_POLY_VERTS && edgesStraight(loop, peaks, wrap = true, diag)) {
+            val verts = peaks.map { loop[it] }
+            return if (verts.size == 4 && isAxisAlignedRect(verts, bbox, diag)) {
+                RecognizedShape(ShapeKind.RECTANGLE, topLeft, bottomRight)
+            } else {
+                RecognizedShape(ShapeKind.POLYGON, topLeft, bottomRight, verts)
+            }
         }
 
-        val corners = cornerCount(loop)
-        val bboxArea = bbox.w * bbox.h
-        val fill = if (bboxArea > 1e-9) polygonArea(loop) / bboxArea else 0.0
-        return when {
-            // Allow a 5th corner for the spurious vertex a stroke can leave mid-edge where it
-            // started/ended; the fill ratio separates a real rectangle from a thin/concave quad.
-            corners in 4..5 && fill >= RECT_FILL_MIN -> RecognizedShape(ShapeKind.RECTANGLE, topLeft, bottomRight)
-            corners == 3 -> RecognizedShape(ShapeKind.TRIANGLE, topLeft, bottomRight)
-            else -> null
+        // No clean corners: a round outline snaps to an ellipse (a circle when nearly round).
+        if (ellipseResidual(loop, bbox) <= ELLIPSE_RESIDUAL_FRAC) return ellipseOrCircle(bbox)
+        return null
+    }
+
+    /** Near-round ellipse -> a true circle (centred square box); a clear oval stays an ellipse. */
+    private fun ellipseOrCircle(bbox: Rect): RecognizedShape {
+        val longAxis = max(bbox.w, bbox.h)
+        val shortAxis = min(bbox.w, bbox.h)
+        val aspect = if (longAxis > 1e-9) shortAxis / longAxis else 1.0
+        if (aspect < CIRCLE_ASPECT_MIN) {
+            return RecognizedShape(ShapeKind.ELLIPSE, bbox.topLeft, Pt(bbox.right, bbox.bottom))
         }
+        val r = (bbox.w + bbox.h) / 4.0
+        val cx = bbox.centerX
+        val cy = bbox.centerY
+        return RecognizedShape(ShapeKind.ELLIPSE, Pt(cx - r, cy - r), Pt(cx + r, cy + r))
+    }
+
+    /** True if the four [verts] each sit near a distinct corner of [bbox] (an upright rectangle). */
+    private fun isAxisAlignedRect(verts: List<Pt>, bbox: Rect, diag: Double): Boolean {
+        val corners = listOf(
+            Pt(bbox.left, bbox.top), Pt(bbox.right, bbox.top),
+            Pt(bbox.right, bbox.bottom), Pt(bbox.left, bbox.bottom),
+        )
+        val tol = RECT_CORNER_FRAC * diag
+        val used = BooleanArray(corners.size)
+        for (v in verts) {
+            var best = -1
+            var bestD = Double.MAX_VALUE
+            for (c in corners.indices) {
+                if (used[c]) continue
+                val d = v.distanceTo(corners[c])
+                if (d < bestD) {
+                    bestD = d
+                    best = c
+                }
+            }
+            if (best < 0 || bestD > tol) return false
+            used[best] = true
+        }
+        return true
+    }
+
+    /**
+     * Indices of the corner peaks along [path]. The turn at each point is the angle between the
+     * chord coming in and the chord going out (over a window so sampling noise doesn't fake
+     * corners); a run of points clearing [CORNER_ANGLE_RAD] is one corner, reported at its
+     * sharpest point. A closed loop ([wrap]) starts the scan at its straightest point so no corner
+     * straddles the seam; an open path never treats its two ends as corners.
+     */
+    private fun cornerPeaks(path: List<Pt>, wrap: Boolean): List<Int> {
+        val n = path.size
+        if (n < 8) return emptyList()
+        val k = (n / 12).coerceAtLeast(2)
+        val turns = DoubleArray(n) { i ->
+            if (!wrap && (i - k < 0 || i + k >= n)) {
+                0.0
+            } else {
+                val prev = path[(i - k + n) % n]
+                val cur = path[i]
+                val next = path[(i + k) % n]
+                angleBetween(cur - prev, next - cur)
+            }
+        }
+        val startAt = if (wrap) {
+            var minIdx = 0
+            for (i in 1 until n) if (turns[i] < turns[minIdx]) minIdx = i
+            minIdx
+        } else {
+            0
+        }
+        val peaks = ArrayList<Int>()
+        var i = 0
+        while (i < n) {
+            val gi = (startAt + i) % n
+            if (turns[gi] >= CORNER_ANGLE_RAD) {
+                var bestIdx = gi
+                var bestTurn = turns[gi]
+                i++
+                while (i < n) {
+                    val gj = (startAt + i) % n
+                    if (turns[gj] < CORNER_ANGLE_RAD) break
+                    if (turns[gj] > bestTurn) {
+                        bestTurn = turns[gj]
+                        bestIdx = gj
+                    }
+                    i++
+                }
+                peaks.add(bestIdx)
+            } else {
+                i++
+            }
+        }
+        peaks.sort()
+        return peaks
+    }
+
+    /** True if every edge between consecutive vertices stays within [EDGE_DEV_FRAC]·diag of straight. */
+    private fun edgesStraight(path: List<Pt>, vertIdx: List<Int>, wrap: Boolean, diag: Double): Boolean {
+        val n = path.size
+        val m = vertIdx.size
+        if (m < 2) return false
+        val tol = EDGE_DEV_FRAC * diag
+        val edges = if (wrap) m else m - 1
+        for (e in 0 until edges) {
+            val i0 = vertIdx[e]
+            val i1 = vertIdx[(e + 1) % m]
+            val a = path[i0]
+            val b = path[i1]
+            var j = i0
+            while (j != i1) {
+                if (Geometry.distancePointToSegment(path[j], a, b) > tol) return false
+                j = (j + 1) % n
+                if (!wrap && j == 0) break // an open path never wraps past its end
+            }
+        }
+        return true
     }
 
     /** RMS of `sqrt((x/rx)^2 + (y/ry)^2) - 1` about the bbox centre: 0 on a perfect inscribed ellipse. */
@@ -124,41 +272,6 @@ object ShapeRecognizer {
         return sqrt(sumSq / loop.size)
     }
 
-    /**
-     * Number of distinct corners on the cyclic [loop]. The turn at each point is the angle
-     * between the chord coming in and the chord going out (smoothed over a window so sampling
-     * noise doesn't fake corners); a run of points whose turn clears [CORNER_ANGLE_RAD] is one
-     * corner. The loop is rotated to start at its straightest point so no corner straddles the
-     * seam, and edges between corners drop below the threshold and separate the runs.
-     */
-    private fun cornerCount(loop: List<Pt>): Int {
-        val n = loop.size
-        if (n < 8) return 0
-        val k = (n / 12).coerceAtLeast(2)
-        val turns = DoubleArray(n) { i ->
-            val prev = loop[(i - k + n) % n]
-            val cur = loop[i]
-            val next = loop[(i + k) % n]
-            angleBetween(cur - prev, next - cur)
-        }
-        // Start the scan at the straightest point (clearly mid-edge) so a corner never wraps.
-        var minIdx = 0
-        for (i in 1 until n) if (turns[i] < turns[minIdx]) minIdx = i
-        var count = 0
-        var i = 0
-        while (i < n) {
-            val turn = turns[(minIdx + i) % n]
-            if (turn >= CORNER_ANGLE_RAD) {
-                count++
-                i++
-                while (i < n && turns[(minIdx + i) % n] >= CORNER_ANGLE_RAD) i++
-            } else {
-                i++
-            }
-        }
-        return count
-    }
-
     /** Angle in radians between two vectors; 0 when either is degenerate. */
     private fun angleBetween(u: Pt, v: Pt): Double {
         val lu = u.length()
@@ -166,18 +279,6 @@ object ShapeRecognizer {
         if (lu < 1e-9 || lv < 1e-9) return 0.0
         val cos = ((u.x * v.x + u.y * v.y) / (lu * lv)).coerceIn(-1.0, 1.0)
         return acos(cos)
-    }
-
-    /** Shoelace area of a closed polygon (absolute, so winding direction doesn't matter). */
-    private fun polygonArea(poly: List<Pt>): Double {
-        if (poly.size < 3) return 0.0
-        var sum = 0.0
-        for (i in poly.indices) {
-            val a = poly[i]
-            val b = poly[(i + 1) % poly.size]
-            sum += a.x * b.y - b.x * a.y
-        }
-        return abs(sum) / 2.0
     }
 
     /** Resample [points] to [n] points spaced evenly around the closed loop (last joins first). */

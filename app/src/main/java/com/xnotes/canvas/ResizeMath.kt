@@ -42,13 +42,13 @@ object ResizeMath {
             )
         }
         is ShapeItem ->
-            if (item.shape.isClosed) {
-                rectCorners(item.box, pageTopLeft)
-            } else {
+            if (item.shape.isEndpointShape) {
                 listOf(
                     ResizeHandle(HandleId.START, Pt(item.start.x + pageTopLeft.x, item.start.y + pageTopLeft.y)),
                     ResizeHandle(HandleId.END, Pt(item.end.x + pageTopLeft.x, item.end.y + pageTopLeft.y)),
                 )
+            } else {
+                rectCorners(item.box, pageTopLeft)
             }
         else -> emptyList()
     }

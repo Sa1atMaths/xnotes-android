@@ -15,8 +15,9 @@ import kotlin.math.sin
 /**
  * An editable geometric shape (spec 02 §5.4): open (line/arrow, two endpoints)
  * or closed (rectangle/ellipse/triangle, drawn inside the normalized AABB of
- * start/end). Closed shapes are stroked and optionally filled. Shapes are
- * deliberately-placed objects — immune to the object eraser.
+ * start/end). Polygon/polyline additionally carry a vertex list in [points].
+ * Closed shapes are stroked and optionally filled. Shapes are deliberately-placed
+ * objects — immune to the object eraser.
  */
 class ShapeItem(
     var shape: ShapeKind,
@@ -29,6 +30,11 @@ class ShapeItem(
     var neon: Boolean = false,
     /** Glow intensity in [0, 1] (halo size + brightness); used only when [neon]. */
     var neonStrength: Double = 0.6,
+    /**
+     * Vertices for [ShapeKind.POLYGON]/[ShapeKind.POLYLINE], stored normalized to the
+     * unit box so they scale with [start]/[end] for free; null for every other kind.
+     */
+    var points: List<Pt>? = null,
 ) : CanvasItem, Resizable {
 
     override val kind = KIND
@@ -36,6 +42,16 @@ class ShapeItem(
 
     /** Normalized AABB of the two drag points. */
     val box: Rect get() = Rect.fromPoints(start, end)
+
+    /** Polygon/polyline vertices mapped from normalized storage into content space. */
+    private fun absPoints(): List<Pt> {
+        val pts = points ?: return emptyList()
+        val b = box
+        return pts.map { Pt(b.left + it.x * b.w, b.top + it.y * b.h) }
+    }
+
+    /** Absolute (content-space) vertices for polygon/polyline kinds; null for the rest. */
+    fun vertices(): List<Pt>? = if (points == null) null else absPoints()
 
     private fun pen() = Pen(color = strokeRgba, width = strokeWidth, cosmetic = false)
 
@@ -81,7 +97,8 @@ class ShapeItem(
             ShapeKind.RECTANGLE -> r.fillRect(b, fill)
             ShapeKind.ELLIPSE -> r.fillEllipse(b.center, b.w / 2.0, b.h / 2.0, fill)
             ShapeKind.TRIANGLE -> r.fillPolygon(triangleVertices(), fill)
-            ShapeKind.LINE, ShapeKind.ARROW -> {}
+            ShapeKind.POLYGON -> r.fillPolygon(absPoints(), fill)
+            ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.POLYLINE -> {}
         }
     }
 
@@ -93,6 +110,8 @@ class ShapeItem(
             ShapeKind.RECTANGLE -> r.strokeRect(b, pen)
             ShapeKind.ELLIPSE -> r.strokeEllipse(b.center, b.w / 2.0, b.h / 2.0, pen)
             ShapeKind.TRIANGLE -> r.strokePolygon(triangleVertices(), pen)
+            ShapeKind.POLYGON -> r.strokePolygon(absPoints(), pen)
+            ShapeKind.POLYLINE -> r.strokePolyline(absPoints(), pen)
         }
     }
 
@@ -170,6 +189,11 @@ class ShapeItem(
                 val poly = ellipsePolygon()
                 if (fillRgba != null) Geometry.pointInPolygon(poly, p) else nearPolyOutline(poly, p, tol)
             }
+            ShapeKind.POLYGON -> {
+                val v = absPoints()
+                if (fillRgba != null) Geometry.pointInPolygon(v, p) else nearPolyOutline(v, p, tol)
+            }
+            ShapeKind.POLYLINE -> nearPolyOutline(absPoints(), p, tol, closed = false)
         }
     }
 
@@ -181,8 +205,10 @@ class ShapeItem(
         return nearPolyOutline(corners, p, tol)
     }
 
-    private fun nearPolyOutline(verts: List<Pt>, p: Pt, tol: Double): Boolean {
-        for (i in verts.indices) {
+    private fun nearPolyOutline(verts: List<Pt>, p: Pt, tol: Double, closed: Boolean = true): Boolean {
+        if (verts.isEmpty()) return false
+        val edges = if (closed) verts.size else verts.size - 1
+        for (i in 0 until edges) {
             val a = verts[i]
             val b = verts[(i + 1) % verts.size]
             if (Geometry.distancePointToSegment(p, a, b) <= tol) return true
@@ -209,6 +235,11 @@ class ShapeItem(
                 val poly = ellipsePolygon()
                 if (fillRgba != null && Geometry.pointInPolygon(poly, p)) true else nearPolyOutline(poly, p, tol)
             }
+            ShapeKind.POLYGON -> {
+                val v = absPoints()
+                if (fillRgba != null && Geometry.pointInPolygon(v, p)) true else nearPolyOutline(v, p, tol)
+            }
+            ShapeKind.POLYLINE -> nearPolyOutline(absPoints(), p, tol, closed = false)
         }
     }
 
@@ -224,6 +255,29 @@ class ShapeItem(
     companion object {
         const val KIND = "shape"
         const val HIT_TOLERANCE = 6.0
+
+        /** Build a polygon/polyline from absolute [vertices], stored normalized to their box. */
+        fun poly(
+            shape: ShapeKind,
+            vertices: List<Pt>,
+            strokeRgba: Rgba,
+            strokeWidth: Double = 3.0,
+            fillRgba: Rgba? = null,
+            neon: Boolean = false,
+            neonStrength: Double = 0.6,
+        ): ShapeItem {
+            val box = Rect.bounding(vertices)
+            return ShapeItem(
+                shape, box.topLeft, Pt(box.right, box.bottom), strokeRgba, strokeWidth,
+                fillRgba, neon, neonStrength, normalize(vertices, box),
+            )
+        }
+
+        private fun normalize(vertices: List<Pt>, box: Rect): List<Pt> {
+            val w = if (box.w > 1e-9) box.w else 1.0
+            val h = if (box.h > 1e-9) box.h else 1.0
+            return vertices.map { Pt((it.x - box.left) / w, (it.y - box.top) / h) }
+        }
 
         /** Halo blur = stroke_width × (MIN + SPAN × neonStrength), floored in page px. */
         private const val GLOW_FACTOR_MIN = 1.2

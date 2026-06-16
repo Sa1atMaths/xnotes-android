@@ -157,6 +157,8 @@ class InteractionController(
     private var dwellAnchor = Pt.ZERO
     /** True for the current stroke when snapping is allowed (pref on, an ink pen, not a straight line). */
     private var dwellEligible = false
+    /** A mid-stroke snap auto-selected a shape; show its menu once the pen lifts (endDraw). */
+    private var snappedSelectionPendingMenu = false
 
     // PAN + inertial fling
     private var lastPan = Pt.ZERO
@@ -694,6 +696,11 @@ class InteractionController(
         snapCurrentEdge = null
         snapPenViewport = null
         mode = PointerMode.IDLE
+        // A mid-stroke snap left a shape selected; now that the gesture is idle, surface its menu.
+        if (snappedSelectionPendingMenu) {
+            snappedSelectionPendingMenu = false
+            refreshSelectionMenu()
+        }
         requestRender()
     }
 
@@ -723,16 +730,24 @@ class InteractionController(
     /** Replace the (uncommitted) live stroke with a recognized [ShapeItem], as one undoable add. */
     private fun commitRecognizedShape(stroke: Stroke, pageIndex: Int, rec: RecognizedShape) {
         val page = state.document.pages.getOrNull(pageIndex) ?: return
-        val shape = ShapeItem(
-            shape = rec.kind,
-            start = rec.start,
-            end = rec.end,
-            strokeRgba = stroke.config.rgba, // the as-drawn ink colour (not renderColor's alpha-scaled one)
-            strokeWidth = stroke.config.baseWidth * SHAPE_PEN_PARITY,
-            fillRgba = null,
-            neon = stroke.config.neon, // a neon pen snaps to a neon shape (highlighter never snaps)
-            neonStrength = stroke.config.neonStrength,
-        )
+        val strokeWidth = stroke.config.baseWidth * SHAPE_PEN_PARITY
+        val color = stroke.config.rgba // the as-drawn ink colour (not renderColor's alpha-scaled one)
+        val verts = rec.vertices
+        val shape = if (verts != null) {
+            // Polygon/polyline: keep the recognized corners (neon carried like the other kinds).
+            ShapeItem.poly(rec.kind, verts, color, strokeWidth, null, stroke.config.neon, stroke.config.neonStrength)
+        } else {
+            ShapeItem(
+                shape = rec.kind,
+                start = rec.start,
+                end = rec.end,
+                strokeRgba = color,
+                strokeWidth = strokeWidth,
+                fillRgba = null,
+                neon = stroke.config.neon, // a neon pen snaps to a neon shape (highlighter never snaps)
+                neonStrength = stroke.config.neonStrength,
+            )
+        }
         page.items.add(shape)
         state.appendToCache(page, shape)
         history.push(AddItem(page, shape))
@@ -742,6 +757,10 @@ class InteractionController(
         liveStroke = null
         dwellEligible = false
         cancelDwell()
+        // Auto-select the new shape so it can be resized right away. The menu only shows once the
+        // gesture settles, so flag it for the pen lift (endDraw) rather than mid-stroke here.
+        setSelection(listOf(Selected(pageIndex, shape)))
+        snappedSelectionPendingMenu = true
         onContentChanged()
         onHaptic()
         requestRender()
@@ -1028,10 +1047,10 @@ class InteractionController(
                 item.setGeometry(TextHandle(pos, w, h))
             }
             is ShapeItem -> {
-                val (s, en) = if (item.shape.isClosed) {
-                    ResizeMath.resizeClosedShape(item.start, item.end, handle, local)
-                } else {
+                val (s, en) = if (item.shape.isEndpointShape) {
                     ResizeMath.resizeOpenShape(item.start, item.end, handle, local)
+                } else {
+                    ResizeMath.resizeClosedShape(item.start, item.end, handle, local)
                 }
                 item.setGeometry(ShapeHandle(s, en))
             }
@@ -1824,6 +1843,7 @@ class InteractionController(
         cancelLongPress()
         cancelDwell()
         dwellEligible = false
+        snappedSelectionPendingMenu = false
         stopFling()
         clearOverscroll()
         liveStroke = null

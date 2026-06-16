@@ -326,7 +326,7 @@ fun ShapeConfigPopup(editor: Editor, onDismiss: () -> Unit) {
         Column(Modifier.width(260.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
             PopupTitle("SHAPE")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ShapeKind.entries.forEach { k ->
+                ShapeKind.DRAW_TOOL_KINDS.forEach { k ->
                     KindChip(shapeIcon(k), k.id, selected = kind == k) { kind = k; emit() }
                 }
             }
@@ -388,11 +388,11 @@ private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRan
 
 /** Glyph shown in the shape-kind picker for each [ShapeKind]. */
 private fun shapeIcon(kind: ShapeKind): ImageVector = when (kind) {
-    ShapeKind.LINE -> XnotesIcons.shapeLine
+    ShapeKind.LINE, ShapeKind.POLYLINE -> XnotesIcons.shapeLine
     ShapeKind.ARROW -> XnotesIcons.shapeArrow
     ShapeKind.RECTANGLE -> XnotesIcons.shapeRect
     ShapeKind.ELLIPSE -> XnotesIcons.shapeEllipse
-    ShapeKind.TRIANGLE -> XnotesIcons.shapeTriangle
+    ShapeKind.TRIANGLE, ShapeKind.POLYGON -> XnotesIcons.shapeTriangle
 }
 
 @Composable

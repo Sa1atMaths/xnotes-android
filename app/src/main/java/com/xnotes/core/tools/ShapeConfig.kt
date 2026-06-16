@@ -1,18 +1,27 @@
 package com.xnotes.core.tools
 
-/** Shape kinds drawn by the shape tool (spec 02 §5.4, 04 §6). */
+/** Shape kinds drawn by the shape tool (spec 02 §5.4, 04 §6). Polygon/polyline are
+ *  vertex-list shapes produced only by hold-to-snap recognition, not the shape tool. */
 enum class ShapeKind(val id: String) {
     LINE("line"),
     ARROW("arrow"),
     RECTANGLE("rectangle"),
     ELLIPSE("ellipse"),
-    TRIANGLE("triangle");
+    TRIANGLE("triangle"),
+    POLYGON("polygon"),
+    POLYLINE("polyline");
 
     /** Closed shapes are stroked and optionally filled; open shapes never fill. */
-    val isClosed: Boolean get() = this == RECTANGLE || this == ELLIPSE || this == TRIANGLE
+    val isClosed: Boolean get() = this == RECTANGLE || this == ELLIPSE || this == TRIANGLE || this == POLYGON
     val isOpen: Boolean get() = !isClosed
 
+    /** Line/arrow resize by dragging their two endpoints; every other kind resizes by its box. */
+    val isEndpointShape: Boolean get() = this == LINE || this == ARROW
+
     companion object {
+        /** Kinds the shape tool offers; polygon/polyline arrive only from recognition. */
+        val DRAW_TOOL_KINDS = listOf(LINE, ARROW, RECTANGLE, ELLIPSE, TRIANGLE)
+
         fun fromId(id: String?): ShapeKind = entries.firstOrNull { it.id == id } ?: RECTANGLE
     }
 }
