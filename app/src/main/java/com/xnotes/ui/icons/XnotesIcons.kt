@@ -62,8 +62,8 @@ object XnotesIcons {
     )
     val text = icon("M4 7V4h16v3", "M9 20h6", "M12 4v16")
     val image = icon(rect(3.0, 3.0, 18.0, 18.0), circle(8.5, 8.5, 1.5), "M21 15l-5-5L5 21")
-    // The screenshot tool: a crop frame (Feather "crop"), reading as "grab a rectangular region".
-    val crop = icon("M6.13 1 6 16a2 2 0 0 0 2 2h15", "M1 6.13 16 6a2 2 0 0 1 2 2v15")
+    // The screenshot tool: scissors (Feather "scissors"), reading as "snip a region".
+    val scissors = icon(circle(6.0, 6.0, 3.0), circle(6.0, 18.0, 3.0), "M20 4 8.12 15.88", "M14.47 14.48 20 20", "M8.12 8.12 12 12")
 
     // Shape-kind glyphs for the shape tool's kind picker (line / arrow / rect / ellipse / circle / triangle).
     val shapeLine = icon("M5 19 19 5")

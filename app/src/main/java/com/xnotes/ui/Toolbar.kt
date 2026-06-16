@@ -70,7 +70,7 @@ fun Toolbar(
         Tool.PAN to XnotesIcons.pan,
         Tool.SELECT to XnotesIcons.select,
         Tool.LASSO to XnotesIcons.lasso,
-        Tool.SCREENSHOT to XnotesIcons.crop,
+        Tool.SCREENSHOT to XnotesIcons.scissors,
         Tool.SHAPE to XnotesIcons.shape,
         Tool.TEXT to XnotesIcons.text,
     )
