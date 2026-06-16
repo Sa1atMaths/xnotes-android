@@ -35,8 +35,8 @@ data class RecognizedShape(
  * Shapes recognized:
  *  - open straight stroke -> [ShapeKind.LINE]
  *  - open multi-segment zig-zag -> [ShapeKind.POLYLINE] (vertices preserved)
- *  - any other smooth open stroke (a C, an S, ...) -> [ShapeKind.CURVE] (a single spline
- *    threaded through a few points, sampled to a dense polyline), or left as ink if too complex
+ *  - any other smooth open stroke (a C, an S, ...) -> [ShapeKind.CURVE] (a single fitted cubic
+ *    Bézier, sampled to a dense polyline), or left as ink if one cubic can't follow it
  *  - closed round blob -> [ShapeKind.ELLIPSE] (snapped to a circle when nearly round)
  *  - closed n-gon with sharp corners -> [ShapeKind.RECTANGLE] when it is an upright box,
  *    else [ShapeKind.POLYGON] (vertices preserved, including 3-corner triangles)
@@ -86,16 +86,12 @@ object ShapeRecognizer {
     /** More inferred corners than this means a noisy blob, not a drawn polygon. */
     private const val MAX_POLY_VERTS = 12
 
-    /** Max distance from the stroke to its snapped spline, as a fraction of the bbox diagonal;
-     *  beyond this the stroke isn't a simple curve and is left as ink. */
-    private const val CURVE_FIT_TOL_FRAC = 0.06
+    /** Max distance from the stroke to its fitted cubic, as a fraction of the bbox diagonal;
+     *  beyond this one cubic can't follow it (too wide an arc, or too complex) so it stays ink. */
+    private const val CURVE_FIT_TOL_FRAC = 0.09
 
-    /** Anchor points the snapped curve is threaded through (a single smooth spline, not pieces).
-     *  Enough to follow a wide C/S faithfully; the spline stays smooth between them regardless. */
-    private const val CURVE_ANCHORS = 7
-
-    /** Points sampled per spline segment when the curve is turned back into a polyline. */
-    private const val CURVE_SAMPLES_PER_SEG = 16
+    /** Points the single fitted cubic is sampled to when turned back into a polyline. */
+    private const val CURVE_SAMPLES = 32
 
     /** Recognize from raw stroke samples (the page-local positions are what matter). */
     fun recognize(samples: List<Sample>): RecognizedShape? = recognizePoints(samples.map { it.pos })
@@ -133,14 +129,13 @@ object ShapeRecognizer {
                 return RecognizedShape(ShapeKind.POLYLINE, box.topLeft, Pt(box.right, box.bottom), verts)
             }
         }
-        // Otherwise a smooth freehand curve (a C, an S, any flowing open stroke): snap it to a
-        // single smooth spline threaded through a few points, or leave it as ink if it can't.
+        // Otherwise a smooth freehand curve (a C, an S, a flowing open stroke): snap it to a single
+        // clean cubic Bézier, or leave it as ink if one cubic can't follow it.
         return curveFrom(path, diag)
     }
 
     private fun curveFrom(path: List<Pt>, diag: Double): RecognizedShape? {
-        val curve = SplineFit.fitSampled(path, CURVE_ANCHORS, CURVE_SAMPLES_PER_SEG, CURVE_FIT_TOL_FRAC * diag)
-            ?: return null
+        val curve = CubicFit.fitSampled(path, CURVE_FIT_TOL_FRAC * diag, CURVE_SAMPLES) ?: return null
         if (curve.size < 3) return null
         val box = Rect.bounding(curve)
         return RecognizedShape(ShapeKind.CURVE, box.topLeft, Pt(box.right, box.bottom), curve)

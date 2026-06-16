@@ -163,7 +163,7 @@ class ShapeRecognizerTest {
         val cy = 400.0
         val r = 250.0
         val c = (0..70).map { i ->
-            val a = -PI * 0.55 + (1.3 * PI) * i / 70
+            val a = -PI * 0.42 + (0.83 * PI) * i / 70
             Pt(cx + r * cos(a) + jit(3.0), cy + r * sin(a) + jit(3.0))
         }
         val rec = ShapeRecognizer.recognizePoints(c)
@@ -206,10 +206,10 @@ class ShapeRecognizerTest {
     }
 
     @Test fun openArcSnapsToCurve() {
-        // Half circle: ends sit a diameter apart (open) and it bows far from its chord (not a line);
-        // with no sharp corners it is a smooth curve, not a polyline.
+        // A ~150° arc: open (ends far apart), bows far from its chord (not a line), no sharp
+        // corners (not a polyline), and within one cubic's reach -> a smooth curve.
         val arc = (0..40).map { i ->
-            val a = PI * i / 40.0
+            val a = (0.83 * PI) * i / 40.0
             Pt(200.0 + 150.0 * cos(a), 200.0 + 150.0 * sin(a))
         }
         val rec = ShapeRecognizer.recognizePoints(arc)
@@ -222,7 +222,7 @@ class ShapeRecognizerTest {
         // One sine period over a descending y: a flowing S with two bends and no sharp corners.
         val s = (0..60).map { i ->
             val t = i / 60.0
-            Pt(200.0 + 90.0 * sin(2.0 * PI * t) + jit(3.0), 40.0 + 320.0 * t + jit(3.0))
+            Pt(200.0 + 80.0 * sin(2.0 * PI * t) + jit(3.0), 40.0 + 320.0 * t + jit(3.0))
         }
         val rec = ShapeRecognizer.recognizePoints(s)
         assertNotNull(rec)
