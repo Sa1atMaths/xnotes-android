@@ -159,7 +159,7 @@ private fun ToolbarItemView(
         }
 
         ToolbarItem.WAND ->
-            ToolbarIcon(XnotesIcons.magicWand, "Magic wand", active = editor.wandEnabled) { editor.toggleWand() }
+            ToolbarIcon(XnotesIcons.magicWand, "Disappearing ink", active = editor.wandEnabled) { editor.toggleWand() }
         ToolbarItem.RULER ->
             ToolbarIcon(XnotesIcons.ruler, "Ruler", active = editor.rulerVisible) { editor.toggleRuler() }
 

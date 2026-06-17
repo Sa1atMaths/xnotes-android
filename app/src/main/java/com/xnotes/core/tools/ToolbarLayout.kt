@@ -24,7 +24,7 @@ enum class ToolbarItem(val id: String, val label: String) {
     SELECT("select", "Select"),
     LASSO("lasso", "Lasso"),
     SCREENSHOT("screenshot", "Screenshot"),
-    WAND("wand", "Magic wand"),
+    WAND("wand", "Disappearing ink"),
     SHAPE("shape", "Shape"),
     RULER("ruler", "Ruler"),
     TEXT("text", "Text"),
