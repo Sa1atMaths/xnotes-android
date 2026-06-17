@@ -183,7 +183,9 @@ class Editor(context: Context) {
         private set
     var activeColorIndex by mutableStateOf(0)
         private set
-    var toolbarColors by mutableStateOf(InkPalette.toolbarDefaults)
+    var toolbarColors by mutableStateOf(InkPalette.presets)
+        private set
+    var toolbarColorCount by mutableStateOf(5)
         private set
     var toolbarLayout by mutableStateOf(ToolbarLayout.DEFAULT)
         private set
@@ -654,8 +656,9 @@ class Editor(context: Context) {
 
     private fun applySettings() {
         toolbarColors = settings.toolbarColors
+        toolbarColorCount = settings.toolbarColorCount
         toolbarLayout = settings.toolbarLayout
-        activeColorIndex = settings.activeColor.coerceIn(0, toolbarColors.lastIndex)
+        activeColorIndex = settings.activeColor.coerceIn(0, toolbarColorCount - 1)
         // Render always at 1x (the DPI/supersampling control was removed).
         renderScale = 1.0
         state.renderScale = 1.0
@@ -700,6 +703,15 @@ class Editor(context: Context) {
         settingsRepo.save(settings)
     }
 
+    /** Set how many colour swatches the toolbar shows (1-7) and persist. */
+    fun applyToolbarColorCount(count: Int) {
+        val c = count.coerceIn(1, 7)
+        toolbarColorCount = c
+        if (activeColorIndex >= c) pickColor(c - 1)
+        settings = settings.copy(toolbarColorCount = c)
+        settingsRepo.save(settings)
+    }
+
     /** Snapshot live state into settings and save (call on pause/stop). */
     fun persist() {
         val tools = ToolDefaults.persistedTools.associateWith { controller.configFor(it) }
@@ -707,6 +719,7 @@ class Editor(context: Context) {
             tools = tools,
             shapeConfig = controller.shapeConfig,
             toolbarColors = toolbarColors,
+            toolbarColorCount = toolbarColorCount,
             activeColor = activeColorIndex,
             sidebarVisible = sidebarVisible,
             renderScale = renderScale,

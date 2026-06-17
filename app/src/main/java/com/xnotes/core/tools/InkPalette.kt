@@ -14,9 +14,6 @@ object InkPalette {
 
     val DEFAULT = GREEN
 
-    /** Full preset palette offered by the colour controls. */
+    /** Full preset palette offered by the colour controls; also the default toolbar swatches. */
     val presets = listOf(GREEN, NEAR_WHITE, RED, AMBER, CYAN, VIOLET, GREY)
-
-    /** The five swatches shown directly on the toolbar (spec 09 §2 default). */
-    val toolbarDefaults = listOf(GREEN, NEAR_WHITE, RED, AMBER, CYAN)
 }

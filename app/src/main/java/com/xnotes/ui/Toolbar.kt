@@ -192,7 +192,7 @@ private fun ToolbarItemView(
         ToolbarItem.PRESENT ->
             ToolbarIcon(XnotesIcons.present, "Present", active = editor.presentationRunning) { onPresent() }
 
-        ToolbarItem.COLORS -> editor.toolbarColors.forEachIndexed { i, color ->
+        ToolbarItem.COLORS -> editor.toolbarColors.take(editor.toolbarColorCount).forEachIndexed { i, color ->
             Box {
                 Swatch(
                     color = color.toComposeColor(),

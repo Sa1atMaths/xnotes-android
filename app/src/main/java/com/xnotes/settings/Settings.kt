@@ -42,7 +42,8 @@ data class PresentationSettings(
 data class Settings(
     val tools: Map<Tool, ToolConfig> = emptyMap(),
     val shapeConfig: ShapeConfig = ShapeConfig(),
-    val toolbarColors: List<Rgba> = InkPalette.toolbarDefaults,
+    val toolbarColors: List<Rgba> = InkPalette.presets,
+    val toolbarColorCount: Int = 5,
     val toolbarLayout: ToolbarLayout = ToolbarLayout.DEFAULT,
     val activeColor: Int = 0,
     val recentColors: List<Rgba> = emptyList(),
@@ -72,6 +73,7 @@ data class Settings(
         return JSONObject()
             .put("tools", toolsObj)
             .put("toolbar_colors", JSONArray().apply { toolbarColors.forEach { put(rgbaArr(it)) } })
+            .put("toolbar_color_count", toolbarColorCount)
             .put("toolbar_layout", toolbarLayoutJson(toolbarLayout))
             .put("active_color", activeColor)
             .put("recent_colors", JSONArray().apply { recentColors.forEach { put(rgbaArr(it)) } })
@@ -96,14 +98,15 @@ data class Settings(
             val shape = toolsObj?.optJSONObject("shape")?.let { shapeConfig(it) } ?: ShapeConfig()
 
             val colors = rgbaList(o.optJSONArray("toolbar_colors")).toMutableList()
-            while (colors.size < 5) colors.add(InkPalette.toolbarDefaults[colors.size])
+            while (colors.size < 7) colors.add(InkPalette.presets[colors.size])
 
             return Settings(
                 tools = tools,
                 shapeConfig = shape,
-                toolbarColors = colors.take(5),
+                toolbarColors = colors.take(7),
+                toolbarColorCount = o.optInt("toolbar_color_count", 5).coerceIn(1, 7),
                 toolbarLayout = toolbarLayout(o.optJSONObject("toolbar_layout")),
-                activeColor = o.optInt("active_color", 0).coerceIn(0, 4),
+                activeColor = o.optInt("active_color", 0).coerceIn(0, 6),
                 recentColors = rgbaList(o.optJSONArray("recent_colors")).take(24),
                 browseRoot = o.optString("browse_root", "").ifEmpty { null },
                 startOnHome = o.optBoolean("start_on_home", true),

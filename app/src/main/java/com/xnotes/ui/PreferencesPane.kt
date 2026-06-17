@@ -207,6 +207,14 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { editor.applyToolbarLayout(ToolbarLayout.DEFAULT) }) { Text("Reset", fontSize = 13.sp) }
             }
+            FieldLabel("Colours on the toolbar  ${editor.toolbarColorCount}")
+            Slider(
+                value = editor.toolbarColorCount.toFloat(),
+                onValueChange = { editor.applyToolbarColorCount(Math.round(it)) },
+                valueRange = 1f..7f,
+                steps = 5,
+                modifier = Modifier.width(280.dp),
+            )
             Text(
                 "Tap a tool to show or hide it. Long-press to drag it within or across sections. Long-press a section's top to move the whole section.",
                 color = palette.textDim.toComposeColor(),
