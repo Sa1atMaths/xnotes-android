@@ -2388,9 +2388,9 @@ class InteractionController(
         const val FLING_MIN_STOP = 24.0 // velocity at which the glide ends
 
         // Elastic overscroll tuning (pull past the bottom end to add a page).
-        const val OVERSCROLL_RESIST = 0.45 // fraction of past-end finger travel that becomes visible stretch
-        const val OVERSCROLL_MAX = 400.0 // hard cap on the visible stretch (viewport px)
-        const val OVERSCROLL_TRIGGER = 300.0 // stretch at which releasing appends a page
-        const val OVERSCROLL_SPRING = 11.0 // spring-back rate toward rest (1/s; higher = snappier)
+        const val OVERSCROLL_RESIST = 0.5 // fraction of past-end finger travel that becomes stretch (tighter < 1)
+        const val OVERSCROLL_MAX = 320.0 // hard cap on the visible stretch (viewport px)
+        const val OVERSCROLL_TRIGGER = 250.0 // stretch at which releasing appends a page
+        const val OVERSCROLL_SPRING = 14.0 // spring-back rate toward rest (1/s; higher = snappier)
     }
 }

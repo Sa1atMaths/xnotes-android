@@ -834,7 +834,7 @@ class CanvasState(
         val f = sharpFrame ?: return null
         if (f.gen != sharpGen) return null
         val scale = zoom / f.z
-        val o = originFor(scrollX, scrollY, zoom)
+        val o = origin() // live origin, incl. overscroll lift, so the sharp page rides the pull too
         val o0 = originFor(f.sx, f.sy, f.z)
         // Surface pixel p maps to screen scale*p + (o - scale*o0).
         return SharpBlit(f.base, f.ink, scale, o.x - scale * o0.x, o.y - scale * o0.y)

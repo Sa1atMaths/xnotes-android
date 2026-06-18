@@ -69,7 +69,6 @@ class CanvasView @JvmOverloads constructor(
 
     // Reused paints for the elastic "pull to add page" badge, so onDraw allocates nothing.
     private val overscrollStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
-    private val overscrollFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val overscrollText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val overscrollArc = RectF()
 
@@ -321,8 +320,8 @@ class CanvasView @JvmOverloads constructor(
 
     /**
      * Draw the elastic add-page badge in the gap the pull opens below the last page: an accent
-     * progress ring with a "+" that fills solid (with a white "+") once the pull is far enough to
-     * release. Everything fades in with the stretch so a small accidental tug shows almost nothing.
+     * progress ring with a "+" that closes to a full circle once the pull is far enough to release.
+     * Everything fades in with the stretch so a small accidental tug shows almost nothing.
      */
     private fun drawOverscrollIndicator(canvas: Canvas, st: CanvasState) {
         val over = st.overscrollY
@@ -334,9 +333,10 @@ class CanvasView @JvmOverloads constructor(
 
         val last = st.pageRects.last()
         val anchor = st.contentToViewport(Pt(last.centerX, last.bottom))
-        val cx = anchor.x.toFloat().coerceIn(0f, st.viewportW.toFloat())
-        val cy = ((anchor.y + st.viewportH) / 2.0).toFloat().coerceIn(0f, st.viewportH - 30f * d)
         val radius = (16f * d) * (0.8f + 0.2f * progress)
+        val cx = anchor.x.toFloat().coerceIn(0f, st.viewportW.toFloat())
+        // Pin the badge just below the page's bottom edge so it rises into the gap, never over the page.
+        val cy = anchor.y.toFloat() + 12f * d + radius
         val accent = st.palette.accent.toArgb()
         val dim = st.palette.textDim.toArgb()
 
@@ -346,19 +346,13 @@ class CanvasView @JvmOverloads constructor(
         overscrollStroke.strokeWidth = 2.5f * d
         canvas.drawCircle(cx, cy, radius, overscrollStroke)
 
-        if (ready) {
-            overscrollFill.color = accent
-            overscrollFill.alpha = (255 * alpha).toInt()
-            canvas.drawCircle(cx, cy, radius, overscrollFill)
-            drawPlus(canvas, cx, cy, radius * 0.46f, 0xFFFFFFFF.toInt(), (255 * alpha).toInt(), 2.6f * d)
-        } else {
-            overscrollStroke.color = accent
-            overscrollStroke.alpha = (255 * alpha).toInt()
-            overscrollStroke.strokeWidth = 2.8f * d
-            overscrollArc.set(cx - radius, cy - radius, cx + radius, cy + radius)
-            canvas.drawArc(overscrollArc, -90f, 360f * progress, false, overscrollStroke)
-            drawPlus(canvas, cx, cy, radius * 0.46f, accent, (255 * alpha).toInt(), 2.4f * d)
-        }
+        // Accent progress ring (closes to a full circle once armed) with a "+", never filled solid.
+        overscrollStroke.color = accent
+        overscrollStroke.alpha = (255 * alpha).toInt()
+        overscrollStroke.strokeWidth = 2.8f * d
+        overscrollArc.set(cx - radius, cy - radius, cx + radius, cy + radius)
+        canvas.drawArc(overscrollArc, -90f, 360f * progress, false, overscrollStroke)
+        drawPlus(canvas, cx, cy, radius * 0.46f, accent, (255 * alpha).toInt(), 2.4f * d)
 
         overscrollText.color = if (ready) accent else dim
         overscrollText.alpha = (235 * alpha).toInt()
