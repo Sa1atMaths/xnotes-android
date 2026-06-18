@@ -852,10 +852,13 @@ class InteractionController(
         requestRender()
     }
 
-    /** STROKE mode: remove every non-image item the eraser circle touches (images are
-     *  deliberately-placed and protected). Returns the repaint region, or null if nothing changed. */
+    /** STROKE mode: remove every stroke/shape the eraser circle touches. Images and text boxes are
+     *  deliberately-placed and protected (delete those via select + delete). Returns the repaint
+     *  region, or null if nothing changed. */
     private fun eraseStrokesFromPage(page: Page, cx: Double, cy: Double, radius: Double): Rect? {
-        val toRemove = page.items.filter { it !is ImageItem && it.intersectsCircle(cx, cy, radius) }
+        val toRemove = page.items.filter {
+            it !is ImageItem && it !is TextItem && it.intersectsCircle(cx, cy, radius)
+        }
         if (toRemove.isEmpty()) return null
         var dirty: Rect? = null
         for (item in toRemove) {
