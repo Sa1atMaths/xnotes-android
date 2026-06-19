@@ -3,6 +3,7 @@ package com.xnotes.canvas
 import android.os.Handler
 import android.os.Looper
 import android.view.Choreographer
+import android.view.KeyEvent
 import android.view.MotionEvent
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
@@ -139,8 +140,9 @@ class InteractionController(
     /** Tool the stylus side button activates while held, or null to ignore the button. */
     var penButtonTool: Tool? = Tool.ERASER
 
-    /** Side button as last seen on the hovering generic-motion stream; read only at touch-down,
-     *  so a press after the pen is already down does not activate the mapped tool. */
+    /** Side button as last seen on the hover/generic-motion stream or a stylus-button KeyEvent
+     *  (Feeder C, for Bluetooth pens that report it only there); read only at touch-down, so a
+     *  press after the pen is already down does not activate the mapped tool. */
     private var stylusButtonHeld = false
 
     /** When true, the side-button tool also runs off the hover stream (no contact needed); eraser/pan only. */
@@ -438,6 +440,23 @@ class InteractionController(
             stylusButtonHeld = (e.buttonState and STYLUS_BUTTON_MASK) != 0
             if (!stylusButtonHeld && hoverActionTool != null) endHoverAction()
         }
+    }
+
+    /** Feeder C: Bluetooth/USI pens often deliver the side button only as a KeyEvent, never in any
+     *  MotionEvent buttonState. Latch those into the same held flag ([down] true on key-down); a
+     *  key-up also ends a live hover gesture. Returns true if the key was a stylus side button, so
+     *  the host consumes it. */
+    fun onStylusButtonKey(keyCode: Int, down: Boolean): Boolean {
+        if (keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_PRIMARY &&
+            keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_SECONDARY &&
+            keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_TERTIARY &&
+            keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_TAIL
+        ) {
+            return false
+        }
+        stylusButtonHeld = down
+        if (!down && hoverActionTool != null) endHoverAction()
+        return true
     }
 
     private fun handleDown(e: MotionEvent) {

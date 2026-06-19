@@ -2194,6 +2194,17 @@ class Editor(context: Context) {
         return true
     }
 
+    /** Feeder C entry point: route stylus side-button key presses (Bluetooth/USI pens) to the
+     *  controller's held latch. Returns true when consumed, so the host swallows the key. */
+    fun onStylusButtonKey(e: android.view.KeyEvent): Boolean {
+        val down = when (e.action) {
+            android.view.KeyEvent.ACTION_DOWN -> true
+            android.view.KeyEvent.ACTION_UP -> false
+            else -> return false
+        }
+        return controller.onStylusButtonKey(e.keyCode, down)
+    }
+
     fun newNote() {
         saveViewState()
         flushAutosave()

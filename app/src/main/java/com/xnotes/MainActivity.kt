@@ -3,6 +3,7 @@ package com.xnotes
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -108,6 +109,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // Stylus side-button keys (Bluetooth/USI pens report the button only this way) are caught here,
+    // before Compose focus routing, so the controller sees both press and release regardless of
+    // which view holds focus. Other keys fall through to the normal dispatch.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (editor?.onStylusButtonKey(event) == true) return true
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
