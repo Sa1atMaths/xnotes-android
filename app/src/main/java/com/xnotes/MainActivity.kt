@@ -25,7 +25,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -72,7 +74,9 @@ private const val MIN_LOADER_MS = 600L
 
 class MainActivity : ComponentActivity() {
 
-    private var fullscreen = true // open in full screen by default
+    // Observable so the editor's content insets can follow it: fullscreen draws edge to edge and
+    // lets the swipe-in transient bars overlay (no resize), non-fullscreen insets under the bars.
+    private var fullscreen by mutableStateOf(true) // open in full screen by default
     private var editor: Editor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,7 +97,7 @@ class MainActivity : ComponentActivity() {
             }
             XnotesTheme(ed.palette) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    if (ready) EditorScreen(ed, onToggleFullscreen = ::toggleFullscreen)
+                    if (ready) EditorScreen(ed, fullscreen = fullscreen, onToggleFullscreen = ::toggleFullscreen)
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !ready,
                         enter = androidx.compose.animation.EnterTransition.None,
@@ -139,7 +143,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
+private fun EditorScreen(editor: Editor, fullscreen: Boolean, onToggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var showPresentation by remember { mutableStateOf(false) }
@@ -465,7 +469,11 @@ private fun EditorScreen(editor: Editor, onToggleFullscreen: () -> Unit) {
         }
     }
 
-    Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { inner ->
+    // In fullscreen the window runs edge to edge and the swipe-in system bars are transient, so
+    // zero the content insets: otherwise their inset animates 0 -> N -> 0 and resizes the canvas,
+    // forcing a re-render every time the bars hide. Non-fullscreen keeps the normal bar insets.
+    val contentInsets = if (fullscreen) WindowInsets(0, 0, 0, 0) else WindowInsets.systemBars
+    Scaffold(snackbarHost = { SnackbarHost(snackbar) }, contentWindowInsets = contentInsets) { inner ->
         Box(modifier = Modifier.fillMaxSize().padding(inner)) {
             // BASE LAYER: backstage is the root of the stack — always present underneath.
             com.xnotes.ui.Backstage(
