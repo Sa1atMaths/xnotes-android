@@ -64,6 +64,9 @@ class CanvasView @JvmOverloads constructor(
     /** Hover handler (stylus/mouse hover) for the eraser cursor. */
     var hover: ((MotionEvent) -> Boolean)? = null
 
+    /** Stylus side-button presses (generic-motion stream), for pens that don't put it in the touch buttonState. */
+    var genericMotion: ((MotionEvent) -> Unit)? = null
+
     /** Transparent debug HUD (frame rate / cache / heap), toggled by a four-finger tap. */
     val debugOverlay = DebugOverlay()
 
@@ -180,6 +183,11 @@ class CanvasView @JvmOverloads constructor(
 
     override fun onHoverEvent(event: MotionEvent): Boolean =
         hover?.invoke(event) ?: super.onHoverEvent(event)
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        genericMotion?.invoke(event)
+        return super.onGenericMotionEvent(event)
+    }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()

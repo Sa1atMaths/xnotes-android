@@ -321,6 +321,7 @@ class Editor(context: Context) {
     init {
         view.input = { controller.onTouch(it) }
         view.hover = { controller.onHover(it) }
+        view.genericMotion = { controller.onGenericMotion(it) }
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         view.afterLayout = { refreshView() }
         controller.clipboardHasImage = { clipboardImageUri() != null }
@@ -677,6 +678,7 @@ class Editor(context: Context) {
         controller.fingerDraws = p.fingerDraws
         controller.detectShapes = p.detectShapes
         controller.penButtonTool = if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER)
+        controller.penButtonHover = p.penButtonHover
         state.sideMargin = p.sideMargin
         state.relayout()
     }

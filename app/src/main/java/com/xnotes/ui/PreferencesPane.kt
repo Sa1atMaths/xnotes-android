@@ -164,6 +164,11 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                     Chip(label, prefs.penButtonTool == id) { update(prefs.copy(penButtonTool = id)) }
                 }
             }
+            if (prefs.penButtonTool == "eraser" || prefs.penButtonTool == "pan") {
+                CheckRow("Activate during hover (no need to touch the screen)", prefs.penButtonHover) {
+                    update(prefs.copy(penButtonHover = it))
+                }
+            }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Page")

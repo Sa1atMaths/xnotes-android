@@ -139,6 +139,16 @@ class InteractionController(
     /** Tool the stylus side button activates while held, or null to ignore the button. */
     var penButtonTool: Tool? = Tool.ERASER
 
+    /** Side button as last seen on the hovering generic-motion stream; read only at touch-down,
+     *  so a press after the pen is already down does not activate the mapped tool. */
+    private var stylusButtonHeld = false
+
+    /** When true, the side-button tool also runs off the hover stream (no contact needed); eraser/pan only. */
+    var penButtonHover: Boolean = false
+
+    /** The side-button tool currently running off the hover stream, or null when no hover gesture is live. */
+    private var hoverActionTool: Tool? = null
+
     private val toolConfigs: MutableMap<Tool, ToolConfig> =
         Tool.entries.associateWith { ToolDefaults.configFor(it) }.toMutableMap()
 
@@ -361,6 +371,7 @@ class InteractionController(
     }
 
     fun onHover(e: MotionEvent): Boolean {
+        if (handleHoverAction(e)) return true
         val isEraserPointer = e.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
         if (tool != Tool.ERASER && !isEraserPointer) return false
         eraserCursor = if (e.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
@@ -372,7 +383,65 @@ class InteractionController(
         return true
     }
 
+    /** Drive the side-button tool (eraser/pan) off the hover stream while the button is held and
+     *  "activate during hover" is on, so the pen erases or pans without touching the screen. */
+    private fun handleHoverAction(e: MotionEvent): Boolean {
+        val buttonNow = e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS &&
+            e.actionMasked != MotionEvent.ACTION_HOVER_EXIT &&
+            ((e.buttonState and STYLUS_BUTTON_MASK) != 0 || stylusButtonHeld)
+        val want = penButtonHover && buttonNow &&
+            (penButtonTool == Tool.ERASER || penButtonTool == Tool.PAN)
+        val vx = e.x.toDouble()
+        val vy = e.y.toDouble()
+        return when {
+            want && hoverActionTool == null -> { beginHoverAction(vx, vy); true }
+            want && hoverActionTool != null -> { extendHoverAction(vx, vy); true }
+            hoverActionTool != null -> { endHoverAction(); true }
+            else -> false
+        }
+    }
+
+    private fun beginHoverAction(vx: Double, vy: Double) {
+        hoverActionTool = penButtonTool
+        when (penButtonTool) {
+            Tool.ERASER -> { clearSelection(); beginErase(vx, vy) }
+            Tool.PAN -> beginPan(vx, vy)
+            else -> hoverActionTool = null
+        }
+        requestRender()
+    }
+
+    private fun extendHoverAction(vx: Double, vy: Double) {
+        when (hoverActionTool) {
+            Tool.ERASER -> eraseAt(vx, vy)
+            Tool.PAN -> extendPan(vx, vy)
+            else -> Unit
+        }
+    }
+
+    /** End a live hover gesture: commit the erase, or stop the pan (with a flick if it was moving). */
+    private fun endHoverAction() {
+        when (hoverActionTool) {
+            Tool.ERASER -> endErase()
+            Tool.PAN -> { mode = PointerMode.IDLE; startFling(panVel) }
+            else -> Unit
+        }
+        hoverActionTool = null
+        requestRender()
+    }
+
+    /** Some pens report the side button only on the hovering generic-motion stream
+     *  (ACTION_BUTTON_PRESS/RELEASE), never in the touch buttonState. Latch it here; a release
+     *  here also ends an in-progress hover gesture even if the pen has not moved. */
+    fun onGenericMotion(e: MotionEvent) {
+        if (e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+            stylusButtonHeld = (e.buttonState and STYLUS_BUTTON_MASK) != 0
+            if (!stylusButtonHeld && hoverActionTool != null) endHoverAction()
+        }
+    }
+
     private fun handleDown(e: MotionEvent) {
+        if (hoverActionTool != null) endHoverAction() // a hovering side-button gesture yields to contact
         downStoppedFling = flinging // captured before stopping: a tap that only halts a glide must not dismiss
         stopFling() // a new touch halts any in-progress glide
         stopOverscrollSettle() // ...and lets a re-grab take over the elastic mid-spring
@@ -388,7 +457,7 @@ class InteractionController(
         //  - a finger pans unless finger-draw is enabled;
         //  - otherwise the armed tool.
         val buttonHeld = drawingIsStylus &&
-            (e.buttonState and (MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_SECONDARY)) != 0
+            ((e.buttonState and STYLUS_BUTTON_MASK) != 0 || stylusButtonHeld)
         val effectiveTool: Tool = when {
             toolType == MotionEvent.TOOL_TYPE_ERASER -> Tool.ERASER
             buttonHeld && penButtonTool != null -> penButtonTool!!
@@ -2321,6 +2390,11 @@ class InteractionController(
     companion object {
         const val MIN_SAMPLE_DIST = 1.0
         const val MOVE_EPS = 0.01
+
+        /** Stylus side-button bits, widened past the S-Pen primary so pens on the secondary/tertiary lines count too. */
+        val STYLUS_BUTTON_MASK =
+            MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY or
+                MotionEvent.BUTTON_SECONDARY or MotionEvent.BUTTON_TERTIARY
 
         /** Magic wand: idle time (ms) after the last stroke before the held batch fades. */
         const val WAND_HOLD_MS = 1000L

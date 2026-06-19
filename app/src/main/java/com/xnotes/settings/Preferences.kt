@@ -27,6 +27,8 @@ data class Preferences(
     val detectShapes: Boolean = false,
     /** Tool the stylus side button activates while held; "none" disables it. */
     val penButtonTool: String = "eraser",
+    /** Whether the side-button tool also activates during hover (no contact needed); eraser/pan only. */
+    val penButtonHover: Boolean = false,
     /** Horizontal margin (px) on each side of the page column; 0 ⇒ fit-width fills the screen. */
     val sideMargin: Double = 16.0,
 ) {
@@ -46,6 +48,7 @@ data class Preferences(
         .put("finger_draws", fingerDraws)
         .put("detect_shapes", detectShapes)
         .put("pen_button_tool", penButtonTool)
+        .put("pen_button_hover", penButtonHover)
         .put("side_margin", sideMargin)
 
     companion object {
@@ -69,6 +72,7 @@ data class Preferences(
                 fingerDraws = o.optBoolean("finger_draws", false),
                 detectShapes = o.optBoolean("detect_shapes", false),
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
+                penButtonHover = o.optBoolean("pen_button_hover", false),
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
             )
         }
