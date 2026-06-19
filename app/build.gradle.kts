@@ -51,9 +51,9 @@ android {
         }
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
-            // R8 shrinks/optimises release builds (see proguard-rules.pro for the few keeps). R8 is
-            // deterministic and the toolchain is pinned (AGP in libs.versions.toml), so F-Droid's
-            // from-source build reproduces this APK's dex byte-for-byte.
+            // R8 shrinks/optimises release builds (see proguard-rules.pro for the few keeps). R8
+            // output is reproducible (pinned AGP fixes the R8 version + mapping); the one
+            // non-reproducible artefact, the baseline profile, is dropped below (see ArtProfile).
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -77,6 +77,14 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+// F-Droid runs verified builds: its from-source APK must byte-match the released one. AGP's
+// auto-merged baseline profile (assets/dexopt/baseline.prof, built from the Compose/AndroidX
+// library profiles) is not reproducible across build hosts, so omit it from release builds.
+// Tradeoff: slightly slower first-run startup (no ART pre-warm profile).
+tasks.configureEach {
+    if (name.contains("ArtProfile")) enabled = false
 }
 
 dependencies {
