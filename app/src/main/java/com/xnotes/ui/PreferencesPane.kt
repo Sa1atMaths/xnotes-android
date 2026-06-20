@@ -207,6 +207,22 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             }
 
             HorizontalDivider(color = palette.border.toComposeColor())
+            SectionTitle("Performance")
+            FieldLabel("Max cache resolution  ${prefs.maxCacheResolution} px")
+            Slider(
+                value = prefs.maxCacheResolution.toFloat(),
+                onValueChange = { update(prefs.copy(maxCacheResolution = Math.round(it))) },
+                valueRange = 1024f..4096f,
+                steps = 5,
+                modifier = Modifier.width(280.dp),
+            )
+            Text(
+                "Higher feels smoother when you pan and zoom but uses more memory. Your ink and PDFs look just as crisp either way.",
+                color = palette.textDim.toComposeColor(),
+                fontSize = 12.sp,
+            )
+
+            HorizontalDivider(color = palette.border.toComposeColor())
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SectionTitle("Toolbar")
                 Spacer(Modifier.weight(1f))

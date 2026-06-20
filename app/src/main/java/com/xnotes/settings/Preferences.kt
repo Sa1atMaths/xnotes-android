@@ -31,6 +31,8 @@ data class Preferences(
     val penButtonHover: Boolean = false,
     /** Horizontal margin (px) on each side of the page column; 0 ⇒ fit-width fills the screen. */
     val sideMargin: Double = 16.0,
+    /** Long-edge cap (px) for the on-screen page cache; higher holds more of the page ready at deep zoom. */
+    val maxCacheResolution: Int = 2048,
 ) {
     val isDark: Boolean get() = uiAppearance != "light"
 
@@ -50,6 +52,7 @@ data class Preferences(
         .put("pen_button_tool", penButtonTool)
         .put("pen_button_hover", penButtonHover)
         .put("side_margin", sideMargin)
+        .put("max_cache_resolution", maxCacheResolution)
 
     companion object {
         val DEFAULT_ACCENT = Rgba(0, 230, 118, 255)
@@ -74,6 +77,7 @@ data class Preferences(
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
                 penButtonHover = o.optBoolean("pen_button_hover", false),
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
+                maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
             )
         }
     }

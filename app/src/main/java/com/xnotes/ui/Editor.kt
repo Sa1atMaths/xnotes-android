@@ -680,6 +680,7 @@ class Editor(context: Context) {
         controller.penButtonTool = if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER)
         controller.penButtonHover = p.penButtonHover
         state.sideMargin = p.sideMargin
+        state.maxCachePx = p.maxCacheResolution.toDouble()
         state.relayout()
     }
 

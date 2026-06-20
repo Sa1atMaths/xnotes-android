@@ -65,6 +65,12 @@ class CanvasState(
     var renderScale: Double = 1.0
 
     /**
+     * Long-edge cap (content px) for the on-screen page caches; zoom past it renders the visible
+     * region live (the sharp viewport) instead of caching the whole page. User-set in preferences.
+     */
+    var maxCachePx: Double = 2048.0
+
+    /**
      * Elastic overscroll past the document's **bottom** end (viewport px, already damped). Positive
      * lifts the whole content up, opening a gap below the last page where the "pull to add page"
      * affordance is drawn (see [CanvasView]). Purely visual — it never changes [scrollX]/[scrollY] —
@@ -127,8 +133,8 @@ class CanvasState(
 
     /**
      * Presentation's own page caches, kept separate from the on-screen [caches]/[bgCaches]
-     * and built at the higher [PRES_CACHE_PX] cap so streaming stays crisp regardless of the
-     * (lower) on-screen [MAX_CACHE_PX] and the presenter's zoom. Populated only while
+     * and built at the [PRES_CACHE_PX] cap so streaming stays crisp regardless of the on-screen
+     * [maxCachePx] and the presenter's zoom. Populated only while
      * presenting (by [presCacheFor]/[presBackgroundFor] from the presentation frame source),
      * bounded to the streamed page(s) ([dropPresCachesExcept]) and freed on stop
      * ([clearPresentationCaches]). Kept current by the same incremental hooks as the on-screen
@@ -456,7 +462,7 @@ class CanvasState(
     private fun clampedRes(page: Page): Double {
         var res = zoom * renderScale
         val longest = max(page.width, page.height) * res
-        if (longest > MAX_CACHE_PX) res = MAX_CACHE_PX / max(page.width, page.height)
+        if (longest > maxCachePx) res = maxCachePx / max(page.width, page.height)
         return res.coerceAtLeast(0.01)
     }
 
@@ -578,7 +584,7 @@ class CanvasState(
 
     /**
      * Fixed (zoom-independent) resolution for the presentation caches: the whole page at
-     * [PRES_CACHE_PX] on its long edge. Independent of the on-screen [MAX_CACHE_PX] and the
+     * [PRES_CACHE_PX] on its long edge. Independent of the on-screen [maxCachePx] and the
      * presenter's current zoom, so a streamed page stays sharp at any quality setting.
      */
     private fun presRes(page: Page): Double =
@@ -766,7 +772,7 @@ class CanvasState(
      * bitmaps stay in the maps, so [cacheForOrSchedule]/[backgroundForOrSchedule] keep
      * blitting them (scaled) for the new zoom until the sharp rebuild lands — avoiding the
      * one-frame empty-canvas flash that clearing would cause when a pinch ends. A page whose
-     * clamped resolution is unchanged (already at the [MAX_CACHE_PX] cap) matches on res and
+     * clamped resolution is unchanged (already at the [maxCachePx] cap) matches on res and
      * is returned as-is, so it is neither flashed nor needlessly rebuilt.
      *
      * Bumping [cacheGen] discards any in-flight build captured at the previous generation, so
@@ -803,14 +809,14 @@ class CanvasState(
 
     // --- sharp viewport ---
 
-    /** True when the current zoom pushes a visible page past [MAX_CACHE_PX] (its cache is clamped). */
+    /** True when the current zoom pushes a visible page past [maxCachePx] (its cache is clamped). */
     fun isPastResolutionCap(): Boolean {
         val target = zoom * renderScale
         val visible = visibleContentRect()
         for (i in pageRects.indices) {
             val pr = pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
-            if (target * max(document.pages[i].width, document.pages[i].height) > MAX_CACHE_PX) return true
+            if (target * max(document.pages[i].width, document.pages[i].height) > maxCachePx) return true
         }
         return false
     }
@@ -1030,12 +1036,11 @@ class CanvasState(
         /** While a pinch's zoom is within this fraction of [fitWidthZoom] it sticks to fit-to-width. */
         const val SNAP_TO_FIT_WIDTH = 0.05
         const val CTRL_WHEEL_BASE = 1.01
-        const val MAX_CACHE_PX = 1024.0
 
         /**
-         * Cap for the *presentation* caches' long edge. Kept independent of (and higher than)
-         * [MAX_CACHE_PX] so live streaming stays sharp at its quality targets even when the
-         * on-screen cache is clamped lower.
+         * Cap for the *presentation* caches' long edge. Kept independent of the on-screen
+         * [maxCachePx] so live streaming holds its own quality target regardless of how the
+         * on-screen cache is configured.
          */
         const val PRES_CACHE_PX = 2048.0
 
