@@ -450,10 +450,7 @@ class InteractionController(
         if (keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_PRIMARY &&
             keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_SECONDARY &&
             keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_TERTIARY &&
-            keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_TAIL &&
-            keyCode != 289 && // Lenovo/Honor non-standard keycodes
-            keyCode != 290 &&
-            keyCode !in 600..604
+            keyCode != KeyEvent.KEYCODE_STYLUS_BUTTON_TAIL
         ) {
             return false
         }
@@ -472,7 +469,7 @@ class InteractionController(
         val vy = e.getY(0).toDouble()
         val content = state.viewportToContent(Pt(vx, vy))
         drawingPointerId = e.getPointerId(0)
-        drawingIsStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS || stylusButtonHeld
+        drawingIsStylus = toolType == MotionEvent.TOOL_TYPE_STYLUS
 
         // Resolve which tool this pointer drives:
         //  - the stylus eraser end, or the held side button, force the eraser/side-button tool;
