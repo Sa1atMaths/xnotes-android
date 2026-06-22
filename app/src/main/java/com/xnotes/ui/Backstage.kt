@@ -1109,15 +1109,18 @@ private fun FileTile(
             // accent-fill family: one squared outline wraps the thumbnail and the label strip. border
             // draws over its children, so it stays crisp on top of the full-bleed thumbnail.
             .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
-            // No tap ripple — the accent border + fill is the only selection cue.
+            // No tap ripple — the accent border + fill is the only selection cue. combinedClickable owns
+            // tap (open/toggle) and long-press (select); keeping onLongClick here is what suppresses a
+            // click on release after a long-press, so selecting a tile no longer toggles back off.
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
+                onLongClick = onLongClick,
             )
             .onGloballyPositioned { tileCoords = it }
-            // Long-press selects when the tile isn't selected yet; on an already-selected tile it picks
-            // the whole selection up to drag onto a folder.
+            // A long-press on an already-selected tile picks the whole selection up to drag onto a
+            // folder; on an unselected tile this stays inert and combinedClickable just selects it.
             .pointerInput(entry.documentUri, selected) {
                 var dragging = false
                 detectDragGesturesAfterLongPress(
@@ -1125,9 +1128,7 @@ private fun FileTile(
                         if (selected) {
                             val w = tileCoords?.localToWindow(local)
                             if (w != null) { dragging = true; onDragStart(w) } else dragging = false
-                        } else {
-                            dragging = false; onLongClick()
-                        }
+                        } else dragging = false
                     },
                     onDrag = { change, delta -> if (dragging) { change.consume(); onDrag(delta) } },
                     onDragEnd = { if (dragging) onDragEnd(); dragging = false },
