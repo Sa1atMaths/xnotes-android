@@ -185,6 +185,7 @@ class InteractionController(
     private var panVel = Pt.ZERO // smoothed finger velocity, viewport px/s
     private var panDownViewport = Pt.ZERO // where the current pan began (viewport px), for tap-to-dismiss
     private var downStoppedFling = false // this touch landed on a moving glide, so its lift isn't a dismiss tap
+    private var panMayCommitText = false // pan begun off an open text box: a tap commits it, a drag scrolls
     // Framework singletons, created lazily on first use (always a gesture on the main thread) so
     // the controller's selection/edit logic stays constructible — and unit-testable — off-device.
     private val choreographer by lazy { Choreographer.getInstance() }
@@ -467,6 +468,7 @@ class InteractionController(
         downStoppedFling = flinging // captured before stopping: a tap that only halts a glide must not dismiss
         stopFling() // a new touch halts any in-progress glide
         stopOverscrollSettle() // ...and lets a re-grab take over the elastic mid-spring
+        panMayCommitText = false // a fresh gesture; the editing branch below re-arms it if it applies
         val toolType = e.getToolType(0)
         val vx = e.getX(0).toDouble()
         val vy = e.getY(0).toDouble()
@@ -497,14 +499,19 @@ class InteractionController(
             else -> tool
         }
 
-        // An open text edit is committed-or-dismissed by any press before that press does anything
-        // else: an empty box is deleted, a box with content is kept, and the prior tool is re-armed.
-        // With the Text tool a press off the box must not spawn a new box on the same gesture (that
-        // double-create was the duplication bug): a tap just commits, a finger drag scrolls the page.
+        // A press off the box while editing. With a finger we defer: a tap commits (re-arming the
+        // prior tool), a drag scrolls the page with the edit kept live (decided in handleUp's PAN
+        // branch). A stylus / side-button / eraser press commits now and proceeds as usual. A Text
+        // press never spawns a new box on the same gesture (that double-create was a bug).
         if (editingText != null) {
+            if (toolType == MotionEvent.TOOL_TYPE_FINGER && effectiveTool == Tool.TEXT) {
+                panMayCommitText = true
+                beginPan(vx, vy)
+                return
+            }
             commitTextEdit(restoreTool = true)
             if (effectiveTool == Tool.TEXT) {
-                if (toolType == MotionEvent.TOOL_TYPE_FINGER) beginPan(vx, vy) else mode = PointerMode.IDLE
+                mode = PointerMode.IDLE
                 return
             }
         }
@@ -640,15 +647,26 @@ class InteractionController(
             PointerMode.PAN -> {
                 mode = PointerMode.IDLE
                 val upViewport = Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble())
-                // A finger tap (no drag) that didn't just halt a glide, landing off the current
-                // selection, dismisses it — the finger's counterpart to the stylus's empty-tap clear.
                 val tap = !downStoppedFling && upViewport.distanceTo(panDownViewport) <= TAP_SLOP
-                val linkHandled = tap && state.overscrollY <= 0.0 && tryLinkTap(content)
-                when {
-                    linkHandled -> Unit
-                    state.overscrollY > 0.0 -> releaseOverscroll()
-                    tap && hasSelection && selectionBoundsContent()?.contains(content) != true -> clearSelection()
-                    else -> startFling(panVel)
+                if (panMayCommitText) {
+                    // Press off the box while editing: only a tap commits (and re-arms the prior tool);
+                    // a drag just scrolled with the edit kept live. Either way settle any elastic/glide.
+                    panMayCommitText = false
+                    when {
+                        tap -> commitTextEdit(restoreTool = true)
+                        state.overscrollY > 0.0 -> releaseOverscroll()
+                        else -> startFling(panVel)
+                    }
+                } else {
+                    // A finger tap (no drag) that didn't just halt a glide, landing off the current
+                    // selection, dismisses it — the finger's counterpart to the stylus's empty-tap clear.
+                    val linkHandled = tap && state.overscrollY <= 0.0 && tryLinkTap(content)
+                    when {
+                        linkHandled -> Unit
+                        state.overscrollY > 0.0 -> releaseOverscroll()
+                        tap && hasSelection && selectionBoundsContent()?.contains(content) != true -> clearSelection()
+                        else -> startFling(panVel)
+                    }
                 }
             }
             PointerMode.PINCH -> endPinch()
@@ -2107,6 +2125,7 @@ class InteractionController(
         dwellEligible = false
         snappedSelectionPendingMenu = false
         strokeDismissedSelection = false
+        panMayCommitText = false
         stopFling()
         clearOverscroll()
         liveStroke = null
