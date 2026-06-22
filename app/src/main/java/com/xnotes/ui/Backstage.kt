@@ -6,6 +6,7 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -17,6 +18,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -36,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,9 +64,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -73,9 +78,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
@@ -87,8 +95,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -97,6 +110,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.ui.icons.XnotesIcons
@@ -107,6 +121,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /** Which pane the backstage shows on the right. */
 enum class BackstageView { HOME, PREFERENCES, ABOUT }
@@ -480,6 +495,16 @@ private fun ExplorerSection(
     var clipboard by remember(root) { mutableStateOf<ClipItem?>(null) }
     var pendingDelete by remember(root) { mutableStateOf<List<BrowseEntry>?>(null) }
     var opError by remember(root) { mutableStateOf<String?>(null) }
+    // Drag-to-move state. While a selection is being dragged onto a folder, [dragPos] is the finger
+    // position in window coords, [folderBounds] maps each visible folder to its window rect for
+    // hit-testing, [dropTargetUri] is the folder under the finger, and [pulseUri] flashes the folder a
+    // dropped move just landed in. [boxCoords] anchors the floating preview into the grid's own space.
+    val folderBounds = remember(root) { mutableStateMapOf<String, Rect>() }
+    var dragItems by remember(root) { mutableStateOf<List<BrowseEntry>>(emptyList()) }
+    var dragPos by remember(root) { mutableStateOf<Offset?>(null) }
+    var dropTargetUri by remember(root) { mutableStateOf<String?>(null) }
+    var pulseUri by remember(root) { mutableStateOf<String?>(null) }
+    var boxCoords by remember(root) { mutableStateOf<LayoutCoordinates?>(null) }
     // Inside a subfolder, back climbs one level out (this sits below the Backstage's root
     // handler, so it's consulted first and only fires while there's a folder to leave).
     BackHandler(enabled = stack.isNotEmpty()) {
@@ -490,6 +515,11 @@ private fun ExplorerSection(
     fun toggleSelect(e: BrowseEntry) {
         val i = selection.indexOfFirst { it.documentUri == e.documentUri }
         if (i >= 0) selection.removeAt(i) else selection.add(e)
+    }
+    // The folder under the finger, ignoring any folder that's itself part of the dragged selection.
+    fun updateDropTarget(pos: Offset) {
+        dropTargetUri = folderBounds.entries
+            .firstOrNull { (uri, r) -> r.contains(pos) && dragItems.none { it.documentUri == uri } }?.key
     }
     var menuOpen by remember(root) { mutableStateOf(false) }
     var newMenuOpen by remember(root) { mutableStateOf(false) }
@@ -598,7 +628,7 @@ private fun ExplorerSection(
         // pane and enlarges the tiles.
         val gridColumns = (LocalConfiguration.current.screenWidthDp / 240).coerceIn(2, 8)
         Box(
-            Modifier.weight(1f).fillMaxWidth().then(
+            Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { boxCoords = it }.then(
                 // In select mode, tapping empty space (not a tile) clears the selection.
                 if (selection.isNotEmpty()) Modifier.clickable(interactionSource = dismissInteraction, indication = null) { selection.clear() } else Modifier,
             ),
@@ -637,6 +667,10 @@ private fun ExplorerSection(
                                 renaming = null; opError = null
                                 if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
                             },
+                            isDropTarget = dragPos != null && dropTargetUri == entry.documentUri,
+                            pulsing = pulseUri == entry.documentUri,
+                            onPulseDone = { if (pulseUri == entry.documentUri) pulseUri = null },
+                            onBounds = { r -> if (r == null) folderBounds.remove(entry.documentUri) else folderBounds[entry.documentUri] = r },
                         )
                     }
                     // Break the row so a trailing folder never shares a line with a file tile.
@@ -667,9 +701,46 @@ private fun ExplorerSection(
                                 renaming = null; opError = null
                                 if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
                             },
+                            onDragStart = { w ->
+                                dragItems = if (selection.isEmpty()) listOf(entry) else selection.toList()
+                                dragPos = w; updateDropTarget(w)
+                            },
+                            onDrag = { d -> dragPos?.let { val np = it + d; dragPos = np; updateDropTarget(np) } },
+                            onDragEnd = {
+                                val target = dropTargetUri
+                                val items = dragItems
+                                dragPos = null; dropTargetUri = null; dragItems = emptyList()
+                                if (target != null) {
+                                    val targetDocId = editor.browseDocId(target)
+                                    pulseUri = target; opError = null
+                                    scope.launch {
+                                        val ok = withContext(Dispatchers.IO) {
+                                            var all = true
+                                            items.forEach { e ->
+                                                if (e.documentUri != target &&
+                                                    !editor.moveDocumentInto(root, e.documentUri, currentDocId, targetDocId)) all = false
+                                            }
+                                            all
+                                        }
+                                        selection.clear(); refreshKey++
+                                        if (!ok) opError = "Couldn’t move some items."
+                                    }
+                                }
+                            },
+                            onDragCancel = { dragPos = null; dropTargetUri = null; dragItems = emptyList() },
                         )
                     }
                 }
+            }
+            // Floating preview that trails the finger while a selection is dragged onto a folder.
+            val pos = dragPos
+            val bc = boxCoords
+            if (pos != null && bc != null) {
+                val origin = bc.positionInWindow()
+                val density = LocalDensity.current
+                val dx = with(density) { pos.x - origin.x - 75.dp.toPx() }
+                val dy = with(density) { pos.y - origin.y - 52.dp.toPx() }
+                DragPreview(dragItems, Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) })
             }
         }
     }
@@ -902,6 +973,27 @@ private fun EntryMenu(
     }
 }
 
+/** The small card that trails the finger while a selection of notes is dragged onto a folder. */
+@Composable
+private fun DragPreview(items: List<BrowseEntry>, modifier: Modifier) {
+    val palette = LocalPalette.current
+    val label = if (items.size == 1) entryLabel(items.first()) else "${items.size} notes"
+    Row(
+        modifier
+            .width(150.dp)
+            .alpha(0.95f)
+            .clip(RoundedCornerShape(6.dp))
+            .background(palette.menuBg.toComposeColor())
+            .border(1.dp, palette.accent.toComposeColor(), RoundedCornerShape(6.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(XnotesIcons.file, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label, color = palette.text.toComposeColor(), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 /** A compact folder chip (small icon + name) for the wrapping row above the file tiles. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -917,18 +1009,35 @@ private fun FolderChip(
     onDismissSelection: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    isDropTarget: Boolean,
+    pulsing: Boolean,
+    onPulseDone: () -> Unit,
+    onBounds: (Rect?) -> Unit,
 ) {
     val palette = LocalPalette.current
     var menuOpen by remember { mutableStateOf(false) }
     val accent = palette.accent.toComposeColor()
     val onAccent = palette.bg.toComposeColor()
+    // A dropped move flicks the target chip up and back; the hover state tints it with the accent veil.
+    val pulse = remember { Animatable(1f) }
+    LaunchedEffect(pulsing) {
+        if (pulsing) {
+            pulse.animateTo(1.08f, tween(110))
+            pulse.animateTo(1f, tween(160))
+            onPulseDone()
+        }
+    }
+    DisposableEffect(Unit) { onDispose { onBounds(null) } }
+    val highlight = isDropTarget && !selected
     Row(
         Modifier
             .fillMaxWidth()
-            // accent-fill toggle: selected fills solid accent with content flipped to bg, otherwise a
-            // thin bordered transparent box. No tap ripple — the colour invert is the only selection cue.
-            .background(if (selected) accent else Color.Transparent)
-            .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
+            .scale(pulse.value)
+            .onGloballyPositioned { onBounds(it.boundsInWindow()) }
+            // accent-fill toggle: selected fills solid accent with content flipped to bg; a hovering drag
+            // tints it with the accent veil. No tap ripple — the colour is the only cue.
+            .background(if (selected) accent else if (highlight) palette.accentAlpha(38).toComposeColor() else Color.Transparent)
+            .border(if (highlight) 2.dp else 1.dp, if (selected || highlight) accent else palette.border.toComposeColor(), RectangleShape)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -977,9 +1086,14 @@ private fun FileTile(
     onDelete: (() -> Unit)?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onDragStart: (Offset) -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
 ) {
     val palette = LocalPalette.current
     var menuOpen by remember { mutableStateOf(false) }
+    var tileCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     // Seed from the in-memory cache for an instant paint, then load/render off-thread; re-keying on
     // the file's mtime re-renders the tile after the note is edited.
     val thumb by produceState<ImageBitmap?>(editor.cachedNoteTile(entry.documentUri), entry.documentUri, entry.modified) {
@@ -1000,8 +1114,26 @@ private fun FileTile(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
-                onLongClick = onLongClick,
-            ),
+            )
+            .onGloballyPositioned { tileCoords = it }
+            // Long-press selects when the tile isn't selected yet; on an already-selected tile it picks
+            // the whole selection up to drag onto a folder.
+            .pointerInput(entry.documentUri, selected) {
+                var dragging = false
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { local ->
+                        if (selected) {
+                            val w = tileCoords?.localToWindow(local)
+                            if (w != null) { dragging = true; onDragStart(w) } else dragging = false
+                        } else {
+                            dragging = false; onLongClick()
+                        }
+                    },
+                    onDrag = { change, delta -> if (dragging) { change.consume(); onDrag(delta) } },
+                    onDragEnd = { if (dragging) onDragEnd(); dragging = false },
+                    onDragCancel = { if (dragging) onDragCancel(); dragging = false },
+                )
+            },
     ) {
         Box(
             Modifier
