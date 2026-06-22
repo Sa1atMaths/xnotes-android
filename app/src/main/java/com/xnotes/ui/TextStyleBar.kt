@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.pal.FontFace
+import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.roundToInt
@@ -104,7 +106,12 @@ fun TextStyleBar(editor: Editor) {
                 modifier = Modifier.size(44.dp).clickable { editor.commitText() },
                 contentAlignment = Alignment.Center,
             ) {
-                Text("✓", color = palette.accent.toComposeColor(), fontSize = 22.sp)
+                Icon(
+                    XnotesIcons.check,
+                    contentDescription = "Done",
+                    tint = palette.accent.toComposeColor(),
+                    modifier = Modifier.size(22.dp),
+                )
             }
         }
     }
