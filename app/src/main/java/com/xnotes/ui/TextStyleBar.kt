@@ -109,7 +109,7 @@ fun TextStyleBar(editor: Editor) {
                 Icon(
                     XnotesIcons.check,
                     contentDescription = "Done",
-                    tint = palette.accent.toComposeColor(),
+                    tint = palette.text.toComposeColor(),
                     modifier = Modifier.size(22.dp),
                 )
             }
