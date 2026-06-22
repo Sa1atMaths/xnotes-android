@@ -23,6 +23,8 @@ data class Preferences(
     val defaultPageOrientation: Orientation = Orientation.PORTRAIT,
     /** Whether a finger draws (true) or pans (false, default). The stylus always draws. */
     val fingerDraws: Boolean = false,
+    /** Panning allowed while zoom is locked: "single" (default) | "double" | "none". */
+    val zoomLockPan: String = "single",
     /** Whether holding a freehand ink stroke still snaps it to a recognized shape. */
     val detectShapes: Boolean = false,
     /** Tool the stylus side button activates while held; "none" disables it. */
@@ -48,6 +50,7 @@ data class Preferences(
         .put("default_page_size", defaultPageSize.displayName)
         .put("default_page_orientation", defaultPageOrientation.toName())
         .put("finger_draws", fingerDraws)
+        .put("zoom_lock_pan", zoomLockPan)
         .put("detect_shapes", detectShapes)
         .put("pen_button_tool", penButtonTool)
         .put("pen_button_hover", penButtonHover)
@@ -61,6 +64,7 @@ data class Preferences(
             if (o == null) return Preferences()
             val appearance = o.optString("ui_appearance", "dark").let { if (it == "light" || it == "oled") it else "dark" }
             val template = o.optString("default_template", "color").let { if (it == "pdf") "pdf" else "color" }
+            val zoomLockPan = o.optString("zoom_lock_pan", "single").let { if (it == "double" || it == "none") it else "single" }
             return Preferences(
                 pdfDarkMode = o.optBoolean("pdf_dark_mode", false),
                 pdfKeepImageColors = o.optBoolean("pdf_keep_image_colors", false),
@@ -73,6 +77,7 @@ data class Preferences(
                 defaultPageSize = PageSize.fromName(o.optString("default_page_size", "A4")),
                 defaultPageOrientation = Orientation.fromName(o.optString("default_page_orientation", "portrait")),
                 fingerDraws = o.optBoolean("finger_draws", false),
+                zoomLockPan = zoomLockPan,
                 detectShapes = o.optBoolean("detect_shapes", false),
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
                 penButtonHover = o.optBoolean("pen_button_hover", false),

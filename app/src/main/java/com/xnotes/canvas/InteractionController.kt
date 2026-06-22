@@ -134,6 +134,9 @@ class InteractionController(
     /** Whether a finger draws (true) or pans (false). The stylus always uses the armed tool. */
     var fingerDraws: Boolean = false
 
+    /** Panning allowed while zoom is locked: "single" (default) | "double" | "none". */
+    var zoomLockPan: String = "single"
+
     /** Whether holding a freehand ink stroke still snaps it to a recognized shape (spec: "hold to snap"). */
     var detectShapes: Boolean = false
 
@@ -555,6 +558,12 @@ class InteractionController(
                 requestRender()
                 return
             }
+        }
+
+        // Zoom-lock pan preference: swallow a single-finger pan when locked and set to "double"/"none".
+        if (effectiveTool == Tool.PAN && !singleFingerPanAllowed()) {
+            mode = PointerMode.IDLE
+            return
         }
 
         when {
@@ -1857,6 +1866,11 @@ class InteractionController(
 
     // --- PAN ---
 
+    // When zoom is locked, the zoomLockPan preference decides which pan gestures still move the
+    // viewport: "single" keeps both, "double" drops the single finger, "none" freezes the page.
+    private fun singleFingerPanAllowed(): Boolean = !(state.zoomLocked && zoomLockPan != "single")
+    private fun pinchPanAllowed(): Boolean = !(state.zoomLocked && zoomLockPan == "none")
+
     private fun beginPan(vx: Double, vy: Double) {
         mode = PointerMode.PAN
         panDownViewport = Pt(vx, vy)
@@ -2102,9 +2116,11 @@ class InteractionController(
             if (!wasFit && state.fitWidthActive) onFitWidthSnapped()
             else if (wasFit && !state.fitWidthActive) onFitWidthReleased()
         }
-        state.scrollX = pinchAnchorContent.x * z - mid.x
-        state.scrollY = pinchAnchorContent.y * z - mid.y
-        state.clampScroll()
+        if (pinchPanAllowed()) {
+            state.scrollX = pinchAnchorContent.x * z - mid.x
+            state.scrollY = pinchAnchorContent.y * z - mid.y
+            state.clampScroll()
+        }
         lastPan = mid
         onViewChanged() // live zoom %: refresh the toolbar each pinch frame, not just at the end
         requestRender()
@@ -2116,7 +2132,7 @@ class InteractionController(
         state.invalidateCachesForZoom() // keep stale surfaces to blit until the sharp rebuild lands
         onViewChanged()
         requestRender()
-        startFling(panVel)
+        if (pinchPanAllowed()) startFling(panVel)
     }
 
     private fun abortGesture() {
