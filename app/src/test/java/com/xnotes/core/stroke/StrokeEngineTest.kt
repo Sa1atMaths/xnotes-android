@@ -103,17 +103,27 @@ class StrokeEngineTest {
         assertEquals(2.0, g.caps[0].radius, 1e-9)
     }
 
-    @Test fun taperLengthIsFixedNotProportional() {
-        // The taper is a fixed arc length per end, so growing the stroke leaves the
-        // entrance ramp unchanged (only the full-width middle gets longer). The leading
-        // half-widths — within the entrance taper on both — must therefore match, and the
-        // longer stroke must still reach full width somewhere in its middle.
-        val short = (0..6).map { Sample(it * 10.0, 0.0, 1.0) }
-        val long = (0..20).map { Sample(it * 10.0, 0.0, 1.0) }
-        val gShort = StrokeEngine.build(short, 4.0, false, 1.0, 0.0, taperLength = 25.0)
-        val gLong = StrokeEngine.build(long, 4.0, false, 1.0, 0.0, taperLength = 25.0)
-        for (i in 1..3) assertEquals(gShort.halfWidths[i], gLong.halfWidths[i], 1e-9)
-        assertEquals(2.0, gLong.halfWidths.maxOrNull()!!, 1e-9)
+    @Test fun taperIsCappedSoAHugeValueStillLeavesAFullWidthMiddle() {
+        // A huge taper value on a short stroke must not collapse it into a sliver: the taper is
+        // capped at 10% of the stroke's length, so the ends still come to a point while the
+        // middle 80% reaches full width.
+        val pts = (0..10).map { Sample(it * 10.0, 0.0, 1.0) } // total 100 px
+        val g = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 1000.0)
+        assertEquals(0.0, g.caps[0].radius, 1e-9)            // still a point at the ends
+        assertEquals(0.0, g.caps[1].radius, 1e-9)
+        assertEquals(2.0, g.halfWidths.maxOrNull()!!, 1e-9)  // and full width in the middle
+    }
+
+    @Test fun taperUsesTheFixedValueWhenItFitsUnderTheCap() {
+        // When the taper value is under 10% of the stroke it is used as-is (a fixed arc length),
+        // so the same value tapers the same distance regardless of how much longer the stroke
+        // gets. Both strokes here are long enough that 10% exceeds 25, so the entrance ramps match.
+        val a = (0..40).map { Sample(it * 10.0, 0.0, 1.0) }  // total 400, 10% = 40 > 25
+        val b = (0..80).map { Sample(it * 10.0, 0.0, 1.0) }  // total 800, 10% = 80 > 25
+        val ga = StrokeEngine.build(a, 4.0, false, 1.0, 0.0, taperLength = 25.0)
+        val gb = StrokeEngine.build(b, 4.0, false, 1.0, 0.0, taperLength = 25.0)
+        for (i in 1..3) assertEquals(ga.halfWidths[i], gb.halfWidths[i], 1e-9)
+        assertEquals(2.0, ga.halfWidths.maxOrNull()!!, 1e-9)
     }
 
     // --- Speed pen (§1.1) ---

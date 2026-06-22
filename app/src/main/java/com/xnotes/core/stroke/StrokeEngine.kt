@@ -49,6 +49,12 @@ object StrokeEngine {
      *  un-tapered, so a quick tick doesn't collapse to nothing. */
     const val TAPER_MIN_LEN = 8.0
 
+    /** Taper pen: the taper at each end is capped at this fraction of the stroke's own length,
+     *  so a large taper value on a short stroke only eats this much per end instead of collapsing
+     *  the whole stroke into a point. With the cap at 0.1 the middle 80% always reaches full
+     *  width; a value that already fits under the cap is used unchanged (a fixed arc length). */
+    const val TAPER_MAX_FRACTION = 0.1
+
     /** One-pole IIR low-pass (exponential moving average). */
     fun ema(values: List<Double>, alpha: Double = ALPHA): List<Double> {
         if (values.isEmpty()) return emptyList()
@@ -133,10 +139,11 @@ object StrokeEngine {
     /**
      * Per-point width multipliers in `[0, 1]` for the **taper pen**: the line eases
      * out of a point at each end and reaches full width in the middle. [taperLength]
-     * is the **fixed arc length** (content px) over which each end eases in, so the
-     * taper keeps its size as the stroke grows — only the full-width middle lengthens.
-     * On a stroke shorter than `2 × taperLength` the two ramps meet below full width.
-     * Returns all-`1.0` when off or the stroke is too short.
+     * is the arc length (content px) over which each end eases in, but it is capped at
+     * [TAPER_MAX_FRACTION] of the stroke's own length so a large value on a short stroke only
+     * tapers that fraction per end instead of collapsing the whole stroke into a point. Above
+     * that the value is used unchanged (a fixed arc length, so the taper keeps its size as a long
+     * stroke grows). Returns all-`1.0` when off or the stroke is too short.
      */
     fun taperFactors(centers: List<Pt>, taperLength: Double): List<Double> {
         val n = centers.size
@@ -145,9 +152,10 @@ object StrokeEngine {
         for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
         val total = cum[n - 1]
         if (total < TAPER_MIN_LEN) return List(n) { 1.0 }
+        val taper = min(taperLength, TAPER_MAX_FRACTION * total)
         return (0 until n).map { i ->
-            // Arc distance to the nearer end, ramped over the fixed taper length.
-            val edge = (min(cum[i], total - cum[i]) / taperLength).coerceIn(0.0, 1.0)
+            // Arc distance to the nearer end, ramped over the (capped) taper length.
+            val edge = (min(cum[i], total - cum[i]) / taper).coerceIn(0.0, 1.0)
             edge * edge * (3 - 2 * edge)
         }
     }
