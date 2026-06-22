@@ -256,6 +256,8 @@ class InteractionController(
     private var toolBeforeEraser: Tool? = null
     /** Tool armed just before the screenshot tool, to return to after a capture is copied. */
     private var toolBeforeScreenshot: Tool? = null
+    /** Tool armed just before the text tool, to return to once an edit is committed. */
+    private var toolBeforeText: Tool? = null
     /** Whether the live erase is finger-driven (vs the stylus eraser tip / side button): a finger
      *  erase yields to a two-finger pinch, a stylus erase ignores incidental finger/palm contact. */
     private var erasingWithFinger = false
@@ -322,9 +324,10 @@ class InteractionController(
         if (t == tool) {
             return
         }
-        // Remember what to re-arm if the eraser/screenshot later switches back (the tool it replaced).
+        // Remember what to re-arm if the eraser/screenshot/text later switches back (the tool it replaced).
         if (t == Tool.ERASER) toolBeforeEraser = tool
         if (t == Tool.SCREENSHOT) toolBeforeScreenshot = tool
+        if (t == Tool.TEXT) toolBeforeText = tool
         commitTextEdit()
         abortGesture()
         clearSelection()
@@ -494,14 +497,14 @@ class InteractionController(
             else -> tool
         }
 
-        // An open text edit is committed-or-dismissed by any press before that press does
-        // anything else: an empty box is deleted, a box with content is kept. With the Text
-        // tool a tap outside ONLY dismisses — it must not also spawn a new box on the same
-        // gesture (that double-create was the duplication bug). Other tools then act normally.
+        // An open text edit is committed-or-dismissed by any press before that press does anything
+        // else: an empty box is deleted, a box with content is kept, and the prior tool is re-armed.
+        // With the Text tool a press off the box must not spawn a new box on the same gesture (that
+        // double-create was the duplication bug): a tap just commits, a finger drag scrolls the page.
         if (editingText != null) {
-            commitTextEdit()
+            commitTextEdit(restoreTool = true)
             if (effectiveTool == Tool.TEXT) {
-                mode = PointerMode.IDLE
+                if (toolType == MotionEvent.TOOL_TYPE_FINGER) beginPan(vx, vy) else mode = PointerMode.IDLE
                 return
             }
         }
@@ -1470,7 +1473,7 @@ class InteractionController(
      * a box with content is kept and its change recorded. The single source of truth for
      * ending an edit — the field no longer commits itself, so there is no double-commit.
      */
-    fun commitTextEdit(finalText: String? = null) {
+    fun commitTextEdit(finalText: String? = null, restoreTool: Boolean = false) {
         val item = editingText ?: return
         finalText?.let { item.text = it }
         val pi = editingPageIndex
@@ -1504,6 +1507,14 @@ class InteractionController(
         page?.let { repairTextRegion(it, item) }
         onTextEditEnd()
         requestRender()
+        // Finishing an edit (tap outside / Escape / Back) re-arms whatever tool the text tool replaced,
+        // so the pen/highlighter/pan is back without a manual switch. Skipped when the commit is itself
+        // a tool switch (setTool passes restoreTool = false), which already arms the chosen tool.
+        if (restoreTool) {
+            val back = toolBeforeText
+            toolBeforeText = null
+            if (back != null && back != Tool.TEXT && tool == Tool.TEXT) setTool(back)
+        }
     }
 
     /**
@@ -1754,7 +1765,7 @@ class InteractionController(
     }
 
     fun escape() {
-        commitTextEdit()
+        commitTextEdit(restoreTool = true)
         clearSelection()
         requestRender()
     }

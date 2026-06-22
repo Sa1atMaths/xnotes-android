@@ -819,7 +819,7 @@ class Editor(context: Context) {
     }
 
     fun commitText(text: String? = null) {
-        controller.commitTextEdit(text)
+        controller.commitTextEdit(text, restoreTool = true)
     }
 
     /** A one-finger drag over the editor scrolls the page (edit stays open), not the box's own text. */

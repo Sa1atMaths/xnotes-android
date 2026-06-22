@@ -3,8 +3,6 @@ package com.xnotes.ui
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
@@ -24,7 +22,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
@@ -38,7 +38,6 @@ import com.xnotes.core.pal.FontFace
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.abs
-import kotlin.math.max
 
 /** Maps an abstract [FontFace] to the matching Compose generic family (shared with the style bar). */
 internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
@@ -55,11 +54,11 @@ internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
  * / Back). It only mirrors keystrokes back to the model and grows with content.
  *
  * The field never scrolls its own text. It is measured with unbounded height so it sizes to its
- * content, and a one-finger drag that starts inside the box is rerouted to a document pan
- * ([Editor.panWhileEditing]) with the edit kept live and the box following the page. Typing scrolls
- * the *page* to keep the caret on screen ([Editor.ensureEditingCaretVisible]). The pan is handled on
- * a fixed full-screen layer (not the field, which moves with the page) so its finger delta never
- * self-cancels; drags outside the box are left to the canvas (commit), as are taps.
+ * content, and a one-finger drag on the box is rerouted to a document pan ([Editor.panWhileEditing])
+ * with the edit kept live and the box following the page. Typing scrolls the *page* to keep the
+ * caret on screen ([Editor.ensureEditingCaretVisible]). The pan delta is taken in root coordinates
+ * (the field itself moves with the page, so its own local frame would self-cancel). Touches off the
+ * box reach the canvas as before (tap to commit, drag to scroll).
  */
 @Composable
 fun TextEditorOverlay(editor: Editor, field: EditingField) {
@@ -67,6 +66,7 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
     val palette = LocalPalette.current
     var value by remember { mutableStateOf(TextFieldValue(field.text, TextRange(field.text.length))) }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val focusRequester = remember { FocusRequester() }
     val currentField by rememberUpdatedState(field)
 
@@ -88,21 +88,36 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
     val heightDp = with(density) { field.heightPx.toFloat().toDp() }
     val fontSp = with(density) { field.fontPx.toFloat().toSp() }
 
-    Box(
+    BasicTextField(
+        value = value,
+        onValueChange = {
+            value = it
+            editor.updateEditingText(it.text)
+        },
+        onTextLayout = { layout = it },
         modifier = Modifier
-            .fillMaxSize()
+            .offset(xDp, yDp)
+            .widthIn(min = widthDp, max = widthDp)
+            .heightIn(min = heightDp)
+            // Unbounded height: the field sizes to its content and never scrolls its own text. The
+            // box grows; the page scrolls to reach the rest; the host Box clips the overflow.
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints.copy(maxHeight = Constraints.Infinity))
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+            }
+            // No fill: the edited box is lifted out of the ink cache, so a transparent field lets the
+            // page/PDF underneath show through while typing (true WYSIWYG). The border marks the bounds.
+            .border(1.dp, palette.accent.toComposeColor())
+            .focusRequester(focusRequester)
+            .onGloballyPositioned { coords = it }
             .pointerInput(Unit) {
                 val slop = viewConfiguration.touchSlop
                 val longPress = viewConfiguration.longPressTimeoutMillis
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    val f = currentField
-                    val boxBottom = f.y + max(f.heightPx, (layout?.size?.height?.toDouble() ?: 0.0))
-                    val inside = down.position.x in f.x.toFloat()..(f.x + f.width).toFloat() &&
-                        down.position.y in f.y.toFloat()..boxBottom.toFloat()
-                    // Only a finger drag that begins inside the box scrolls the page; everything else
-                    // (taps, drags outside the box, the stylus) falls through to the field or canvas.
-                    if (down.type != PointerType.Touch || !inside) return@awaitEachGesture
+                    if (down.type != PointerType.Touch) return@awaitEachGesture
+                    val lc = coords ?: return@awaitEachGesture
+                    var lastRoot = lc.localToRoot(down.position)
                     var dragging = false
                     var yielded = false
                     var totalX = 0f
@@ -112,9 +127,14 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) { if (dragging) change.consume(); break }
                         if (yielded) continue
-                        val d = change.positionChange()
-                        totalX += d.x
-                        totalY += d.y
+                        // Resolve to root coordinates each event so the field's own movement (it follows
+                        // the page as we scroll) does not cancel out the finger delta.
+                        val cur = (coords ?: lc).localToRoot(change.position)
+                        val dx = cur.x - lastRoot.x
+                        val dy = cur.y - lastRoot.y
+                        lastRoot = cur
+                        totalX += dx
+                        totalY += dy
                         if (!dragging) {
                             if (abs(totalX) <= slop && abs(totalY) <= slop) continue
                             // A drag that only starts after a long hold is a text selection, not a
@@ -122,39 +142,16 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
                             if (change.uptimeMillis - down.uptimeMillis >= longPress) { yielded = true; continue }
                             dragging = true
                         }
-                        editor.panWhileEditing(d.x, d.y)
+                        editor.panWhileEditing(dx, dy)
                         change.consume()
                     }
                 }
             },
-    ) {
-        BasicTextField(
-            value = value,
-            onValueChange = {
-                value = it
-                editor.updateEditingText(it.text)
-            },
-            onTextLayout = { layout = it },
-            modifier = Modifier
-                .offset(xDp, yDp)
-                .widthIn(min = widthDp, max = widthDp)
-                .heightIn(min = heightDp)
-                // Unbounded height: the field sizes to its content and never scrolls its own text. The
-                // box grows; the page scrolls to reach the rest; the host Box clips the overflow.
-                .layout { measurable, constraints ->
-                    val placeable = measurable.measure(constraints.copy(maxHeight = Constraints.Infinity))
-                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-                }
-                // No fill: the edited box is lifted out of the ink cache, so a transparent field lets the
-                // page/PDF underneath show through while typing (true WYSIWYG). The border marks the bounds.
-                .border(1.dp, palette.accent.toComposeColor())
-                .focusRequester(focusRequester),
-            textStyle = TextStyle(
-                color = field.rgba.toComposeColor(),
-                fontFamily = field.face.toComposeFamily(),
-                fontSize = fontSp,
-            ),
-            cursorBrush = SolidColor(palette.accent.toComposeColor()),
-        )
-    }
+        textStyle = TextStyle(
+            color = field.rgba.toComposeColor(),
+            fontFamily = field.face.toComposeFamily(),
+            fontSize = fontSp,
+        ),
+        cursorBrush = SolidColor(palette.accent.toComposeColor()),
+    )
 }
