@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
@@ -40,7 +39,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -617,38 +615,33 @@ private fun ExplorerSection(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 88.dp), // clear the quick-create FAB
                 ) {
-                    // Folders: a full-width wrapping row of compact chips above the file tiles.
-                    if (folders.isNotEmpty()) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            FlowRow(
-                                Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                folders.forEach { entry ->
-                                    FolderChip(
-                                        entry = entry,
-                                        selected = selection.any { it.documentUri == entry.documentUri },
-                                        dimmed = clipboard?.let { c -> c.isCut && c.entries.any { it.documentUri == entry.documentUri } } == true,
-                                        inSelectMode = selection.isNotEmpty(),
-                                        onRename = if (selection.isEmpty()) ({ renaming = entry }) else null,
-                                        onCopy = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, false) }) else null,
-                                        onCut = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, true) }) else null,
-                                        onDelete = if (selection.isEmpty()) ({ pendingDelete = listOf(entry) }) else null,
-                                        onDismissSelection = { selection.clear() },
-                                        onClick = {
-                                            opError = null
-                                            if (selection.isNotEmpty()) toggleSelect(entry)
-                                            else stack.add(editor.browseDocId(entry.documentUri) to entry.name)
-                                        },
-                                        onLongClick = {
-                                            renaming = null; opError = null
-                                            if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                    // Folders: one chip per grid cell, so they line up at the same width as the
+                    // file tiles below instead of as a separate wrapping row of compact chips.
+                    items(folders, key = { it.documentUri }) { entry ->
+                        FolderChip(
+                            entry = entry,
+                            selected = selection.any { it.documentUri == entry.documentUri },
+                            dimmed = clipboard?.let { c -> c.isCut && c.entries.any { it.documentUri == entry.documentUri } } == true,
+                            inSelectMode = selection.isNotEmpty(),
+                            onRename = if (selection.isEmpty()) ({ renaming = entry }) else null,
+                            onCopy = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, false) }) else null,
+                            onCut = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, true) }) else null,
+                            onDelete = if (selection.isEmpty()) ({ pendingDelete = listOf(entry) }) else null,
+                            onDismissSelection = { selection.clear() },
+                            onClick = {
+                                opError = null
+                                if (selection.isNotEmpty()) toggleSelect(entry)
+                                else stack.add(editor.browseDocId(entry.documentUri) to entry.name)
+                            },
+                            onLongClick = {
+                                renaming = null; opError = null
+                                if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
+                            },
+                        )
+                    }
+                    // Break the row so a trailing folder never shares a line with a file tile.
+                    if (folders.isNotEmpty() && files.isNotEmpty()) {
+                        item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(0.dp)) }
                     }
                     // Files: big square thumbnail tiles, captioned with the name and date.
                     items(files, key = { it.documentUri }) { entry ->
@@ -931,7 +924,7 @@ private fun FolderChip(
     val onAccent = palette.bg.toComposeColor()
     Row(
         Modifier
-            .widthIn(max = 220.dp)
+            .fillMaxWidth()
             // accent-fill toggle: selected fills solid accent with content flipped to bg, otherwise a
             // thin bordered transparent box. No tap ripple — the colour invert is the only selection cue.
             .background(if (selected) accent else Color.Transparent)
@@ -949,8 +942,8 @@ private fun FolderChip(
         Icon(XnotesIcons.folder, null, tint = if (selected) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(
-            entryLabel(entry), color = if (selected) onAccent else palette.text.toComposeColor(), fontSize = 14.sp,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+            entryLabel(entry), color = if (selected) onAccent else palette.text.toComposeColor(), fontSize = 13.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
         )
         // The overflow button is kept in select mode too, so the chip width (and the row layout) never
         // shifts when selection starts; there a tap dismisses the selection instead of opening the menu.
