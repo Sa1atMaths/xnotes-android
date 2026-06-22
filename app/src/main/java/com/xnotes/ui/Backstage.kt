@@ -78,6 +78,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -732,15 +733,15 @@ private fun ExplorerSection(
                     }
                 }
             }
-            // Floating preview that trails the finger while a selection is dragged onto a folder.
+            // Floating deck of the dragged notes' thumbnails, centred on the finger and lifted a little.
             val pos = dragPos
             val bc = boxCoords
             if (pos != null && bc != null) {
                 val origin = bc.positionInWindow()
                 val density = LocalDensity.current
-                val dx = with(density) { pos.x - origin.x - 75.dp.toPx() }
-                val dy = with(density) { pos.y - origin.y - 52.dp.toPx() }
-                DragPreview(dragItems, Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) })
+                val dx = with(density) { pos.x - origin.x - 57.dp.toPx() }
+                val dy = with(density) { pos.y - origin.y - 85.dp.toPx() }
+                DragPreview(editor, dragItems, Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) })
             }
         }
     }
@@ -973,24 +974,45 @@ private fun EntryMenu(
     }
 }
 
-/** The small card that trails the finger while a selection of notes is dragged onto a folder. */
+/** Width/height of a single thumbnail card in the dragged deck. */
+private val DRAG_CARD = 96.dp
+
+/** A little fanned deck of the dragged notes' thumbnails that trails the finger while moving them. */
 @Composable
-private fun DragPreview(items: List<BrowseEntry>, modifier: Modifier) {
+private fun DragPreview(editor: Editor, items: List<BrowseEntry>, modifier: Modifier) {
     val palette = LocalPalette.current
-    val label = if (items.size == 1) entryLabel(items.first()) else "${items.size} notes"
-    Row(
-        modifier
-            .width(150.dp)
-            .alpha(0.95f)
-            .clip(RoundedCornerShape(6.dp))
-            .background(palette.menuBg.toComposeColor())
-            .border(1.dp, palette.accent.toComposeColor(), RoundedCornerShape(6.dp))
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(XnotesIcons.file, null, tint = palette.accent.toComposeColor(), modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(label, color = palette.text.toComposeColor(), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    // At most three cards, deepest drawn first so the primary note ends up on top of the pile.
+    val shown = items.take(3)
+    Box(modifier.size(DRAG_CARD + 18.dp), contentAlignment = Alignment.Center) {
+        shown.forEachIndexed { i, entry ->
+            val depth = shown.lastIndex - i // 0 = the top card sitting under the finger
+            val rot = when (depth) { 0 -> 0f; 1 -> -6f; else -> 6f }
+            val shift = (depth * 7).dp
+            val thumb = editor.cachedNoteTile(entry.documentUri)
+            Box(
+                Modifier
+                    .offset(shift, shift)
+                    .rotate(rot)
+                    .size(DRAG_CARD)
+                    .alpha(if (depth == 0) 0.97f else 0.9f)
+                    .border(1.5.dp, palette.accent.toComposeColor(), RectangleShape)
+                    .background(palette.paper.toComposeColor()),
+            ) {
+                if (thumb != null) {
+                    Image(thumb, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize())
+                } else {
+                    Icon(XnotesIcons.file, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(28.dp).align(Alignment.Center))
+                }
+            }
+        }
+        if (items.size > 1) {
+            Box(
+                Modifier.align(Alignment.TopEnd).clip(CircleShape).background(palette.accent.toComposeColor())
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
+            ) {
+                Text("${items.size}", color = palette.bg.toComposeColor(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }
 
