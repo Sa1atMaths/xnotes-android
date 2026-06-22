@@ -56,7 +56,8 @@ fun TextStyleBar(editor: Editor) {
     val palette = LocalPalette.current
     val density = LocalDensity.current
 
-    val barWidth = 196.dp
+    // While editing, the bar also carries a commit (✓) button, so it is wider.
+    val barWidth = if (bar.editing) 240.dp else 196.dp
     val barHeightPx = with(density) { 44.dp.toPx() }
     val barWidthPx = with(density) { barWidth.toPx() }
     val gapPx = with(density) { 8.dp.toPx() }
@@ -93,6 +94,19 @@ fun TextStyleBar(editor: Editor) {
             size = bar.pointSize,
             onDelta = { editor.setTextPointSize(bar.pointSize + it) },
         )
+        // A commit (✓) button so an edit can be finished without tapping off the box.
+        if (bar.editing) {
+            Box(
+                Modifier.width(1.dp).fillMaxHeight().padding(vertical = 8.dp)
+                    .background(palette.border.toComposeColor()),
+            )
+            Box(
+                modifier = Modifier.size(44.dp).clickable { editor.commitText() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("✓", color = palette.accent.toComposeColor(), fontSize = 22.sp)
+            }
+        }
     }
 }
 
