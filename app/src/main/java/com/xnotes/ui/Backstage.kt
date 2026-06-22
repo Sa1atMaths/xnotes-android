@@ -78,7 +78,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -112,6 +111,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.ui.icons.XnotesIcons
@@ -506,6 +506,7 @@ private fun ExplorerSection(
     var dropTargetUri by remember(root) { mutableStateOf<String?>(null) }
     var pulseUri by remember(root) { mutableStateOf<String?>(null) }
     var boxCoords by remember(root) { mutableStateOf<LayoutCoordinates?>(null) }
+    var dragCardSize by remember(root) { mutableStateOf<IntSize?>(null) }
     // Inside a subfolder, back climbs one level out (this sits below the Backstage's root
     // handler, so it's consulted first and only fires while there's a folder to leave).
     BackHandler(enabled = stack.isNotEmpty()) {
@@ -702,9 +703,9 @@ private fun ExplorerSection(
                                 renaming = null; opError = null
                                 if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
                             },
-                            onDragStart = { w ->
+                            onDragStart = { w, sz ->
                                 dragItems = if (selection.isEmpty()) listOf(entry) else selection.toList()
-                                dragPos = w; updateDropTarget(w)
+                                dragPos = w; dragCardSize = sz; updateDropTarget(w)
                             },
                             onDrag = { d -> dragPos?.let { val np = it + d; dragPos = np; updateDropTarget(np) } },
                             onDragEnd = {
@@ -733,15 +734,16 @@ private fun ExplorerSection(
                     }
                 }
             }
-            // Floating deck of the dragged notes' thumbnails, centred on the finger and lifted a little.
+            // Floating stack of the dragged notes, the primary card centred on the finger and lifted.
             val pos = dragPos
             val bc = boxCoords
-            if (pos != null && bc != null) {
+            val sz = dragCardSize
+            if (pos != null && bc != null && sz != null && sz.width > 0) {
                 val origin = bc.positionInWindow()
-                val density = LocalDensity.current
-                val dx = with(density) { pos.x - origin.x - 57.dp.toPx() }
-                val dy = with(density) { pos.y - origin.y - 85.dp.toPx() }
-                DragPreview(editor, dragItems, Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) })
+                val lift = with(LocalDensity.current) { 24.dp.toPx() }
+                val dx = pos.x - origin.x - sz.width / 2f
+                val dy = pos.y - origin.y - sz.height / 2f - lift
+                DragPreview(editor, dragItems, sz, Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) })
             }
         }
     }
@@ -974,43 +976,59 @@ private fun EntryMenu(
     }
 }
 
-/** Width/height of a single thumbnail card in the dragged deck. */
-private val DRAG_CARD = 96.dp
+/** Step each deeper card down-and-right by this much so the stack reads as a tidy pile. */
+private val DRAG_STACK_STEP = 8.dp
 
-/** A little fanned deck of the dragged notes' thumbnails that trails the finger while moving them. */
+/**
+ * A neat stack of the dragged notes drawn as full-size tile cards (same size as the grid tiles, taken
+ * from the picked-up tile), trailing the finger while they're moved onto a folder.
+ */
 @Composable
-private fun DragPreview(editor: Editor, items: List<BrowseEntry>, modifier: Modifier) {
+private fun DragPreview(editor: Editor, items: List<BrowseEntry>, sizePx: IntSize, modifier: Modifier) {
     val palette = LocalPalette.current
-    // At most three cards, deepest drawn first so the primary note ends up on top of the pile.
+    val density = LocalDensity.current
+    val cardW = with(density) { sizePx.width.toDp() }
+    val cardH = with(density) { sizePx.height.toDp() }
+    // At most three cards; the primary note sits on top of the pile, the rest peek out behind it.
     val shown = items.take(3)
-    Box(modifier.size(DRAG_CARD + 18.dp), contentAlignment = Alignment.Center) {
-        shown.forEachIndexed { i, entry ->
-            val depth = shown.lastIndex - i // 0 = the top card sitting under the finger
-            val rot = when (depth) { 0 -> 0f; 1 -> -6f; else -> 6f }
-            val shift = (depth * 7).dp
-            val thumb = editor.cachedNoteTile(entry.documentUri)
-            Box(
-                Modifier
-                    .offset(shift, shift)
-                    .rotate(rot)
-                    .size(DRAG_CARD)
-                    .alpha(if (depth == 0) 0.97f else 0.9f)
-                    .border(1.5.dp, palette.accent.toComposeColor(), RectangleShape)
-                    .background(palette.paper.toComposeColor()),
-            ) {
-                if (thumb != null) {
-                    Image(thumb, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize())
-                } else {
-                    Icon(XnotesIcons.file, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(28.dp).align(Alignment.Center))
-                }
-            }
+    val spread = DRAG_STACK_STEP * shown.lastIndex.coerceAtLeast(0)
+    Box(modifier.size(cardW + spread, cardH + spread)) {
+        for (i in shown.indices.reversed()) {
+            val shift = DRAG_STACK_STEP * i
+            StackedNoteCard(
+                editor, shown[i],
+                Modifier.offset(shift, shift).size(cardW, cardH).alpha(if (i == 0) 1f else 0.97f),
+            )
         }
         if (items.size > 1) {
             Box(
-                Modifier.align(Alignment.TopEnd).clip(CircleShape).background(palette.accent.toComposeColor())
-                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                Modifier.align(Alignment.TopEnd).offset(x = -spread).clip(CircleShape)
+                    .background(palette.accent.toComposeColor()).padding(horizontal = 7.dp, vertical = 3.dp),
             ) {
                 Text("${items.size}", color = palette.bg.toComposeColor(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** One opaque card mirroring a file tile (thumbnail + name + date), for the dragged stack. */
+@Composable
+private fun StackedNoteCard(editor: Editor, entry: BrowseEntry, modifier: Modifier) {
+    val palette = LocalPalette.current
+    val thumb = editor.cachedNoteTile(entry.documentUri)
+    Column(modifier.background(palette.bg.toComposeColor()).border(1.dp, palette.accent.toComposeColor(), RectangleShape)) {
+        Box(Modifier.fillMaxWidth().weight(1f).background(palette.paper.toComposeColor())) {
+            if (thumb != null) {
+                Image(thumb, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.matchParentSize())
+            } else {
+                Icon(XnotesIcons.file, null, tint = palette.textDim.toComposeColor(), modifier = Modifier.size(32.dp).align(Alignment.Center))
+            }
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Text(entryLabel(entry), color = palette.text.toComposeColor(), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val date = entryDate(entry)
+            if (date.isNotEmpty()) {
+                Text(date, color = palette.textDim.toComposeColor(), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -1050,16 +1068,17 @@ private fun FolderChip(
         }
     }
     DisposableEffect(Unit) { onDispose { onBounds(null) } }
-    val highlight = isDropTarget && !selected
+    // A hovering drag fills the chip exactly like a selection, so the drop target reads the same.
+    val active = selected || isDropTarget
     Row(
         Modifier
             .fillMaxWidth()
             .scale(pulse.value)
             .onGloballyPositioned { onBounds(it.boundsInWindow()) }
-            // accent-fill toggle: selected fills solid accent with content flipped to bg; a hovering drag
-            // tints it with the accent veil. No tap ripple — the colour is the only cue.
-            .background(if (selected) accent else if (highlight) palette.accentAlpha(38).toComposeColor() else Color.Transparent)
-            .border(if (highlight) 2.dp else 1.dp, if (selected || highlight) accent else palette.border.toComposeColor(), RectangleShape)
+            // accent-fill toggle: active fills solid accent with content flipped to bg, otherwise a thin
+            // bordered transparent box. No tap ripple — the colour invert is the only cue.
+            .background(if (active) accent else Color.Transparent)
+            .border(1.dp, if (active) accent else palette.border.toComposeColor(), RectangleShape)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1070,10 +1089,10 @@ private fun FolderChip(
             .padding(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(XnotesIcons.folder, null, tint = if (selected) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp))
+        Icon(XnotesIcons.folder, null, tint = if (active) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(
-            entryLabel(entry), color = if (selected) onAccent else palette.text.toComposeColor(), fontSize = 13.sp,
+            entryLabel(entry), color = if (active) onAccent else palette.text.toComposeColor(), fontSize = 13.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
         )
         // The overflow button is kept in select mode too, so the chip width (and the row layout) never
@@ -1083,7 +1102,7 @@ private fun FolderChip(
                 onClick = { if (inSelectMode) onDismissSelection() else menuOpen = true },
                 modifier = Modifier.size(32.dp),
             ) {
-                Icon(XnotesIcons.more, "More", tint = if (selected) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
+                Icon(XnotesIcons.more, "More", tint = if (active) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
             }
             if (!inSelectMode) EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete)
         }
@@ -1108,7 +1127,7 @@ private fun FileTile(
     onDelete: (() -> Unit)?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onDragStart: (Offset) -> Unit,
+    onDragStart: (Offset, IntSize) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
@@ -1147,9 +1166,9 @@ private fun FileTile(
                 var dragging = false
                 detectDragGesturesAfterLongPress(
                     onDragStart = { local ->
-                        if (selected) {
-                            val w = tileCoords?.localToWindow(local)
-                            if (w != null) { dragging = true; onDragStart(w) } else dragging = false
+                        val c = tileCoords
+                        if (selected && c != null) {
+                            dragging = true; onDragStart(c.localToWindow(local), c.size)
                         } else dragging = false
                     },
                     onDrag = { change, delta -> if (dragging) { change.consume(); onDrag(delta) } },
