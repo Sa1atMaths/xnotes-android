@@ -149,6 +149,22 @@ class StrokeEngineTest {
         assertTrue(scaled.halfWidths.maxOrNull()!! < unscaled.halfWidths.maxOrNull()!!)
     }
 
+    @Test fun speedKeepsAnEvenWidthThroughAConstantSpeedCorner() {
+        // Right then up at a steady sample rate: the nib's path length per unit time never
+        // changes, so a speed-thinned line must keep an even width through the corner. Reading the
+        // raw sample motion over a time window (not the corner-cutting smoothed centerline, nor a
+        // sample-count window that collapses onto the bunched corner) is what keeps the corner from
+        // reading a false slow-down and ballooning into a blob. speedScale puts it mid-band so any
+        // dip would show.
+        val right = (0..10).map { Sample(it * 8.0, 0.0, 1.0, it * 8.0) }
+        val up = (1..10).map { Sample(80.0, -it * 8.0, 1.0, (10 + it) * 8.0) }
+        val g = StrokeEngine.build(right + up, 4.0, false, 1.0, 0.0, speedStrength = 0.8, speedScale = 0.5)
+        val maxHw = g.halfWidths.maxOrNull()!!
+        val minHw = g.halfWidths.minOrNull()!!
+        assertTrue("partially thinned, not saturated", maxHw < 1.9 && minHw > 0.5)
+        assertEquals("even width through the corner", maxHw, minHw, 1e-6)
+    }
+
     // --- Calligraphy caps & direction smoothing ---
     @Test fun calligraphyCapsMatchTheThinnedRibbonNotAPurePressureDot() {
         // An upward calligraphy stroke (ty ≈ -1) is thinned by the direction term, so the

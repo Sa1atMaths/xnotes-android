@@ -32,12 +32,14 @@ object StrokeEngine {
     const val SPEED_LO = 0.2
     const val SPEED_HI = 0.8
 
-    /** Speed pen: half-window (in samples) for the centred velocity estimate. The speed at a
-     *  point is the arc length summed over `±this` samples divided by that window's elapsed
-     *  time, not a single per-segment `Δs/Δt` low-passed afterward: summing distance and time
-     *  first is the right way to read a rate off noisy per-sample spacing and timing, and a
-     *  centred window adds no lag, so the width glides instead of jittering. */
-    const val SPEED_WINDOW = 5
+    /** Speed pen: half the duration (ms) of the centred window the nib's speed is measured over.
+     *  Speed is the arc length covered across `±this` ms divided by that span. A fixed *time*
+     *  base (not a fixed sample count, which collapses to a point where the pen crawls and the
+     *  distance-gated samples bunch up) keeps the estimate steady and lets the faster ink on
+     *  either side of a brief corner pause dilute it, instead of the width ballooning into a
+     *  blob there. The window slides inward at the stroke's ends so its first and last points
+     *  still average a full span rather than the at-rest tip. */
+    const val SPEED_WINDOW_MS = 40.0
 
     /** Speed pen: minimum per-segment dt (ms) so a duplicate-timestamp pair can't
      *  divide by ~zero and spike the speed. */
@@ -87,25 +89,43 @@ object StrokeEngine {
     /**
      * Per-point width multipliers in `[1 − speedStrength, 1]` for the **speed pen**:
      * the faster the nib travels across the page, the thinner the line (ink has less
-     * time to lay down). Speed at point `i` is the **arc length over a centred window** of
-     * `±[SPEED_WINDOW]` samples divided by that window's elapsed time, in dp/ms, where
+     * time to lay down). Speed at point `i` is the **arc length of the raw samples over a
+     * centred time window** of `±[SPEED_WINDOW_MS]` ms divided by that span, in dp/ms, where
      * [speedScale] (zoom ÷ density, captured at pen-down) converts page pixels to dp so the
-     * effect is zoom- and device-independent. Summing distance and time over the window
-     * (rather than low-passing raw per-segment `Δs/Δt`) rejects the per-sample spacing and
-     * timing quantisation that otherwise makes the width jitter, and the window is centred so
-     * it adds no lag. Returns all-`1.0` when off or the samples carry no usable timing.
+     * effect is zoom- and device-independent. It reads the raw sample motion, not the smoothed
+     * centerline, so the position low-pass can't compress the start or cut a corner short and
+     * read a false slow-down there. Summing distance and time over a fixed *time* span (not a
+     * fixed sample count) rejects per-sample jitter and keeps slow corners and ends from
+     * collapsing the window onto themselves and ballooning the width. Returns all-`1.0` when off
+     * or the samples carry no usable timing.
      */
-    fun speedFactors(centers: List<Pt>, samples: List<Sample>, speedStrength: Double, speedScale: Double): List<Double> {
-        val n = centers.size
+    fun speedFactors(samples: List<Sample>, speedStrength: Double, speedScale: Double): List<Double> {
+        val n = samples.size
         if (speedStrength <= 0.0 || n < 2) return List(n) { 1.0 }
-        if (samples.last().t - samples.first().t <= 0.0) return List(n) { 1.0 }
+        val t0 = samples.first().t
+        val tN = samples.last().t
+        if (tN - t0 <= 0.0) return List(n) { 1.0 }
         val cum = DoubleArray(n)
-        for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
+        for (i in 1 until n) cum[i] = cum[i - 1] + (samples[i].pos - samples[i - 1].pos).length()
+        val half = SPEED_WINDOW_MS
+        var lo = 0
+        var hi = 0
         return (0 until n).map { i ->
-            val lo = max(0, i - SPEED_WINDOW)
-            val hi = min(n - 1, i + SPEED_WINDOW)
-            val dist = (cum[hi] - cum[lo]) * speedScale
-            val dt = max(samples[hi].t - samples[lo].t, MIN_DT)
+            // Centre a fixed-duration window on this sample's time; if it runs past either end of
+            // the stroke, slide it inward so the span stays ~2·half rather than shrinking to a point.
+            var a = samples[i].t - half
+            var b = samples[i].t + half
+            if (a < t0) { b += t0 - a; a = t0 }
+            if (b > tN) { a -= b - tN; b = tN; if (a < t0) a = t0 }
+            while (lo < i && samples[lo].t < a) lo++
+            while (hi < n - 1 && samples[hi + 1].t <= b) hi++
+            // Always span at least one segment so a window that falls between two far-apart slow
+            // samples reads a real speed instead of a zero-length divide.
+            var l = lo
+            var h = hi
+            if (h <= l) { if (h < n - 1) h++ else l-- }
+            val dist = (cum[h] - cum[l]) * speedScale
+            val dt = max(samples[h].t - samples[l].t, MIN_DT)
             1.0 - speedStrength * smoothstep(SPEED_LO, SPEED_HI, dist / dt)
         }
     }
@@ -182,7 +202,7 @@ object StrokeEngine {
         }
 
         // Optional width multipliers: speed thins fast travel, taper points the ends.
-        val sf = speedFactors(centers, samples, speedStrength, speedScale)
+        val sf = speedFactors(samples, speedStrength, speedScale)
         val tf = taperFactors(centers, taperLength)
 
         // Calligraphy: low-pass the direction channel (the tangent's y that sets nib width)
