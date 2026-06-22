@@ -985,7 +985,6 @@ private val DRAG_STACK_STEP = 8.dp
  */
 @Composable
 private fun DragPreview(editor: Editor, items: List<BrowseEntry>, sizePx: IntSize, modifier: Modifier) {
-    val palette = LocalPalette.current
     val density = LocalDensity.current
     val cardW = with(density) { sizePx.width.toDp() }
     val cardH = with(density) { sizePx.height.toDp() }
@@ -999,14 +998,6 @@ private fun DragPreview(editor: Editor, items: List<BrowseEntry>, sizePx: IntSiz
                 editor, shown[i],
                 Modifier.offset(shift, shift).size(cardW, cardH).alpha(if (i == 0) 1f else 0.97f),
             )
-        }
-        if (items.size > 1) {
-            Box(
-                Modifier.align(Alignment.TopEnd).offset(x = -spread).clip(CircleShape)
-                    .background(palette.accent.toComposeColor()).padding(horizontal = 7.dp, vertical = 3.dp),
-            ) {
-                Text("${items.size}", color = palette.bg.toComposeColor(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
         }
     }
 }
