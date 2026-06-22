@@ -20,8 +20,9 @@ object StrokeEngine {
 
     /** Calligraphy pen: a heavier low-pass on the direction channel (the tangent's y that
      *  drives nib width) than [ALPHA] (position), so the width eases between thick and thin
-     *  as the stroke curves instead of snapping when the tangent turns. Mirrors [SPEED_ALPHA]
-     *  for the speed pen; only the width magnitude is smoothed, not the ribbon's orientation. */
+     *  as the stroke curves instead of snapping when the tangent turns. The speed pen smooths
+     *  its width the same spirit via a windowed velocity (see [speedFactors]); only the width
+     *  magnitude is smoothed, not the ribbon's orientation. */
     const val DIR_ALPHA = 0.25
 
     /** Speed pen: dp/ms at/below which the line stays full width, and the speed
@@ -31,9 +32,12 @@ object StrokeEngine {
     const val SPEED_LO = 0.2
     const val SPEED_HI = 0.8
 
-    /** Speed pen: a heavier low-pass on the speed channel than [ALPHA] (position), so the
-     *  width glides between thick and thin over ~1/this samples instead of snapping. */
-    const val SPEED_ALPHA = 0.15
+    /** Speed pen: half-window (in samples) for the centred velocity estimate. The speed at a
+     *  point is the arc length summed over `±this` samples divided by that window's elapsed
+     *  time, not a single per-segment `Δs/Δt` low-passed afterward: summing distance and time
+     *  first is the right way to read a rate off noisy per-sample spacing and timing, and a
+     *  centred window adds no lag, so the width glides instead of jittering. */
+    const val SPEED_WINDOW = 5
 
     /** Speed pen: minimum per-segment dt (ms) so a duplicate-timestamp pair can't
      *  divide by ~zero and spike the speed. */
@@ -83,25 +87,27 @@ object StrokeEngine {
     /**
      * Per-point width multipliers in `[1 − speedStrength, 1]` for the **speed pen**:
      * the faster the nib travels across the page, the thinner the line (ink has less
-     * time to lay down). Speed is `‖Δcenter‖ · speedScale / Δt` in dp/ms from the
-     * sample times, where [speedScale] (zoom ÷ density, captured at pen-down) converts
-     * page pixels to dp so the effect is zoom- and device-independent. Smoothed with a
-     * heavier low-pass than position. Returns all-`1.0` when off or the samples carry
-     * no usable timing.
+     * time to lay down). Speed at point `i` is the **arc length over a centred window** of
+     * `±[SPEED_WINDOW]` samples divided by that window's elapsed time, in dp/ms, where
+     * [speedScale] (zoom ÷ density, captured at pen-down) converts page pixels to dp so the
+     * effect is zoom- and device-independent. Summing distance and time over the window
+     * (rather than low-passing raw per-segment `Δs/Δt`) rejects the per-sample spacing and
+     * timing quantisation that otherwise makes the width jitter, and the window is centred so
+     * it adds no lag. Returns all-`1.0` when off or the samples carry no usable timing.
      */
     fun speedFactors(centers: List<Pt>, samples: List<Sample>, speedStrength: Double, speedScale: Double): List<Double> {
         val n = centers.size
         if (speedStrength <= 0.0 || n < 2) return List(n) { 1.0 }
         if (samples.last().t - samples.first().t <= 0.0) return List(n) { 1.0 }
-        val raw = DoubleArray(n)
-        for (i in 1 until n) {
-            val dist = (centers[i] - centers[i - 1]).length() * speedScale
-            val dt = max(samples[i].t - samples[i - 1].t, MIN_DT)
-            raw[i] = dist / dt
+        val cum = DoubleArray(n)
+        for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
+        return (0 until n).map { i ->
+            val lo = max(0, i - SPEED_WINDOW)
+            val hi = min(n - 1, i + SPEED_WINDOW)
+            val dist = (cum[hi] - cum[lo]) * speedScale
+            val dt = max(samples[hi].t - samples[lo].t, MIN_DT)
+            1.0 - speedStrength * smoothstep(SPEED_LO, SPEED_HI, dist / dt)
         }
-        raw[0] = raw[1]
-        val speed = ema(raw.asList(), SPEED_ALPHA)
-        return speed.map { 1.0 - speedStrength * smoothstep(SPEED_LO, SPEED_HI, it) }
     }
 
     /**
