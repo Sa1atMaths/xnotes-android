@@ -2,6 +2,7 @@ package com.xnotes.platform
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import com.xnotes.core.pal.ImageCodec
 import com.xnotes.core.pal.RasterSurface
 import java.io.ByteArrayOutputStream
@@ -30,6 +31,13 @@ class AndroidImageCodec : ImageCodec {
             Bitmap.CompressFormat.WEBP
         }
         return compress(surface, format, q)
+    }
+
+    override fun rotate90(surface: RasterSurface, clockwise: Boolean): RasterSurface {
+        val src = (surface as AndroidRasterSurface).bitmap
+        val m = Matrix().apply { postRotate(if (clockwise) 90f else -90f) }
+        val rotated = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+        return AndroidRasterSurface(rotated, surface.devicePixelRatio)
     }
 
     private fun wrap(bitmap: Bitmap): RasterSurface {

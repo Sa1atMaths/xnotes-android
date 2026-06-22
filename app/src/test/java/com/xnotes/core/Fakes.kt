@@ -70,4 +70,6 @@ class FakeImageCodec : ImageCodec {
     override fun decodePath(path: String): RasterSurface = FakeRasterSurface(decodeWidth, decodeHeight)
     override fun encodePng(surface: RasterSurface): ByteArray = byteArrayOf(0x89.toByte(), 'P'.code.toByte())
     override fun encodeJpeg(surface: RasterSurface, quality: Double): ByteArray = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
+    override fun rotate90(surface: RasterSurface, clockwise: Boolean): RasterSurface =
+        FakeRasterSurface(surface.height, surface.width, surface.devicePixelRatio)
 }

@@ -229,6 +229,10 @@ class Editor(context: Context) {
     var selectionMenu by mutableStateOf<com.xnotes.core.geometry.Rect?>(null)
         private set
 
+    /** True when the settled selection is a single image, so the menu shows the rotate action. */
+    var selectionIsImage by mutableStateOf(false)
+        private set
+
     /** Viewport rect to anchor the screenshot tool's "copy as image" menu, or null when hidden. */
     var screenshotMenu by mutableStateOf<com.xnotes.core.geometry.Rect?>(null)
         private set
@@ -283,7 +287,7 @@ class Editor(context: Context) {
 
     val bookmarks: List<Bookmark> get() = state.document.bookmarks.toList()
 
-    val controller = InteractionController(
+    val controller: InteractionController = InteractionController(
         state,
         history,
         textMeasurer,
@@ -296,7 +300,7 @@ class Editor(context: Context) {
         onToolChanged = { t -> tool = t },
         onTextEditStart = { field -> editingField = field; refreshTextBar() },
         onTextEditEnd = { editingField = null; refreshTextBar() },
-        onSelectionMenu = { rect -> selectionMenu = rect },
+        onSelectionMenu = { rect -> selectionMenu = rect; selectionIsImage = controller.selectionIsSingleImage },
         onScreenshotMenu = { rect -> screenshotMenu = rect },
         onContextMenu = { vp, content -> contextMenu = ContextMenuTarget(vp.x, vp.y, content) },
         onAddPageAtEnd = { addPageAtEnd() },
@@ -362,6 +366,7 @@ class Editor(context: Context) {
     fun copySelection() = controller.copySelection()
     fun cutSelection() = controller.cutSelection()
     fun duplicateSelection() = controller.duplicateSelection()
+    fun rotateSelectedImage() = controller.rotateSelectedImage { imageCodec.rotate90(it) }
     fun dismissSelectionMenu() { selectionMenu = null }
     fun dismissContextMenu() { contextMenu = null }
     fun dismissScreenshot() = controller.clearScreenshot()

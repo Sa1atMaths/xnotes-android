@@ -1,12 +1,15 @@
 package com.xnotes.core.history
 
+import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.GeoHandle
+import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.Resizable
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.model.TextStyle
+import com.xnotes.core.pal.RasterSurface
 
 /**
  * A reversible edit (spec 07). A command is pushed onto the history **after**
@@ -88,6 +91,25 @@ class ResizeItem(
 ) : Command {
     override fun redo() = item.setGeometry(newGeom)
     override fun undo() = item.setGeometry(oldGeom)
+}
+
+/** Rotate an image a quarter turn: swap its raster and (width/height-swapped) rect. */
+class RotateImage(
+    private val item: ImageItem,
+    private val oldRaster: RasterSurface,
+    private val oldRect: Rect,
+    private val newRaster: RasterSurface,
+    private val newRect: Rect,
+) : Command {
+    override fun redo() {
+        item.raster = newRaster
+        item.rect = newRect
+    }
+
+    override fun undo() {
+        item.raster = oldRaster
+        item.rect = oldRect
+    }
 }
 
 /** Change the text of an existing text box. */

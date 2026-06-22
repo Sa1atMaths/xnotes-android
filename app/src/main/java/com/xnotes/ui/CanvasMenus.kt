@@ -37,7 +37,7 @@ fun SelectionMenu(editor: Editor) {
     val density = LocalDensity.current
 
     val barHeightPx = with(density) { 48.dp.toPx() }
-    val barWidthPx = with(density) { 248.dp.toPx() }
+    val barWidthPx = with(density) { ((if (editor.selectionIsImage) 6 else 5) * 46).dp.toPx() }
     val gap = with(density) { 10.dp.toPx() }
     val centerX = ((rect.left + rect.right) / 2.0).toFloat()
     val xPx = (centerX - barWidthPx / 2f).coerceAtLeast(with(density) { 8.dp.toPx() })
@@ -61,6 +61,7 @@ fun SelectionMenu(editor: Editor) {
         ActionIcon(XnotesIcons.copy, "Copy") { editor.copySelection(); editor.dismissSelectionMenu() }
         ActionIcon(XnotesIcons.front, "Bring to front") { editor.bringToFront(); editor.dismissSelectionMenu() }
         ActionIcon(XnotesIcons.duplicate, "Duplicate") { editor.duplicateSelection() }
+        if (editor.selectionIsImage) ActionIcon(XnotesIcons.rotate, "Rotate") { editor.rotateSelectedImage() }
     }
 }
 

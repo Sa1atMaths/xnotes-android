@@ -12,4 +12,7 @@ interface ImageCodec {
     fun encodePng(surface: RasterSurface): ByteArray
     fun encodeJpeg(surface: RasterSurface, quality: Double): ByteArray
     fun encodeWebp(surface: RasterSurface, quality: Double): ByteArray? = null
+
+    /** Rotate [surface]'s pixels by a quarter turn into a new surface (width/height swapped). */
+    fun rotate90(surface: RasterSurface, clockwise: Boolean = true): RasterSurface
 }

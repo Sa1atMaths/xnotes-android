@@ -19,6 +19,7 @@ import com.xnotes.core.history.ReorderItems
 import com.xnotes.core.history.ReplacePageItems
 import com.xnotes.core.history.ResizeItem
 import com.xnotes.core.history.RestyleText
+import com.xnotes.core.history.RotateImage
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.deepCopy
@@ -38,6 +39,7 @@ import com.xnotes.core.pal.BlendMode
 import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
+import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.pal.TextMeasurer
 import com.xnotes.core.stroke.RecognizedShape
@@ -313,6 +315,9 @@ class InteractionController(
     }
 
     val hasSelection: Boolean get() = selection.isNotEmpty()
+
+    /** True when exactly one image is selected (drives the rotate affordance). */
+    val selectionIsSingleImage: Boolean get() = selection.size == 1 && selection[0].item is ImageItem
 
     /** The in-progress stroke and the page it is on (for the presentation frame). */
     val activeLiveStroke: Stroke? get() = liveStroke
@@ -1760,6 +1765,28 @@ class InteractionController(
         // cache is left untouched — no full flush, no flicker.
         clearSelection()
         onContentChanged()
+    }
+
+    /**
+     * Rotate the single selected image a quarter turn clockwise. [rotate90] supplies the
+     * platform pixel rotation; the rect's width/height swap about its centre. The image is
+     * lifted (drawn live), so a render shows it at once and it re-bakes into the cache on
+     * deselect — no manual cache repair here.
+     */
+    fun rotateSelectedImage(rotate90: (RasterSurface) -> RasterSurface) {
+        val item = selection.singleOrNull()?.item as? ImageItem ?: return
+        val oldRaster = item.raster
+        val oldRect = item.rect
+        val newRaster = rotate90(oldRaster)
+        val c = oldRect.center
+        val newRect = Rect(c.x - oldRect.h / 2.0, c.y - oldRect.w / 2.0, oldRect.h, oldRect.w)
+        item.raster = newRaster
+        item.rect = newRect
+        history.push(RotateImage(item, oldRaster, oldRect, newRaster, newRect))
+        state.document.dirty = true
+        refreshSelectionMenu()
+        onContentChanged()
+        requestRender()
     }
 
     fun selectAll() {
