@@ -18,7 +18,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
@@ -75,6 +76,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,7 +103,9 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -124,6 +128,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /** Which pane the backstage shows on the right. */
@@ -658,62 +663,87 @@ private fun ExplorerSection(
         // toggling the sidebar never changes how many tiles are in a row — closing it just widens the
         // pane and enlarges the tiles.
         val gridColumns = (LocalConfiguration.current.screenWidthDp / 240).coerceIn(2, 8)
+        // Read inside the long-lived drag gesture below, which never restarts, so snapshot the values
+        // that change as the user navigates (the folder it sources from, the current file list).
+        val filesNow = rememberUpdatedState(files)
+        val sourceDocId = rememberUpdatedState(currentDocId)
         Box(
             Modifier.weight(1f).fillMaxWidth()
                 .onGloballyPositioned { boxCoords = it }
-                // Drag-to-move lives on the container (not the tiles) so the gesture survives the grid
-                // auto-scrolling and the picked-up tile scrolling out of view. A long-press that lands on
-                // an already-selected tile picks the whole selection up to drag onto a folder; anything
-                // else (empty space, a folder, an unselected tile) stays inert here.
-                .pointerInput(currentDocId) {
-                    var dragging = false
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { local ->
-                            val win = boxCoords?.localToWindow(local)
-                            val hit = win?.let { p -> fileBounds.entries.firstOrNull { it.value.contains(p) } }
-                            if (win != null && hit != null && selection.any { it.documentUri == hit.key }) {
-                                dragging = true
-                                dragItems = selection.toList()
-                                dragPos = win
-                                dragCardSize = IntSize(hit.value.width.roundToInt(), hit.value.height.roundToInt())
-                                updateDropTarget(win)
-                            } else dragging = false
-                        },
-                        onDrag = { change, delta ->
-                            if (dragging) {
-                                change.consume()
-                                dragPos?.let { val np = it + delta; dragPos = np; updateDropTarget(np) }
+                // Drag-to-move lives on the container (not the tiles) so the gesture keeps running while
+                // the grid auto-scrolls and the picked-up tile scrolls out of view. We can't reuse the
+                // tiles' clickable for the long-press because a child consuming it (consumeUntilUp) would
+                // starve this ancestor, so this is a hand-rolled long-press that hit-tests the file tiles
+                // and consumes in the Initial pass (ahead of the tiles) to claim the gesture cleanly.
+                .pointerInput(root) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        // Long-press gate: only a held, near-stationary finger qualifies. A quick lift
+                        // (tap) or an early move (scroll) ends this early so the tile/grid keep those.
+                        val endedEarly = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                val c = e.changes.firstOrNull { it.id == down.id }
+                                if (c == null || !c.pressed || c.isConsumed) return@withTimeoutOrNull true
+                                if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
                             }
-                        },
-                        onDragEnd = {
-                            if (dragging) {
-                                val target = dropTargetUri
-                                val items = dragItems
-                                dragPos = null; dropTargetUri = null; dragItems = emptyList()
-                                if (target != null) {
-                                    val targetDocId = editor.browseDocId(target)
-                                    pulseUri = target; opError = null
-                                    scope.launch {
-                                        val ok = withContext(Dispatchers.IO) {
-                                            var all = true
-                                            items.forEach { e ->
-                                                if (e.documentUri != target &&
-                                                    !editor.moveDocumentInto(root, e.documentUri, currentDocId, targetDocId)) all = false
-                                            }
-                                            all
-                                        }
-                                        selection.clear(); refreshKey++
-                                        if (!ok) opError = "Couldn’t move some items."
+                            @Suppress("UNREACHABLE_CODE") true
+                        }
+                        if (endedEarly != null) return@awaitEachGesture
+                        // Long-press fired. Find the file tile under the finger; ignore folders/empty.
+                        val winDown = boxCoords?.localToWindow(down.position) ?: return@awaitEachGesture
+                        val hitUri = fileBounds.entries.firstOrNull { it.value.contains(winDown) }?.key
+                            ?: return@awaitEachGesture
+                        if (selection.none { it.documentUri == hitUri }) {
+                            // First long-press selects. Consume to the up (Initial pass, ahead of the
+                            // tile) so its click can't toggle the selection straight back off.
+                            filesNow.value.firstOrNull { it.documentUri == hitUri }?.let {
+                                renaming = null; opError = null; selection.add(it)
+                            }
+                            do {
+                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                e.changes.forEach { it.consume() }
+                            } while (e.changes.any { it.id == down.id && it.pressed })
+                            return@awaitEachGesture
+                        }
+                        // Second long-press on a selected tile: pick the whole selection up and drag it.
+                        val rect = fileBounds[hitUri]
+                        dragItems = selection.toList()
+                        dragCardSize = rect?.let { IntSize(it.width.roundToInt(), it.height.roundToInt()) }
+                        var pos = winDown
+                        dragPos = pos
+                        updateDropTarget(pos)
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            c.consume()
+                            if (!c.pressed) break
+                            pos += c.positionChange()
+                            dragPos = pos
+                            updateDropTarget(pos)
+                        }
+                        // Drop: move the carried notes into the highlighted folder, then pulse it.
+                        val target = dropTargetUri
+                        val items = dragItems
+                        dragPos = null; dropTargetUri = null; dragItems = emptyList()
+                        if (target != null) {
+                            val targetDocId = editor.browseDocId(target)
+                            pulseUri = target; opError = null
+                            val srcParent = sourceDocId.value
+                            scope.launch {
+                                val ok = withContext(Dispatchers.IO) {
+                                    var all = true
+                                    items.forEach { e ->
+                                        if (e.documentUri != target &&
+                                            !editor.moveDocumentInto(root, e.documentUri, srcParent, targetDocId)) all = false
                                     }
+                                    all
                                 }
+                                selection.clear(); refreshKey++
+                                if (!ok) opError = "Couldn’t move some items."
                             }
-                            dragging = false
-                        },
-                        onDragCancel = {
-                            if (dragging) { dragPos = null; dropTargetUri = null; dragItems = emptyList() }
-                            dragging = false
-                        },
-                    )
+                        }
+                    }
                 }
                 .then(
                     // In select mode, tapping empty space (not a tile) clears the selection.
@@ -784,10 +814,6 @@ private fun ExplorerSection(
                             onClick = {
                                 opError = null
                                 if (selection.isNotEmpty()) toggleSelect(entry) else onOpenFile(entry.documentUri)
-                            },
-                            onLongClick = {
-                                renaming = null; opError = null
-                                if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
                             },
                             onBounds = { r -> if (r == null) fileBounds.remove(entry.documentUri) else fileBounds[entry.documentUri] = r },
                         )
@@ -1177,7 +1203,6 @@ private fun FileTile(
     onCut: (() -> Unit)?,
     onDelete: (() -> Unit)?,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
     onBounds: (Rect?) -> Unit,
 ) {
     val palette = LocalPalette.current
@@ -1198,14 +1223,13 @@ private fun FileTile(
             // accent-fill family: one squared outline wraps the thumbnail and the label strip. border
             // draws over its children, so it stays crisp on top of the full-bleed thumbnail.
             .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
-            // No tap ripple — the accent border + fill is the only selection cue. combinedClickable owns
-            // tap (open/toggle) and long-press (select); the drag-to-move gesture lives on the grid
-            // container so it keeps running while this tile scrolls out from under the finger.
-            .combinedClickable(
+            // No tap ripple — the accent border + fill is the only selection cue. The tile owns only tap
+            // (open / toggle in select mode); long-press to select and the drag-to-move gesture both live
+            // on the grid container, so they survive this tile scrolling out from under the finger.
+            .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
-                onLongClick = onLongClick,
             )
             .onGloballyPositioned { onBounds(it.boundsInWindow()) },
     ) {
