@@ -70,7 +70,7 @@ class StrokeEngineTest {
             listOf(Sample(0.0, 0.0, 1.0), Sample(10.0, 0.0, 1.0), Sample(20.0, 0.0, 1.0)),
             3.0, true, 0.35, 0.0,
         )
-        assertEquals(2, g.caps.size)          // head + tail
+        assertTrue(g.caps.isEmpty())          // flat ends, no head/tail discs
         assertEquals(6, g.outline.size)       // 3 left edge + 3 right edge
     }
 
@@ -87,9 +87,9 @@ class StrokeEngineTest {
         val plain = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0)
         val tapered = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 10.0)
 
-        assertEquals(2.0, plain.caps[0].radius, 1e-9)   // plain: full dome
-        assertEquals(0.0, tapered.caps[0].radius, 1e-9) // tapered: collapses to a point
-        assertEquals(0.0, tapered.caps[1].radius, 1e-9)
+        assertEquals(2.0, plain.halfWidths.first(), 1e-9)   // plain: full width to the flat end
+        assertEquals(0.0, tapered.halfWidths.first(), 1e-9) // tapered: collapses to a point
+        assertEquals(0.0, tapered.halfWidths.last(), 1e-9)
 
         val mid = tapered.halfWidths[2]
         assertTrue(mid > tapered.halfWidths[0])         // middle fatter than the tip
@@ -100,7 +100,7 @@ class StrokeEngineTest {
         // Total arc length < 8 px ⇒ left un-tapered (a quick tick shouldn't vanish).
         val pts = listOf(Sample(0.0, 0.0, 1.0), Sample(3.0, 0.0, 1.0))
         val g = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 40.0)
-        assertEquals(2.0, g.caps[0].radius, 1e-9)
+        assertEquals(2.0, g.halfWidths.first(), 1e-9)
     }
 
     @Test fun taperIsCappedSoAHugeValueStillLeavesAFullWidthMiddle() {
@@ -109,8 +109,8 @@ class StrokeEngineTest {
         // middle 80% reaches full width.
         val pts = (0..10).map { Sample(it * 10.0, 0.0, 1.0) } // total 100 px
         val g = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 1000.0)
-        assertEquals(0.0, g.caps[0].radius, 1e-9)            // still a point at the ends
-        assertEquals(0.0, g.caps[1].radius, 1e-9)
+        assertEquals(0.0, g.halfWidths.first(), 1e-9)        // still a point at the ends
+        assertEquals(0.0, g.halfWidths.last(), 1e-9)
         assertEquals(2.0, g.halfWidths.maxOrNull()!!, 1e-9)  // and full width in the middle
     }
 
@@ -175,27 +175,35 @@ class StrokeEngineTest {
         assertEquals("even width through the corner", maxHw, minHw, 1e-6)
     }
 
-    // --- Calligraphy caps & direction smoothing ---
-    @Test fun calligraphyCapsMatchTheThinnedRibbonNotAPurePressureDot() {
-        // An upward calligraphy stroke (ty ≈ -1) is thinned by the direction term, so the
-        // end caps must shrink to the ribbon's own half-width. They used to be sized from
-        // the pure-pressure half-width (3.0 at full pressure here), which bulged past the
-        // thin ribbon as a visible dot.
+    // --- Flat ends & direction smoothing ---
+    @Test fun calligraphyEndsAreFlatNotRoundCapped() {
+        // A multi-sample calligraphy ribbon ends square: no head/tail cap discs, so it never
+        // sprouts a rounded dot past the thinned nib. The ribbon half-widths are unaffected.
         val pts = (0..6).map { Sample(0.0, -it * 10.0, 1.0) } // straight up
         val g = StrokeEngine.build(pts, 6.0, true, 0.40, 0.60)
-        assertEquals(g.halfWidths.first(), g.caps[0].radius, 1e-9)
-        assertEquals(g.halfWidths.last(), g.caps[1].radius, 1e-9)
-        assertTrue("cap should be the thinned ribbon width, not the 3.0 pure-pressure dot",
-            g.caps[0].radius < 1.5)
+        assertTrue(g.caps.isEmpty())
+        assertTrue("upward calligraphy ribbon is thinned by the direction term",
+            g.halfWidths.first() < 1.5)
     }
 
-    @Test fun nonCalligraphyCapsAreUnchanged() {
-        // With ds = 0 the cap is still exactly the pure-pressure half-width (× speed/taper),
-        // so the pen/speed/taper pens render identically to before.
+    @Test fun highlighterKeepsRoundEndCaps() {
+        // The highlighter is the one ribbon pen that still rounds its ends: roundCaps = true emits
+        // a head and tail disc sized to the ribbon's half-width.
+        val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
+        val g = StrokeEngine.build(pts, 16.0, false, 1.0, 0.0, roundCaps = true)
+        assertEquals(2, g.caps.size)
+        assertEquals(8.0, g.caps[0].radius, 1e-9) // 16 × 1.0 / 2
+        assertEquals(8.0, g.caps[1].radius, 1e-9)
+    }
+
+    @Test fun penEndsAreFlatNotRoundCapped() {
+        // With ds = 0 a multi-sample pen ribbon also ends flat (no caps); the half-widths are
+        // still the pure-pressure value, so only the rounded ends are gone.
         val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
         val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0)
-        assertEquals(1.5, g.caps[0].radius, 1e-9) // 3.0 × 1.0 / 2
-        assertEquals(1.5, g.caps[1].radius, 1e-9)
+        assertTrue(g.caps.isEmpty())
+        assertEquals(1.5, g.halfWidths.first(), 1e-9) // 3.0 × 1.0 / 2
+        assertEquals(1.5, g.halfWidths.last(), 1e-9)
     }
 
     @Test fun calligraphyWidthGlidesAcrossADirectionChange() {

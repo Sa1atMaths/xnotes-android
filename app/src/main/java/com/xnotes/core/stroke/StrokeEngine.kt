@@ -175,6 +175,7 @@ object StrokeEngine {
         taperLength: Double = 0.0,
         speedScale: Double = 1.0,
         smooth: Boolean = true,
+        roundCaps: Boolean = false,
     ): StrokeGeometry {
         val n = samples.size
         if (n == 0) return StrokeGeometry.EMPTY
@@ -237,15 +238,14 @@ object StrokeEngine {
         outline.addAll(left)
         for (i in right.indices.reversed()) outline.add(right[i])
 
-        // 9. Round caps sized to the ribbon's own half-width at each end, so a calligraphy
-        //    end rounds off its (thinned) ribbon instead of sprouting a fat pure-pressure
-        //    dot. Identical to the old pure-pressure cap whenever ds = 0 (pen/speed/taper),
-        //    and it inherits the speed/taper multiplier via halfWidths, so tapered ends
-        //    still come to a point.
-        val caps = listOf(
+        // 9. End caps only when [roundCaps] is set (the highlighter): two discs sized to the
+        //    ribbon's own half-width round the head and tail off. Every other pen leaves its ends
+        //    flat (butt), and the taper pen already came to a point. A lone tap is still a round
+        //    dot (the n == 1 path above).
+        val caps = if (roundCaps) listOf(
             Cap(centers[0], halfWidths[0]),
             Cap(centers[n - 1], halfWidths[n - 1]),
-        )
+        ) else emptyList()
 
         return StrokeGeometry(
             outline = if (outline.size >= 3) outline else emptyList(),
