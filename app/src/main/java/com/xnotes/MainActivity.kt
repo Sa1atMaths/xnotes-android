@@ -57,6 +57,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.IntentCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.xnotes.ui.Editor
@@ -79,11 +80,14 @@ class MainActivity : ComponentActivity() {
     // lets the swipe-in transient bars overlay (no resize), non-fullscreen insets under the bars.
     private var fullscreen by mutableStateOf(true) // open in full screen by default
     private var editor: Editor? = null
+    // A PDF handed to us by another app ("Open with" / Share); consumed once the editor is ready.
+    private var pendingPdfImport by mutableStateOf<Uri?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(com.xnotes.R.style.Theme_Xnotes) // leave the dark launch/splash theme behind
         applyFullscreen()
+        pendingPdfImport = pdfImportUri(intent)
         setContent {
             val context = LocalContext.current
             val ed = remember { Editor(context).also { editor = it } }
@@ -98,7 +102,13 @@ class MainActivity : ComponentActivity() {
             }
             XnotesTheme(ed.palette) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    if (ready) EditorScreen(ed, fullscreen = fullscreen, onToggleFullscreen = ::toggleFullscreen)
+                    if (ready) EditorScreen(
+                        ed,
+                        fullscreen = fullscreen,
+                        onToggleFullscreen = ::toggleFullscreen,
+                        importPdfUri = pendingPdfImport,
+                        onImportConsumed = { pendingPdfImport = null },
+                    )
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !ready,
                         enter = androidx.compose.animation.EnterTransition.None,
@@ -117,6 +127,23 @@ class MainActivity : ComponentActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (editor?.onStylusButtonKey(event) == true) return true
         return super.dispatchKeyEvent(event)
+    }
+
+    // A PDF arriving while we're already running: singleTask reuses this instance via onNewIntent.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pdfImportUri(intent)?.let { pendingPdfImport = it }
+    }
+
+    // The PDF uri carried by an inbound VIEW ("Open with") or SEND ("Share") intent, else null.
+    private fun pdfImportUri(intent: Intent?): Uri? = when (intent?.action) {
+        Intent.ACTION_VIEW -> intent.data
+        Intent.ACTION_SEND ->
+            if (intent.type == "application/pdf")
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            else null
+        else -> null
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -152,7 +179,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun EditorScreen(editor: Editor, fullscreen: Boolean, onToggleFullscreen: () -> Unit) {
+private fun EditorScreen(
+    editor: Editor,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    importPdfUri: Uri? = null,
+    onImportConsumed: () -> Unit = {},
+) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var showPresentation by remember { mutableStateOf(false) }
@@ -475,6 +508,21 @@ private fun EditorScreen(editor: Editor, fullscreen: Boolean, onToggleFullscreen
         editor.message?.let {
             snackbar.showSnackbar(it)
             editor.message = null
+        }
+    }
+
+    // A PDF opened from another app ("Open with"/Share): set up a pending import and land on the
+    // backstage so its name dialog appears, exactly like the in-app "Import PDF" button. With no
+    // folder chosen yet, fall back to App storage so the explorer renders and the note autosaves.
+    LaunchedEffect(importPdfUri) {
+        val src = importPdfUri ?: return@LaunchedEffect
+        onImportConsumed() // consume once; the body has no suspend point so it runs to completion
+        val stem = com.xnotes.core.util.Paths.stem(displayNameOf(resolver, src) ?: "Document")
+        guarded {
+            if (editor.browseRoot == null) editor.useInternalStorage()
+            editor.requestImport(com.xnotes.ui.ImportKind.PDF, stem, src.toString())
+            backstageView = com.xnotes.ui.BackstageView.HOME
+            editor.goHome()
         }
     }
 
