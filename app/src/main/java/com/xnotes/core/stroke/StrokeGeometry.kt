@@ -16,9 +16,9 @@ data class Sample(val x: Double, val y: Double, val pressure: Double, val t: Dou
 data class Cap(val center: Pt, val radius: Double)
 
 /**
- * The geometry derived from a stroke's samples (spec 03). Rendering fills
- * [outline] (nonzero winding) **and** the [caps] discs in the ink colour, with
- * no outline pen.
+ * The geometry derived from a stroke's samples (spec 03). A committed stroke fills the ribbon as
+ * the additive triangle [mesh] (hole-free); the live in-progress stroke fills the single [outline]
+ * (nonzero winding) for speed. Both add the [caps] discs, in the ink colour, with no outline pen.
  */
 data class StrokeGeometry(
     val outline: List<Pt>,
@@ -42,6 +42,38 @@ data class StrokeGeometry(
         for (i in 0 until n) core.add(centerline[i] + (outline[i] - centerline[i]) * f)
         for (i in n - 1 downTo 0) core.add(centerline[i] + (outline[2 * n - 1 - i] - centerline[i]) * f)
         return core
+    }
+
+    /** The ribbon as one additive triangle mesh (flat triples). Every triangle is wound the same
+     *  way, so a single nonzero fill is their UNION: where a sharp turn folds the ribbon over
+     *  itself the overlap reinforces to solid ink instead of cancelling to a gap, the way the one
+     *  signed [outline] does. Committed strokes fill this; the live stroke keeps the cheaper
+     *  [outline]. Built once and reused. Empty for a single-sample dot. */
+    val mesh: List<Pt> by lazy { buildMesh() }
+
+    private fun buildMesh(): List<Pt> {
+        val n = centerline.size
+        if (n < 2 || outline.size != 2 * n) return emptyList()
+        val tris = ArrayList<Pt>(6 * (n - 1))
+        var lPrev = outline[0]
+        var rPrev = outline[2 * n - 1]
+        for (i in 1 until n) {
+            val lCur = outline[i]
+            val rCur = outline[2 * n - 1 - i]
+            addTri(tris, lPrev, rPrev, rCur)
+            addTri(tris, lPrev, rCur, lCur)
+            lPrev = lCur
+            rPrev = rCur
+        }
+        return tris
+    }
+
+    // Append one triangle with a consistent (positive) winding, so the nonzero fill unions the
+    // mesh instead of letting an opposite-wound overlap subtract a gap back out.
+    private fun addTri(out: MutableList<Pt>, a: Pt, b: Pt, c: Pt) {
+        val area2 = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+        out.add(a)
+        if (area2 < 0.0) { out.add(c); out.add(b) } else { out.add(b); out.add(c) }
     }
 
     companion object {

@@ -2207,12 +2207,12 @@ class InteractionController(
                 val pr = state.pageRects.getOrNull(sel.pageIndex) ?: continue
                 r.withSave {
                     r.translate(pr.left + moveOffset.x, pr.top + moveOffset.y)
-                    sel.item.paint(r)
+                    (sel.item as? Stroke)?.paint(r, wet = true) ?: sel.item.paint(r)
                 }
             }
 
             // Live in-progress stroke / shape preview, clipped to its page.
-            liveStroke?.let { stroke -> paintClippedToPage(r, strokePageIndex) { stroke.paint(r) } }
+            liveStroke?.let { stroke -> paintClippedToPage(r, strokePageIndex) { stroke.paint(r, wet = true) } }
             pendingShape?.let { shape -> paintClippedToPage(r, shapePageIndex) { shape.paint(r) } }
 
             // Disappearing ink (magic wand): ephemeral strokes drawn live at the shared fade alpha,
@@ -2221,7 +2221,7 @@ class InteractionController(
                 paintClippedToPage(r, fs.pageIndex) {
                     val blend = if (fs.stroke.tool == Tool.HIGHLIGHTER) BlendMode.MULTIPLY else BlendMode.SRC_OVER
                     r.saveLayerBlended(fs.stroke.paintBounds(), fadeAlpha, blend)
-                    fs.stroke.paint(r)
+                    fs.stroke.paint(r, wet = true)
                     r.restore()
                 }
             }

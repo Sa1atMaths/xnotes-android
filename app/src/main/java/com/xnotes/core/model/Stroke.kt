@@ -85,7 +85,16 @@ class Stroke(
         invalidate()
     }
 
-    override fun paint(r: Renderer) {
+    override fun paint(r: Renderer) = paint(r, wet = false)
+
+    /**
+     * [wet] = the live, repainted-every-frame overlay draw (the in-progress stroke, a dragged
+     * selection, fading ink): the ribbon fills the cheap single [StrokeGeometry.outline] exactly
+     * like before, so long strokes never bog the frame. A committed stroke bakes once with [wet] =
+     * false and fills the hole-free triangle [StrokeGeometry.mesh] instead, so a sharp turn that
+     * would self-cancel the outline into an unfilled gap comes out solid in the saved ink.
+     */
+    fun paint(r: Renderer, wet: Boolean) {
         val g = geometry()
         val color = renderColor
         when {
@@ -94,10 +103,10 @@ class Stroke(
             // bounds/hit-testing/erasing, so the whole line stays selectable through the gaps.
             tool == Tool.DASHED -> paintDashed(r, g, color)
             // The highlighter never glows (a translucent marker; glow is meaningless there).
-            config.neon && tool != Tool.HIGHLIGHTER -> paintNeon(r, g, color)
+            config.neon && tool != Tool.HIGHLIGHTER -> paintNeon(r, g, color, wet)
             color.a >= 255 -> {
                 // Opaque ink: draw ribbon + caps directly.
-                paintFills(r, g, color)
+                paintFills(r, g, color, wet)
             }
             else -> {
                 // Translucent ink: accumulate the whole stroke opaquely in a layer, then
@@ -107,14 +116,18 @@ class Stroke(
                 // (text stays legible); other translucent inks blend normally.
                 val blend = if (tool == Tool.HIGHLIGHTER) BlendMode.MULTIPLY else BlendMode.SRC_OVER
                 r.saveLayerBlended(bounds().outset(2.0), color.a / 255.0, blend)
-                paintFills(r, g, color.withAlpha(255))
+                paintFills(r, g, color.withAlpha(255), wet)
                 r.restore()
             }
         }
     }
 
-    private fun paintFills(r: Renderer, g: StrokeGeometry, color: Rgba) {
-        if (g.outline.size >= 3) r.fillPolygon(g.outline, color, FillRule.NONZERO)
+    private fun paintFills(r: Renderer, g: StrokeGeometry, color: Rgba, wet: Boolean) {
+        if (wet) {
+            if (g.outline.size >= 3) r.fillPolygon(g.outline, color, FillRule.NONZERO)
+        } else {
+            if (g.mesh.isNotEmpty()) r.fillMesh(g.mesh, color)
+        }
         for (cap in g.caps) if (cap.radius > 0.0) r.fillCircle(cap.center, cap.radius, color)
     }
 
@@ -164,7 +177,7 @@ class Stroke(
         if (config.neon && tool != Tool.HIGHLIGHTER) bounds().outset(neonGlowRadius() * 2 + 4)
         else bounds()
 
-    private fun paintNeon(r: Renderer, g: StrokeGeometry, color: Rgba) {
+    private fun paintNeon(r: Renderer, g: StrokeGeometry, color: Rgba, wet: Boolean) {
         val s = config.neonStrength.coerceIn(0.0, 1.0)
         val body = color.withAlpha(255)
 
@@ -177,7 +190,7 @@ class Stroke(
         paintBloom(r, g, body, tightR, NEON_BLOOM_TIGHT_ALPHA_MIN + NEON_BLOOM_TIGHT_ALPHA_SPAN * s)
 
         // 3) Tube body, lifted slightly toward white so it reads as lit.
-        paintFills(r, g, lighten(body, NEON_BODY_LIGHTEN))
+        paintFills(r, g, lighten(body, NEON_BODY_LIGHTEN), wet)
 
         // 4) Solid white-hot core (no blur, so thin lines still read pure white).
         val core = g.coreOutline(NEON_CORE_FRAC)

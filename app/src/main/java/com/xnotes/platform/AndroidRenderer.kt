@@ -117,6 +117,14 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         canvas.drawPath(buildPath(points, close = true, rule), fillPaint)
     }
 
+    // One path holding every triangle, so the shared interior edges aren't anti-aliased against
+    // transparent and the union fills seamlessly (a per-triangle fill would streak).
+    override fun fillMesh(points: List<Pt>, color: Rgba, rule: FillRule) {
+        if (points.size < 3) return
+        fillPaint.color = color.toArgb()
+        canvas.drawPath(buildMeshPath(points, rule), fillPaint)
+    }
+
     override fun fillCircle(center: Pt, radius: Double, color: Rgba) {
         fillPaint.color = color.toArgb()
         canvas.drawCircle(center.x.toFloat(), center.y.toFloat(), radius.toFloat(), fillPaint)
@@ -229,6 +237,20 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         path.moveTo(points[0].x.toFloat(), points[0].y.toFloat())
         for (i in 1 until points.size) path.lineTo(points[i].x.toFloat(), points[i].y.toFloat())
         if (close) path.close()
+        return path
+    }
+
+    private fun buildMeshPath(points: List<Pt>, rule: FillRule): Path {
+        val path = Path()
+        path.fillType = if (rule == FillRule.EVEN_ODD) Path.FillType.EVEN_ODD else Path.FillType.WINDING
+        var i = 0
+        while (i + 3 <= points.size) {
+            path.moveTo(points[i].x.toFloat(), points[i].y.toFloat())
+            path.lineTo(points[i + 1].x.toFloat(), points[i + 1].y.toFloat())
+            path.lineTo(points[i + 2].x.toFloat(), points[i + 2].y.toFloat())
+            path.close()
+            i += 3
+        }
         return path
     }
 }
