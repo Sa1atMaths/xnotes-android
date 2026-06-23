@@ -536,7 +536,7 @@ private fun ExplorerSection(
     // While dragging a selection near the top/bottom edge of the grid, keep it scrolling so a folder
     // that's currently off-screen can still be reached, the same way the toolbar drag does.
     val autoScrollBand = with(LocalDensity.current) { 72.dp.toPx() }
-    val autoScrollMax = with(LocalDensity.current) { 34.dp.toPx() }
+    val autoScrollMax = with(LocalDensity.current) { 72.dp.toPx() }
     LaunchedEffect(dragPos != null) {
         while (dragPos != null) {
             val pos = dragPos
