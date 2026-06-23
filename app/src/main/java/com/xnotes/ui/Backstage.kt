@@ -503,6 +503,7 @@ private fun ExplorerSection(
     // hit-testing, [dropTargetUri] is the folder under the finger, and [pulseUri] flashes the folder a
     // dropped move just landed in. [boxCoords] anchors the floating preview into the grid's own space.
     val folderBounds = remember(root) { mutableStateMapOf<String, Rect>() }
+    val fileBounds = remember(root) { mutableStateMapOf<String, Rect>() }
     var dragItems by remember(root) { mutableStateOf<List<BrowseEntry>>(emptyList()) }
     var dragPos by remember(root) { mutableStateOf<Offset?>(null) }
     var dropTargetUri by remember(root) { mutableStateOf<String?>(null) }
@@ -658,10 +659,66 @@ private fun ExplorerSection(
         // pane and enlarges the tiles.
         val gridColumns = (LocalConfiguration.current.screenWidthDp / 240).coerceIn(2, 8)
         Box(
-            Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { boxCoords = it }.then(
-                // In select mode, tapping empty space (not a tile) clears the selection.
-                if (selection.isNotEmpty()) Modifier.clickable(interactionSource = dismissInteraction, indication = null) { selection.clear() } else Modifier,
-            ),
+            Modifier.weight(1f).fillMaxWidth()
+                .onGloballyPositioned { boxCoords = it }
+                // Drag-to-move lives on the container (not the tiles) so the gesture survives the grid
+                // auto-scrolling and the picked-up tile scrolling out of view. A long-press that lands on
+                // an already-selected tile picks the whole selection up to drag onto a folder; anything
+                // else (empty space, a folder, an unselected tile) stays inert here.
+                .pointerInput(currentDocId) {
+                    var dragging = false
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { local ->
+                            val win = boxCoords?.localToWindow(local)
+                            val hit = win?.let { p -> fileBounds.entries.firstOrNull { it.value.contains(p) } }
+                            if (win != null && hit != null && selection.any { it.documentUri == hit.key }) {
+                                dragging = true
+                                dragItems = selection.toList()
+                                dragPos = win
+                                dragCardSize = IntSize(hit.value.width.roundToInt(), hit.value.height.roundToInt())
+                                updateDropTarget(win)
+                            } else dragging = false
+                        },
+                        onDrag = { change, delta ->
+                            if (dragging) {
+                                change.consume()
+                                dragPos?.let { val np = it + delta; dragPos = np; updateDropTarget(np) }
+                            }
+                        },
+                        onDragEnd = {
+                            if (dragging) {
+                                val target = dropTargetUri
+                                val items = dragItems
+                                dragPos = null; dropTargetUri = null; dragItems = emptyList()
+                                if (target != null) {
+                                    val targetDocId = editor.browseDocId(target)
+                                    pulseUri = target; opError = null
+                                    scope.launch {
+                                        val ok = withContext(Dispatchers.IO) {
+                                            var all = true
+                                            items.forEach { e ->
+                                                if (e.documentUri != target &&
+                                                    !editor.moveDocumentInto(root, e.documentUri, currentDocId, targetDocId)) all = false
+                                            }
+                                            all
+                                        }
+                                        selection.clear(); refreshKey++
+                                        if (!ok) opError = "Couldn’t move some items."
+                                    }
+                                }
+                            }
+                            dragging = false
+                        },
+                        onDragCancel = {
+                            if (dragging) { dragPos = null; dropTargetUri = null; dragItems = emptyList() }
+                            dragging = false
+                        },
+                    )
+                }
+                .then(
+                    // In select mode, tapping empty space (not a tile) clears the selection.
+                    if (selection.isNotEmpty()) Modifier.clickable(interactionSource = dismissInteraction, indication = null) { selection.clear() } else Modifier,
+                ),
         ) {
             when {
                 searching && results == null -> EmptyPane("Searching…")
@@ -732,33 +789,7 @@ private fun ExplorerSection(
                                 renaming = null; opError = null
                                 if (selection.none { it.documentUri == entry.documentUri }) selection.add(entry)
                             },
-                            onDragStart = { w, sz ->
-                                dragItems = if (selection.isEmpty()) listOf(entry) else selection.toList()
-                                dragPos = w; dragCardSize = sz; updateDropTarget(w)
-                            },
-                            onDrag = { d -> dragPos?.let { val np = it + d; dragPos = np; updateDropTarget(np) } },
-                            onDragEnd = {
-                                val target = dropTargetUri
-                                val items = dragItems
-                                dragPos = null; dropTargetUri = null; dragItems = emptyList()
-                                if (target != null) {
-                                    val targetDocId = editor.browseDocId(target)
-                                    pulseUri = target; opError = null
-                                    scope.launch {
-                                        val ok = withContext(Dispatchers.IO) {
-                                            var all = true
-                                            items.forEach { e ->
-                                                if (e.documentUri != target &&
-                                                    !editor.moveDocumentInto(root, e.documentUri, currentDocId, targetDocId)) all = false
-                                            }
-                                            all
-                                        }
-                                        selection.clear(); refreshKey++
-                                        if (!ok) opError = "Couldn’t move some items."
-                                    }
-                                }
-                            },
-                            onDragCancel = { dragPos = null; dropTargetUri = null; dragItems = emptyList() },
+                            onBounds = { r -> if (r == null) fileBounds.remove(entry.documentUri) else fileBounds[entry.documentUri] = r },
                         )
                     }
                 }
@@ -1147,14 +1178,11 @@ private fun FileTile(
     onDelete: (() -> Unit)?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onDragStart: (Offset, IntSize) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit,
+    onBounds: (Rect?) -> Unit,
 ) {
     val palette = LocalPalette.current
     var menuOpen by remember { mutableStateOf(false) }
-    var tileCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    DisposableEffect(Unit) { onDispose { onBounds(null) } }
     // Seed from the in-memory cache for an instant paint, then load/render off-thread; re-keying on
     // the file's mtime re-renders the tile after the note is edited.
     val thumb by produceState<ImageBitmap?>(editor.cachedNoteTile(entry.documentUri), entry.documentUri, entry.modified) {
@@ -1171,31 +1199,15 @@ private fun FileTile(
             // draws over its children, so it stays crisp on top of the full-bleed thumbnail.
             .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
             // No tap ripple — the accent border + fill is the only selection cue. combinedClickable owns
-            // tap (open/toggle) and long-press (select); keeping onLongClick here is what suppresses a
-            // click on release after a long-press, so selecting a tile no longer toggles back off.
+            // tap (open/toggle) and long-press (select); the drag-to-move gesture lives on the grid
+            // container so it keeps running while this tile scrolls out from under the finger.
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
                 onLongClick = onLongClick,
             )
-            .onGloballyPositioned { tileCoords = it }
-            // A long-press on an already-selected tile picks the whole selection up to drag onto a
-            // folder; on an unselected tile this stays inert and combinedClickable just selects it.
-            .pointerInput(entry.documentUri, selected) {
-                var dragging = false
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { local ->
-                        val c = tileCoords
-                        if (selected && c != null) {
-                            dragging = true; onDragStart(c.localToWindow(local), c.size)
-                        } else dragging = false
-                    },
-                    onDrag = { change, delta -> if (dragging) { change.consume(); onDrag(delta) } },
-                    onDragEnd = { if (dragging) onDragEnd(); dragging = false },
-                    onDragCancel = { if (dragging) onDragCancel(); dragging = false },
-                )
-            },
+            .onGloballyPositioned { onBounds(it.boundsInWindow()) },
     ) {
         Box(
             Modifier
