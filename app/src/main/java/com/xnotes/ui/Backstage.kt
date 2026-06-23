@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -46,6 +47,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -507,6 +509,7 @@ private fun ExplorerSection(
     var pulseUri by remember(root) { mutableStateOf<String?>(null) }
     var boxCoords by remember(root) { mutableStateOf<LayoutCoordinates?>(null) }
     var dragCardSize by remember(root) { mutableStateOf<IntSize?>(null) }
+    val gridState = rememberLazyGridState()
     // Inside a subfolder, back climbs one level out (this sits below the Backstage's root
     // handler, so it's consulted first and only fires while there's a folder to leave).
     BackHandler(enabled = stack.isNotEmpty()) {
@@ -522,6 +525,31 @@ private fun ExplorerSection(
     fun updateDropTarget(pos: Offset) {
         dropTargetUri = folderBounds.entries
             .firstOrNull { (uri, r) -> r.contains(pos) && dragItems.none { it.documentUri == uri } }?.key
+    }
+    // While dragging a selection near the top/bottom edge of the grid, keep it scrolling so a folder
+    // that's currently off-screen can still be reached, the same way the toolbar drag does.
+    val autoScrollBand = with(LocalDensity.current) { 72.dp.toPx() }
+    val autoScrollMax = with(LocalDensity.current) { 16.dp.toPx() }
+    LaunchedEffect(dragPos != null) {
+        while (dragPos != null) {
+            val pos = dragPos
+            val bc = boxCoords
+            if (pos != null && bc != null) {
+                val b = bc.boundsInWindow()
+                val delta = when {
+                    pos.y < b.top + autoScrollBand ->
+                        -((b.top + autoScrollBand - pos.y) / autoScrollBand).coerceIn(0f, 1f) * autoScrollMax
+                    pos.y > b.bottom - autoScrollBand ->
+                        ((pos.y - (b.bottom - autoScrollBand)) / autoScrollBand).coerceIn(0f, 1f) * autoScrollMax
+                    else -> 0f
+                }
+                if (delta != 0f) {
+                    gridState.scrollBy(delta)
+                    updateDropTarget(pos)
+                }
+            }
+            delay(16L)
+        }
     }
     var menuOpen by remember(root) { mutableStateOf(false) }
     var newMenuOpen by remember(root) { mutableStateOf(false) }
@@ -642,6 +670,7 @@ private fun ExplorerSection(
                 !searching && entries!!.isEmpty() -> EmptyPane("This folder has no notes.")
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(gridColumns),
+                    state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
