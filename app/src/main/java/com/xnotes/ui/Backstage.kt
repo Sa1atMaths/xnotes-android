@@ -104,6 +104,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
@@ -128,7 +129,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import kotlin.math.roundToInt
 
 /** Which pane the backstage shows on the right. */
@@ -535,7 +536,7 @@ private fun ExplorerSection(
     // While dragging a selection near the top/bottom edge of the grid, keep it scrolling so a folder
     // that's currently off-screen can still be reached, the same way the toolbar drag does.
     val autoScrollBand = with(LocalDensity.current) { 72.dp.toPx() }
-    val autoScrollMax = with(LocalDensity.current) { 16.dp.toPx() }
+    val autoScrollMax = with(LocalDensity.current) { 34.dp.toPx() }
     LaunchedEffect(dragPos != null) {
         while (dragPos != null) {
             val pos = dragPos
@@ -679,21 +680,26 @@ private fun ExplorerSection(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         // Long-press gate: only a held, near-stationary finger qualifies. A quick lift
-                        // (tap) or an early move (scroll) ends this early so the tile/grid keep those.
-                        val endedEarly = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                            while (true) {
-                                val e = awaitPointerEvent()
-                                val c = e.changes.firstOrNull { it.id == down.id }
-                                if (c == null || !c.pressed || c.isConsumed) return@withTimeoutOrNull true
-                                if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
+                        // (tap) or an early move (scroll) returns from the timeout normally so the
+                        // tile/grid keep those; holding past it throws, which is our long-press signal.
+                        val longPress = try {
+                            withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                                while (true) {
+                                    val e = awaitPointerEvent()
+                                    val c = e.changes.firstOrNull { it.id == down.id }
+                                    if (c == null || !c.pressed || c.isConsumed) return@withTimeout false
+                                    if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeout false
+                                }
+                                @Suppress("UNREACHABLE_CODE") false
                             }
-                            @Suppress("UNREACHABLE_CODE") true
+                        } catch (_: PointerEventTimeoutCancellationException) {
+                            true
                         }
-                        if (endedEarly != null) return@awaitEachGesture
+                        if (!longPress) return@awaitEachGesture
                         // Long-press fired. Find the file tile under the finger; ignore folders/empty.
                         val winDown = boxCoords?.localToWindow(down.position) ?: return@awaitEachGesture
                         val hitUri = fileBounds.entries.firstOrNull { it.value.contains(winDown) }?.key
-                            ?: return@awaitEachGesture
+                        if (hitUri == null) return@awaitEachGesture
                         if (selection.none { it.documentUri == hitUri }) {
                             // First long-press selects. Consume to the up (Initial pass, ahead of the
                             // tile) so its click can't toggle the selection straight back off.
@@ -716,9 +722,11 @@ private fun ExplorerSection(
                         while (true) {
                             val e = awaitPointerEvent(PointerEventPass.Initial)
                             val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            // Read the delta before consuming: positionChange() reports zero once consumed.
+                            val delta = c.positionChange()
                             c.consume()
                             if (!c.pressed) break
-                            pos += c.positionChange()
+                            pos += delta
                             dragPos = pos
                             updateDropTarget(pos)
                         }
