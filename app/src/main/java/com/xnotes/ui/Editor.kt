@@ -100,10 +100,12 @@ class Editor(context: Context) {
     private var settings = settingsRepo.load()
     private var pdfSource: com.xnotes.platform.PdfSource? = null
 
-    /** Private cache dir holding each note's source PDF as a file, so a large PDF is never held
-     *  whole in RAM (the renderer memory-maps it). Purged on launch to drop temp files orphaned
-     *  by a previous crash — safe here because no real note is open yet at construction. */
-    private val pdfDir = java.io.File(appContext.cacheDir, "pdfsrc").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+    /** Private dir holding each note's source PDF as a file, so a large PDF is never held whole in
+     *  RAM (the renderer memory-maps it). Under filesDir, not the reclaimable cacheDir: the OS could
+     *  evict a cacheDir copy mid-session, and the next autosave would then fail to re-embed the PDF.
+     *  Purged on launch to drop temps orphaned by a crash — safe here because no real note is open
+     *  yet at construction. */
+    private val pdfDir = java.io.File(appContext.filesDir, "pdfsrc").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
 
     /** Scratch dir for [writeNoteSafely]: a note is encoded here in full before any SAF file is
      *  touched, so a failed encode can never truncate a good note. Lives under filesDir (not the
