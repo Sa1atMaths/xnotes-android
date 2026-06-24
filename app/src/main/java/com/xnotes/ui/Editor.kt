@@ -105,6 +105,11 @@ class Editor(context: Context) {
      *  by a previous crash — safe here because no real note is open yet at construction. */
     private val pdfDir = java.io.File(appContext.cacheDir, "pdfsrc").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
 
+    /** Scratch dir for [writeNoteSafely]: a note is encoded here in full before any SAF file is
+     *  touched, so a failed encode can never truncate a good note. Lives under filesDir (not the
+     *  reclaimable cacheDir) and is purged on launch to drop temps orphaned by a crash. */
+    private val saveTmpDir = java.io.File(appContext.filesDir, "savetmp").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+
     /** The temp PDF file backing the currently open document, tracked so it's deleted when the note
      *  is swapped out (transient docs used for export/thumbnails manage their own files locally). */
     private var openPdfTemp: java.io.File? = null
@@ -1059,6 +1064,22 @@ class Editor(context: Context) {
         }
     }
 
+    /** Save the current document over its existing SAF file at [uri] via [writeNoteSafely], so a
+     *  failed encode never truncates the note. Returns false (and shows a message) on failure, e.g.
+     *  so the caller can fall back to a Save-As picker. */
+    fun saveTo(uri: String): Boolean {
+        if (!writeNoteSafely(uri, state.document)) {
+            message = "Could not save the note."
+            return false
+        }
+        state.document.path = uri
+        state.document.dirty = false
+        maybeBindAutosave(uri)
+        refreshContent()
+        invalidateThumb(uri)
+        return true
+    }
+
     // --- explorer thumbnails & document identity ---
 
     /**
@@ -1590,15 +1611,33 @@ class Editor(context: Context) {
         autosaveUri = if (uri != null && browseRoot?.let { isUnderTree(uri, it) } == true) uri else null
     }
 
+    /**
+     * Write [doc] into its SAF file at [uri] without ever truncating a good note on a failed encode.
+     * The bytes are serialized to a private temp first, so a missing embedded PDF, an OOM, or any
+     * codec error aborts *before* the destination is opened; only a complete temp is copied over.
+     * The old path opened the destination in "wt" (truncate) and encoded straight into it, so a
+     * throw mid-encode left the note as 0 bytes. Returns true only when [uri] now holds the note.
+     */
+    private fun writeNoteSafely(uri: String, doc: Document): Boolean = runCatching {
+        val tmp = java.io.File.createTempFile("save", ".xnote", saveTmpDir)
+        try {
+            java.io.FileOutputStream(tmp).use { codec.write(doc, it) }
+            val out = appContext.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")
+                ?: return@runCatching false
+            out.use { java.io.FileInputStream(tmp).use { input -> input.copyTo(it) } }
+            true
+        } finally {
+            tmp.delete()
+        }
+    }.getOrDefault(false)
+
     private fun scheduleAutosave() {
         val uri = autosaveUri ?: return
         autosaveJob?.cancel()
         autosaveJob = autosaveScope.launch {
             kotlinx.coroutines.delay(1200L) // debounce: write after a short idle
             val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    appContext.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")?.use { codec.write(state.document, it) } != null
-                }.getOrDefault(false)
+                writeNoteSafely(uri, state.document)
             }
             if (ok) {
                 state.document.dirty = false; dirty = false
@@ -1612,10 +1651,7 @@ class Editor(context: Context) {
         autosaveJob?.cancel()
         val uri = autosaveUri ?: return
         if (!state.document.dirty) return
-        val ok = runCatching {
-            appContext.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")?.use { codec.write(state.document, it) } != null
-        }.getOrDefault(false)
-        if (ok) { state.document.dirty = false; dirty = false; invalidateThumb(uri) }
+        if (writeNoteSafely(uri, state.document)) { state.document.dirty = false; dirty = false; invalidateThumb(uri) }
     }
 
     // --- per-document view state (folder notes remember their own zoom + scroll) ---

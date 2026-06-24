@@ -334,8 +334,7 @@ private fun EditorScreen(
     fun saveOrPrompt() {
         val uri = editor.currentUri
         if (uri != null) {
-            runCatching { resolver.openOutputStream(Uri.parse(uri), "wt")?.use { o -> editor.save(o, uri) } }
-                .onFailure { createLauncher.launch("${editor.title}.xnote") }
+            if (!editor.saveTo(uri)) createLauncher.launch("${editor.title}.xnote")
         } else {
             createLauncher.launch("${editor.title}.xnote")
         }
@@ -645,7 +644,7 @@ private fun EditorScreen(
                     guardAction = null
                     val uri = editor.currentUri
                     if (uri != null) {
-                        runCatching { resolver.openOutputStream(Uri.parse(uri), "wt")?.use { o -> editor.save(o, uri) } }
+                        editor.saveTo(uri)
                         action()
                     } else {
                         pendingAfterSave = action
