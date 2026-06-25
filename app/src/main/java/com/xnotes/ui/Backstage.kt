@@ -713,6 +713,14 @@ private fun ExplorerSection(
                             return@awaitEachGesture
                         }
                         // Second long-press on a selected tile: pick the whole selection up and drag it.
+                        // Dragging moves files only; if any folder is selected, claim the gesture but don't drag.
+                        if (selection.any { it.isDir }) {
+                            do {
+                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                e.changes.forEach { it.consume() }
+                            } while (e.changes.any { it.id == down.id && it.pressed })
+                            return@awaitEachGesture
+                        }
                         val rect = fileBounds[hitUri]
                         dragItems = selection.toList()
                         dragCardSize = rect?.let { IntSize(it.width.roundToInt(), it.height.roundToInt()) }
