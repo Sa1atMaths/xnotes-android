@@ -273,6 +273,13 @@ class Editor(context: Context) {
     var bookmarkVersion by mutableStateOf(0)
         private set
 
+    /** The open PDF's extracted outline (its table of contents), empty for non-PDF notes or PDFs with
+     *  no outline. Parsed off-thread on document open; [tocVersion] bumps when it arrives. */
+    private var toc: List<com.xnotes.platform.PdfOutlineEntry> = emptyList()
+    val tableOfContents: List<com.xnotes.platform.PdfOutlineEntry> get() = toc
+    var tocVersion by mutableStateOf(0)
+        private set
+
     /** True while a dark-mode PDF's embedded-image colours are still being parsed off-thread (only
      *  when [Preferences.pdfDarkMode] + [Preferences.pdfKeepImageColors]); drives the canvas hint. */
     var isRefiningPdf by mutableStateOf(false)
@@ -491,7 +498,37 @@ class Editor(context: Context) {
         }
         installPageBackground()
         state.invalidateAllCaches()
+        refreshToc()
         startPdfRefine() // kick the up-front sweep over all pages + drive the "Refining k/N" hint
+    }
+
+    /** Re-extract the open PDF's outline off-thread (a one-shot PdfBox read, see [com.xnotes.platform.PdfOutline]),
+     *  publishing it to the Contents tab when it lands. Clears the TOC immediately so a non-PDF note or a
+     *  document swap never shows the previous note's outline; a stale parse that finishes after another
+     *  swap is dropped by the file-identity guard. */
+    private fun refreshToc() {
+        toc = emptyList()
+        tocVersion++
+        val file = state.document.pdfFile ?: return
+        autosaveScope.launch {
+            val entries = withContext(Dispatchers.IO) { com.xnotes.platform.PdfOutline.extract(appContext, file) }
+            if (state.document.pdfFile === file) {
+                toc = entries
+                tocVersion++
+            }
+        }
+    }
+
+    /** Navigate to the page an outline [entry] points at: the note page whose [Page.pdfPage] is the
+     *  entry's source PDF page, falling back to the nearest preceding imported page so an entry into a
+     *  trimmed import still lands somewhere. No-op when the entry has no resolvable page. */
+    fun goToTocEntry(entry: com.xnotes.platform.PdfOutlineEntry) {
+        val dest = entry.destPage
+        if (dest < 0) return
+        val pages = state.document.pages
+        val exact = pages.indexOfFirst { it.pdfPage == dest }
+        val target = if (exact >= 0) exact else pages.indexOfLast { (it.pdfPage ?: -1) in 0..dest }
+        if (target >= 0) goToPage(target)
     }
 
     /** Records [doc] as the open note for source-PDF temp-file lifetime: deletes the previously open
