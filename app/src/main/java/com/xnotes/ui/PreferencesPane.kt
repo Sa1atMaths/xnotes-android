@@ -470,6 +470,35 @@ private fun AccentColorGridPopup(onDismiss: () -> Unit, onPick: (Rgba) -> Unit) 
 }
 
 /**
+ * The colour-code picker shown inside a note/folder's overflow menu: a None row to clear the colour,
+ * then the full saturated grid (the same swatches as the accent picker). [onPick] is called with null
+ * for None. Rendered directly inside the menu's own dropdown column.
+ */
+@Composable
+internal fun ColorCodeMenuContent(onPick: (Rgba?) -> Unit) {
+    val palette = LocalPalette.current
+    val hues = (0 until 12).map { it * 360.0 / 12.0 }
+    val shades = listOf(1.0 to 1.0, 1.0 to 0.82, 0.78 to 1.0)
+    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.clip(RoundedCornerShape(4.dp)).clickable { onPick(null) }.padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(20.dp).clip(RoundedCornerShape(2.dp))
+                    .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(2.dp)),
+            )
+            Text("None", color = palette.text.toComposeColor(), fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+        }
+        shades.forEach { (s, v) ->
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                hues.forEach { h -> Swatch(ColorMath.hsvToRgb(h, s, v), onPick) }
+            }
+        }
+    }
+}
+
+/**
  * Page/pattern colour picker: the shared [ColorPickerPopup] (Swatches + Spectrum tabs, full
  * 13×13 range from pale tint to near-black plus a greyscale row, and HEX/RGB fields), so paper-like
  * and muted page backgrounds are reachable, not just the saturated ones. It keeps no recents list.

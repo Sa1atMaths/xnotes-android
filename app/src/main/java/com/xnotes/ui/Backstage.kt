@@ -121,7 +121,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xnotes.core.model.Rgba
 import com.xnotes.ui.icons.XnotesIcons
+import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlinx.coroutines.Dispatchers
@@ -150,8 +152,8 @@ private fun nextUntitled(entries: List<BrowseEntry>?): String {
 }
 
 /**
- * The full-screen "File" area (the home screen). Shows recent notes + an in-app file
- * explorer rooted at a folder the user granted, with a command sidebar that is a
+ * The full-screen "File" area (the home screen). Shows an in-app file explorer
+ * rooted at a folder the user granted, with a command sidebar that is a
  * collapsible left pane on wide screens and a slide-over drawer on phones. "Open…" uses
  * the system picker; "New note" / "Import PDF" land a file in the current folder.
  */
@@ -184,7 +186,7 @@ fun Backstage(
 private const val COMPACT_WIDTH_DP = 600
 
 /**
- * The home-first layout: the recents + explorer (or Preferences) fill the screen, with a
+ * The home-first layout: the explorer (or Preferences) fills the screen, with a
  * command sidebar that's a collapsible left pane on wide screens and a slide-over drawer on
  * phones. A `<` collapses it; a hamburger (hidden while open) brings it back.
  */
@@ -791,6 +793,9 @@ private fun ExplorerSection(
                             onCopy = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, false) }) else null,
                             onCut = if (selection.isEmpty()) ({ clipboard = ClipItem(listOf(entry), currentDocId, true) }) else null,
                             onDelete = if (selection.isEmpty()) ({ pendingDelete = listOf(entry) }) else null,
+                            onColor = if (selection.isEmpty()) ({ c ->
+                                scope.launch { withContext(Dispatchers.IO) { editor.setItemColor(root, entry.parentDocId, entry.name, c) }; refreshKey++ }
+                            }) else null,
                             onDismissSelection = { selection.clear() },
                             onClick = {
                                 opError = null
@@ -827,6 +832,9 @@ private fun ExplorerSection(
                             onCopy = if (fileActions) ({ clipboard = ClipItem(listOf(entry), currentDocId, false) }) else null,
                             onCut = if (fileActions) ({ clipboard = ClipItem(listOf(entry), currentDocId, true) }) else null,
                             onDelete = if (fileActions) ({ pendingDelete = listOf(entry) }) else null,
+                            onColor = if (fileActions) ({ c ->
+                                scope.launch { withContext(Dispatchers.IO) { editor.setItemColor(root, entry.parentDocId, entry.name, c) }; refreshKey++ }
+                            }) else null,
                             onClick = {
                                 opError = null
                                 if (selection.isNotEmpty()) toggleSelect(entry) else onOpenFile(entry.documentUri)
@@ -908,7 +916,17 @@ private fun ExplorerSection(
                 // Renames touch the open-note binding (Compose state) so run on the main thread.
                 val ok = editor.renameDocument(entry.documentUri, newName)
                 renaming = null
-                if (ok) refreshKey++
+                if (ok) {
+                    // Carry the colour code to the new name (sidecar is keyed by name), then re-list.
+                    if (entry.color != null) {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { editor.moveItemColor(root, entry.parentDocId, entry.name, newName) }
+                            refreshKey++
+                        }
+                    } else {
+                        refreshKey++
+                    }
+                }
             },
             onDismiss = { renaming = null },
         )
@@ -926,12 +944,20 @@ private fun ExplorerSection(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val uris = targets.map { it.documentUri }
+                    val items = targets.toList()
                     pendingDelete = null; selection.clear(); opError = null
                     scope.launch {
                         val allOk = withContext(Dispatchers.IO) {
                             var ok = true
-                            uris.forEach { if (!editor.deleteDocument(it)) ok = false }
+                            items.forEach { e ->
+                                if (editor.deleteDocument(e.documentUri)) {
+                                    // Drop its colour entry from the parent sidecar (a deleted folder's
+                                    // own sidecar goes with it).
+                                    if (e.color != null) editor.setItemColor(root, e.parentDocId, e.name, null)
+                                } else {
+                                    ok = false
+                                }
+                            }
                             ok
                         }
                         refreshKey++
@@ -1050,6 +1076,9 @@ private fun entryDate(entry: BrowseEntry): String =
         ).toString()
     else ""
 
+/** A colour-coded outline, deepened in the light theme like the accent (dark/oled keep it as stored). */
+private fun codeOutline(c: Rgba, isDark: Boolean): Rgba = if (isDark) c else ColorMath.darkenForLight(c)
+
 /** The per-entry overflow menu. Files get the extra Share/Save-a-copy/Export block (pass [onShare]); folders don't. */
 @Composable
 private fun EntryMenu(
@@ -1062,18 +1091,28 @@ private fun EntryMenu(
     onShare: (() -> Unit)? = null,
     onSaveCopy: (() -> Unit)? = null,
     onExportPdf: (() -> Unit)? = null,
+    onColor: ((Rgba?) -> Unit)? = null,
 ) {
     val palette = LocalPalette.current
+    // "Color code" swaps the menu's contents for the swatch picker until a colour (or None) is chosen;
+    // closing the menu resets it so it always reopens on the main list.
+    var showColors by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) { if (!expanded) showColors = false }
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        DropdownMenuItem(text = { Text("Rename") }, onClick = { onDismiss(); onRename?.invoke() })
-        DropdownMenuItem(text = { Text("Copy") }, onClick = { onDismiss(); onCopy?.invoke() })
-        DropdownMenuItem(text = { Text("Cut") }, onClick = { onDismiss(); onCut?.invoke() })
-        DropdownMenuItem(text = { Text("Delete") }, onClick = { onDismiss(); onDelete?.invoke() })
-        if (onShare != null) {
-            HorizontalDivider(color = palette.border.toComposeColor())
-            DropdownMenuItem(text = { Text("Share") }, onClick = { onDismiss(); onShare() })
-            DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { onDismiss(); onSaveCopy?.invoke() })
-            DropdownMenuItem(text = { Text("Export to PDF") }, onClick = { onDismiss(); onExportPdf?.invoke() })
+        if (showColors) {
+            ColorCodeMenuContent { c -> onDismiss(); onColor?.invoke(c) }
+        } else {
+            DropdownMenuItem(text = { Text("Rename") }, onClick = { onDismiss(); onRename?.invoke() })
+            DropdownMenuItem(text = { Text("Copy") }, onClick = { onDismiss(); onCopy?.invoke() })
+            DropdownMenuItem(text = { Text("Cut") }, onClick = { onDismiss(); onCut?.invoke() })
+            if (onColor != null) DropdownMenuItem(text = { Text("Color code") }, onClick = { showColors = true })
+            DropdownMenuItem(text = { Text("Delete") }, onClick = { onDismiss(); onDelete?.invoke() })
+            if (onShare != null) {
+                HorizontalDivider(color = palette.border.toComposeColor())
+                DropdownMenuItem(text = { Text("Share") }, onClick = { onDismiss(); onShare() })
+                DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { onDismiss(); onSaveCopy?.invoke() })
+                DropdownMenuItem(text = { Text("Export to PDF") }, onClick = { onDismiss(); onExportPdf?.invoke() })
+            }
         }
     }
 }
@@ -1139,6 +1178,7 @@ private fun FolderChip(
     onCopy: (() -> Unit)?,
     onCut: (() -> Unit)?,
     onDelete: (() -> Unit)?,
+    onColor: ((Rgba?) -> Unit)?,
     onDismissSelection: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -1151,6 +1191,7 @@ private fun FolderChip(
     var menuOpen by remember { mutableStateOf(false) }
     val accent = palette.accent.toComposeColor()
     val onAccent = palette.bg.toComposeColor()
+    val codeColor = entry.color?.let { codeOutline(it, palette.isDark).toComposeColor() }
     // A dropped move flicks the target chip up and back; the hover state tints it with the accent veil.
     val pulse = remember { Animatable(1f) }
     LaunchedEffect(pulsing) {
@@ -1171,7 +1212,7 @@ private fun FolderChip(
             // accent-fill toggle: active fills solid accent with content flipped to bg, otherwise a thin
             // bordered transparent box. No tap ripple — the colour invert is the only cue.
             .background(if (active) accent else Color.Transparent)
-            .border(1.dp, if (active) accent else palette.border.toComposeColor(), RectangleShape)
+            .border(1.dp, if (active) accent else (codeColor ?: palette.border.toComposeColor()), RectangleShape)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1197,7 +1238,7 @@ private fun FolderChip(
             ) {
                 Icon(XnotesIcons.more, "More", tint = if (active) onAccent else palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
             }
-            if (!inSelectMode) EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete)
+            if (!inSelectMode) EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete, onColor = onColor)
         }
     }
 }
@@ -1218,6 +1259,7 @@ private fun FileTile(
     onCopy: (() -> Unit)?,
     onCut: (() -> Unit)?,
     onDelete: (() -> Unit)?,
+    onColor: ((Rgba?) -> Unit)?,
     onClick: () -> Unit,
     onBounds: (Rect?) -> Unit,
 ) {
@@ -1231,6 +1273,7 @@ private fun FileTile(
     }
     val accent = palette.accent.toComposeColor()
     val onAccent = palette.bg.toComposeColor()
+    val codeColor = entry.color?.let { codeOutline(it, palette.isDark).toComposeColor() }
     Column(
         Modifier
             // Square the whole card; the thumbnail shrinks vertically to leave room for the label strip.
@@ -1238,7 +1281,7 @@ private fun FileTile(
             .alpha(if (dimmed) 0.4f else 1f)
             // accent-fill family: one squared outline wraps the thumbnail and the label strip. border
             // draws over its children, so it stays crisp on top of the full-bleed thumbnail.
-            .border(1.dp, if (selected) accent else palette.border.toComposeColor(), RectangleShape)
+            .border(1.dp, if (selected) accent else (codeColor ?: palette.border.toComposeColor()), RectangleShape)
             // No tap ripple — the accent border + fill is the only selection cue. The tile owns only tap
             // (open / toggle in select mode); long-press to select and the drag-to-move gesture both live
             // on the grid container, so they survive this tile scrolling out from under the finger.
@@ -1268,7 +1311,7 @@ private fun FileTile(
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
                         Icon(XnotesIcons.more, "More", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp))
                     }
-                    EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete, onShare, onSaveCopy, onExportPdf)
+                    EntryMenu(menuOpen, { menuOpen = false }, onRename, onCopy, onCut, onDelete, onShare, onSaveCopy, onExportPdf, onColor = onColor)
                 }
             }
         }
