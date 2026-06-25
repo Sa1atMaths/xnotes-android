@@ -58,6 +58,12 @@ class CanvasView @JvmOverloads constructor(
     /** Pointer handler installed by the interaction layer. */
     var input: ((MotionEvent) -> Boolean)? = null
 
+    /** Clean two-finger tap (finger-only, brief, near-stationary), for the configurable gesture. */
+    var onTwoFingerTap: (() -> Unit)? = null
+
+    /** Clean three-finger tap (finger-only, brief, near-stationary), for the configurable gesture. */
+    var onThreeFingerTap: (() -> Unit)? = null
+
     /** Invoked after the viewport is (re)laid out and the initial fit applied. */
     var afterLayout: (() -> Unit)? = null
 
@@ -96,6 +102,12 @@ class CanvasView @JvmOverloads constructor(
     private var fourCy = 0f
     private var fourMoved = false
 
+    // --- two/three-finger-tap recognition (configurable gesture actions) ---
+    private val tapDownX = HashMap<Int, Float>()
+    private val tapDownY = HashMap<Int, Float>()
+    private var tapMoved = false
+    private var tapAllFingers = true
+
     init {
         isFocusableInTouchMode = true
         setWillNotDraw(false)
@@ -104,6 +116,7 @@ class CanvasView @JvmOverloads constructor(
     @Suppress("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (trackFourFingerTap(event)) return true
+        if (trackMultiFingerTap(event)) return true
         return input?.invoke(event) ?: super.onTouchEvent(event)
     }
 
@@ -179,6 +192,55 @@ class CanvasView @JvmOverloads constructor(
         cancel.action = MotionEvent.ACTION_CANCEL
         input?.invoke(cancel)
         cancel.recycle()
+    }
+
+    /**
+     * Recognize a clean two- or three-finger tap (finger-only, brief, near-stationary) and fire the
+     * matching callback. Unlike the four-finger tap this never swallows the gesture mid-flight, so
+     * pinch-zoom keeps working; only on a recognized tap do we cancel the (already-ended) pinch and
+     * consume the terminal UP. A moving or slow gesture falls through untouched. Reuses [gestureDownMs]
+     * and [gestureMaxPointers], which [trackFourFingerTap] (run first) keeps current.
+     */
+    private fun trackMultiFingerTap(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                tapDownX.clear(); tapDownY.clear()
+                tapMoved = false
+                tapAllFingers = e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
+                recordTapDown(e, 0)
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (e.getToolType(e.actionIndex) != MotionEvent.TOOL_TYPE_FINGER) tapAllFingers = false
+                recordTapDown(e, e.actionIndex)
+            }
+            MotionEvent.ACTION_MOVE -> if (!tapMoved) {
+                for (i in 0 until e.pointerCount) {
+                    val dx = e.getX(i) - (tapDownX[e.getPointerId(i)] ?: e.getX(i))
+                    val dy = e.getY(i) - (tapDownY[e.getPointerId(i)] ?: e.getY(i))
+                    if (kotlin.math.hypot(dx.toDouble(), dy.toDouble()) > TAP_SLOP) { tapMoved = true; break }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                val cb = when (gestureMaxPointers) {
+                    2 -> onTwoFingerTap
+                    3 -> onThreeFingerTap
+                    else -> null
+                }
+                val quick = e.eventTime - gestureDownMs <= TAP_TIMEOUT_MS
+                if (cb != null && quick && !tapMoved && tapAllFingers) {
+                    cancelInteraction(e)
+                    cb()
+                    return true
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> tapMoved = true
+        }
+        return false
+    }
+
+    private fun recordTapDown(e: MotionEvent, index: Int) {
+        tapDownX[e.getPointerId(index)] = e.getX(index)
+        tapDownY[e.getPointerId(index)] = e.getY(index)
     }
 
     override fun onHoverEvent(event: MotionEvent): Boolean =

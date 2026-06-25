@@ -131,6 +131,11 @@ class InteractionController(
 
     var tool: Tool = Tool.DEFAULT
         private set
+
+    /** The single immediately-prior Tool (not a stack); null until the first switch. Used by the
+     *  tap-gesture toggles. Ruler/wand are never Tools, so they can't land here. Not persisted. */
+    var previousTool: Tool? = null
+        private set
     var inkColor: Rgba = InkPalette.DEFAULT
 
     /** Whether a finger draws (true) or pans (false). The stylus always uses the armed tool. */
@@ -342,6 +347,7 @@ class InteractionController(
         clearSelection()
         clearScreenshot()
         eraserCursor = null
+        previousTool = tool
         tool = t
         onToolChanged(t)
         requestRender()

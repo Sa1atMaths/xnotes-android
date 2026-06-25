@@ -31,6 +31,10 @@ data class Preferences(
     val penButtonTool: String = "eraser",
     /** Whether the side-button tool also activates during hover (no contact needed); eraser/pan only. */
     val penButtonHover: Boolean = false,
+    /** Action mapped to a clean two-finger tap; "none" (default) disables it. */
+    val twoFingerTap: String = "none",
+    /** Action mapped to a clean three-finger tap; "none" (default) disables it. */
+    val threeFingerTap: String = "none",
     /** Horizontal margin (px) on each side of the page column; 0 ⇒ fit-width fills the screen. */
     val sideMargin: Double = 16.0,
     /** Long-edge cap (px) for the on-screen page cache; higher holds more of the page ready at deep zoom. */
@@ -54,6 +58,8 @@ data class Preferences(
         .put("detect_shapes", detectShapes)
         .put("pen_button_tool", penButtonTool)
         .put("pen_button_hover", penButtonHover)
+        .put("two_finger_tap", twoFingerTap)
+        .put("three_finger_tap", threeFingerTap)
         .put("side_margin", sideMargin)
         .put("max_cache_resolution", maxCacheResolution)
 
@@ -65,6 +71,8 @@ data class Preferences(
             val appearance = o.optString("ui_appearance", "dark").let { if (it == "light" || it == "oled") it else "dark" }
             val template = o.optString("default_template", "color").let { if (it == "pdf") "pdf" else "color" }
             val zoomLockPan = o.optString("zoom_lock_pan", "single").let { if (it == "double" || it == "none") it else "single" }
+            val tapActions = setOf("none", "undo", "redo", "toggle_pan", "toggle_eraser", "toggle_previous")
+            fun tapAction(key: String) = o.optString(key, "none").let { if (it in tapActions) it else "none" }
             return Preferences(
                 pdfDarkMode = o.optBoolean("pdf_dark_mode", false),
                 pdfKeepImageColors = o.optBoolean("pdf_keep_image_colors", false),
@@ -81,6 +89,8 @@ data class Preferences(
                 detectShapes = o.optBoolean("detect_shapes", false),
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
                 penButtonHover = o.optBoolean("pen_button_hover", false),
+                twoFingerTap = tapAction("two_finger_tap"),
+                threeFingerTap = tapAction("three_finger_tap"),
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
             )

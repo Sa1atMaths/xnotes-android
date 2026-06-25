@@ -335,6 +335,8 @@ class Editor(context: Context) {
 
     init {
         view.input = { controller.onTouch(it) }
+        view.onTwoFingerTap = { dispatchTapGesture(preferences.twoFingerTap) }
+        view.onThreeFingerTap = { dispatchTapGesture(preferences.threeFingerTap) }
         view.hover = { controller.onHover(it) }
         view.genericMotion = { controller.onGenericMotion(it) }
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
@@ -1837,6 +1839,27 @@ class Editor(context: Context) {
     fun selectTool(t: Tool) {
         controller.setTool(t)
         tool = t
+    }
+
+    /** Run the action a two/three-finger tap is mapped to (preferences); "none" does nothing. */
+    private fun dispatchTapGesture(action: String) = when (action) {
+        "undo" -> undo()
+        "redo" -> redo()
+        "toggle_pan" -> toggleTool(Tool.PAN)
+        "toggle_eraser" -> toggleTool(Tool.ERASER)
+        "toggle_previous" -> toggleToPreviousTool()
+        else -> Unit
+    }
+
+    /** Arm [target], or if it is already armed, return to the previous tool (no-op if none yet). */
+    private fun toggleTool(target: Tool) {
+        if (controller.tool == target) controller.previousTool?.let { selectTool(it) }
+        else selectTool(target)
+    }
+
+    /** Switch to the single previous tool; no-op on a fresh launch with no previous tool. */
+    private fun toggleToPreviousTool() {
+        controller.previousTool?.let { selectTool(it) }
     }
 
     fun pickColor(index: Int) {

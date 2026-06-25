@@ -68,6 +68,14 @@ internal val pageColorPresets = listOf(
     Rgba(22, 22, 22), Rgba(13, 13, 13), Rgba(255, 255, 255), Rgba(247, 243, 233), Rgba(232, 232, 232),
 )
 private val penButtonOptions = listOf("eraser" to "Eraser", "pan" to "Pan", "select" to "Select", "none" to "None")
+private val tapGestureOptions = listOf(
+    "none" to "None",
+    "undo" to "Undo",
+    "redo" to "Redo",
+    "toggle_pan" to "Toggle pan",
+    "toggle_eraser" to "Toggle eraser",
+    "toggle_previous" to "Toggle previous tool",
+)
 
 /**
  * Preferences as a backstage pane (spec 10 §8). Edits apply live — each change is
@@ -175,6 +183,10 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
                     update(prefs.copy(penButtonHover = it))
                 }
             }
+            FieldLabel("Two-finger tap")
+            OptionDropdown(tapGestureOptions, prefs.twoFingerTap) { update(prefs.copy(twoFingerTap = it)) }
+            FieldLabel("Three-finger tap")
+            OptionDropdown(tapGestureOptions, prefs.threeFingerTap) { update(prefs.copy(threeFingerTap = it)) }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Page")
@@ -493,6 +505,29 @@ private fun SizeDropdown(size: PageSize, onSelect: (PageSize) -> Unit) {
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             PageSize.entries.forEach { s ->
                 DropdownMenuItem(text = { Text(s.displayName) }, onClick = { onSelect(s); expanded = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionDropdown(options: List<Pair<String, String>>, selectedId: String, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val palette = LocalPalette.current
+    val label = options.firstOrNull { it.first == selectedId }?.second ?: options.first().second
+    Box {
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(6.dp))
+                .clickable { expanded = true }
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        ) {
+            Text(label, color = palette.text.toComposeColor(), fontSize = 14.sp)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (id, lbl) ->
+                DropdownMenuItem(text = { Text(lbl) }, onClick = { onSelect(id); expanded = false })
             }
         }
     }

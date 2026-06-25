@@ -106,4 +106,23 @@ class SettingsTest {
         val back = Settings.fromJson(Settings(toolbarLayout = custom).toJson())
         assertEquals(custom, back.toolbarLayout)
     }
+
+    @Test fun tapGesturesDefaultToNone() {
+        val p = Preferences.fromJson(JSONObject())
+        assertEquals("none", p.twoFingerTap)
+        assertEquals("none", p.threeFingerTap)
+    }
+
+    @Test fun tapGesturesRoundTrip() {
+        val back = Preferences.fromJson(
+            Preferences(twoFingerTap = "undo", threeFingerTap = "toggle_eraser").toJson(),
+        )
+        assertEquals("undo", back.twoFingerTap)
+        assertEquals("toggle_eraser", back.threeFingerTap)
+    }
+
+    @Test fun tapGestureMalformedFallsBackToNone() {
+        val o = JSONObject().put("two_finger_tap", "explode")
+        assertEquals("none", Preferences.fromJson(o).twoFingerTap)
+    }
 }
