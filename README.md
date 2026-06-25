@@ -21,6 +21,18 @@
   <a href="https://f-droid.org/en/packages/com.xnotes">F-Droid</a>
 </p>
 
+<p align="center">
+  <img src="fastlane/metadata/android/en-US/images/sevenInchScreenshots/1.png" width="90%" alt="xnotes editor: a PDF open with the ink toolbar and page thumbnails" />
+  <br />
+  <em>Annotating a PDF in dark mode with pages inverted</em>
+</p>
+
+<p align="center">
+  <img src="fastlane/metadata/android/en-US/images/sevenInchScreenshots/2.png" width="90%" alt="xnotes home screen: the file browser showing imported notes" />
+  <br />
+  <em>Browsing your notes and imported PDFs</em>
+</p>
+
 ---
 
 ## At a glance
