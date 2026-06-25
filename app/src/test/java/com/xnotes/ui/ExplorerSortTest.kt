@@ -1,65 +1,90 @@
 package com.xnotes.ui
 
+import com.xnotes.settings.ExplorerSortKey
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Verifies the explorer grid order: folders first (ascending by creation), files after (descending). */
+/** Verifies the explorer grid order: folders first, then the chosen field/direction within each group. */
 class ExplorerSortTest {
 
-    private fun entry(name: String, isDir: Boolean, created: Long, modified: Long = 0) =
-        BrowseEntry(name = name, documentUri = "uri:$name", isDir = isDir, size = 0, modified = modified, created = created)
+    private fun entry(name: String, isDir: Boolean, created: Long = 0, modified: Long = 0, size: Long = 0) =
+        BrowseEntry(name = name, documentUri = "uri:$name", isDir = isDir, size = size, modified = modified, created = created)
 
-    private fun order(vararg entries: BrowseEntry) =
-        entries.toList().sortedWith(explorerComparator { it.created }).map { it.name }
+    private fun order(key: ExplorerSortKey, descending: Boolean, vararg entries: BrowseEntry) =
+        entries.toList().sortedWith(explorerComparator(key, descending) { it.created }).map { it.name }
 
     @Test
-    fun foldersComeBeforeFiles() {
+    fun foldersAlwaysComeBeforeFiles() {
+        // Even the most recently edited folder sorts ahead of every file, whatever the key.
         assertEquals(
             listOf("folder", "note"),
             order(
-                entry("note", isDir = false, created = 100),
-                entry("folder", isDir = true, created = 1),
+                ExplorerSortKey.MODIFIED, descending = true,
+                entry("note", isDir = false, modified = 100),
+                entry("folder", isDir = true, modified = 1),
             ),
         )
     }
 
     @Test
-    fun foldersAscendingFilesDescendingByCreated() {
+    fun modifiedSortsBothDirections() {
+        val items = arrayOf(
+            entry("a", isDir = false, modified = 20),
+            entry("b", isDir = false, modified = 30),
+            entry("c", isDir = false, modified = 10),
+        )
+        assertEquals(listOf("b", "a", "c"), order(ExplorerSortKey.MODIFIED, descending = true, *items))
+        assertEquals(listOf("c", "a", "b"), order(ExplorerSortKey.MODIFIED, descending = false, *items))
+    }
+
+    @Test
+    fun modifiedKeepsFoldersAndFilesInSeparateGroups() {
         assertEquals(
-            // folders oldest -> newest (newest folder last); files newest -> oldest (newest note first)
-            listOf("f-old", "f-mid", "f-new", "note-new", "note-mid", "note-old"),
+            listOf("f-new", "f-old", "note-new", "note-old"),
             order(
-                entry("f-old", isDir = true, created = 10),
-                entry("f-new", isDir = true, created = 30),
-                entry("f-mid", isDir = true, created = 20),
-                entry("note-old", isDir = false, created = 10),
-                entry("note-new", isDir = false, created = 30),
-                entry("note-mid", isDir = false, created = 20),
+                ExplorerSortKey.MODIFIED, descending = true,
+                entry("f-old", isDir = true, modified = 10),
+                entry("f-new", isDir = true, modified = 30),
+                entry("note-old", isDir = false, modified = 20),
+                entry("note-new", isDir = false, modified = 40),
             ),
         )
     }
 
     @Test
-    fun filesTieOnCreatedFallBackToModifiedThenName() {
-        // A freshly granted folder stamps every file at the same instant — most-recently-edited wins.
+    fun nameSortsBothDirections() {
+        val items = arrayOf(
+            entry("banana", isDir = false),
+            entry("Apple", isDir = false),
+            entry("cherry", isDir = false),
+        )
+        assertEquals(listOf("Apple", "banana", "cherry"), order(ExplorerSortKey.NAME, descending = false, *items))
+        assertEquals(listOf("cherry", "banana", "Apple"), order(ExplorerSortKey.NAME, descending = true, *items))
+    }
+
+    @Test
+    fun sizeDescendingPutsLargestFirst() {
+        assertEquals(
+            listOf("big", "mid", "small"),
+            order(
+                ExplorerSortKey.SIZE, descending = true,
+                entry("small", isDir = false, size = 100),
+                entry("big", isDir = false, size = 300),
+                entry("mid", isDir = false, size = 200),
+            ),
+        )
+    }
+
+    @Test
+    fun tiesFallBackToNameAscending() {
+        // Same modified and creation time: name breaks the tie, ascending, whatever the direction.
         assertEquals(
             listOf("a", "b", "c"),
             order(
-                entry("b", isDir = false, created = 5, modified = 100),
-                entry("a", isDir = false, created = 5, modified = 200),
-                entry("c", isDir = false, created = 5, modified = 100),
-            ),
-        )
-    }
-
-    @Test
-    fun foldersTieOnCreatedFallBackToModifiedThenName() {
-        assertEquals(
-            listOf("x", "z", "y"),
-            order(
-                entry("y", isDir = true, created = 5, modified = 200),
-                entry("x", isDir = true, created = 5, modified = 100),
-                entry("z", isDir = true, created = 5, modified = 100),
+                ExplorerSortKey.MODIFIED, descending = true,
+                entry("b", isDir = false, modified = 5),
+                entry("a", isDir = false, modified = 5),
+                entry("c", isDir = false, modified = 5),
             ),
         )
     }

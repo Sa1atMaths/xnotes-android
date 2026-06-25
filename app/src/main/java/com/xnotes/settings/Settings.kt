@@ -38,6 +38,20 @@ data class PresentationSettings(
     }
 }
 
+/**
+ * How the in-app explorer orders entries. The chosen key sorts within each group (folders first,
+ * then files); [Settings.explorerSortDescending] flips the direction.
+ */
+enum class ExplorerSortKey(val id: String) {
+    NAME("name"),
+    MODIFIED("modified"),
+    SIZE("size");
+
+    companion object {
+        fun fromId(id: String): ExplorerSortKey = entries.firstOrNull { it.id == id } ?: MODIFIED
+    }
+}
+
 /** All persistent non-document state (spec 09 §2). */
 data class Settings(
     val tools: Map<Tool, ToolConfig> = emptyMap(),
@@ -52,6 +66,9 @@ data class Settings(
     /** Whether the next launch opens the home screen (true) or the last-open note (false). */
     val startOnHome: Boolean = true,
     val sidebarVisible: Boolean = false,
+    /** Explorer grid sort: which field orders entries, and whether it's reversed. */
+    val explorerSortKey: ExplorerSortKey = ExplorerSortKey.MODIFIED,
+    val explorerSortDescending: Boolean = true,
     val renderScale: Double = 1.0,
     val presentation: PresentationSettings = PresentationSettings(),
     val prefs: Preferences = Preferences(),
@@ -80,6 +97,8 @@ data class Settings(
             .apply { browseRoot?.let { put("browse_root", it) } }
             .put("start_on_home", startOnHome)
             .put("sidebar_visible", sidebarVisible)
+            .put("explorer_sort_key", explorerSortKey.id)
+            .put("explorer_sort_descending", explorerSortDescending)
             .put("render_scale", renderScale)
             .put("presentation", presentation.toJson())
             .put("prefs", prefs.toJson())
@@ -111,6 +130,8 @@ data class Settings(
                 browseRoot = o.optString("browse_root", "").ifEmpty { null },
                 startOnHome = o.optBoolean("start_on_home", true),
                 sidebarVisible = o.optBoolean("sidebar_visible", false),
+                explorerSortKey = ExplorerSortKey.fromId(o.optString("explorer_sort_key", "modified")),
+                explorerSortDescending = o.optBoolean("explorer_sort_descending", true),
                 renderScale = o.optDouble("render_scale", 1.0),
                 presentation = PresentationSettings.fromJson(o.optJSONObject("presentation")),
                 prefs = Preferences.fromJson(o.optJSONObject("prefs")),

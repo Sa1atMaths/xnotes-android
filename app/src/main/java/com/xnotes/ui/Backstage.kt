@@ -122,6 +122,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.model.Rgba
+import com.xnotes.settings.ExplorerSortKey
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.ColorMath
 import com.xnotes.ui.theme.LocalPalette
@@ -391,6 +392,38 @@ private fun RailDivider() {
     HorizontalDivider(color = LocalPalette.current.border.toComposeColor(), modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp))
 }
 
+/** One row of the explorer's "Sort by" menu: a check and direction arrow mark the active field. */
+@Composable
+private fun SortOption(
+    label: String,
+    key: ExplorerSortKey,
+    activeKey: ExplorerSortKey,
+    descending: Boolean,
+    onPick: (ExplorerSortKey, Boolean) -> Unit,
+) {
+    val palette = LocalPalette.current
+    val active = key == activeKey
+    val tint = (if (active) palette.accent else palette.text).toComposeColor()
+    DropdownMenuItem(
+        text = { Text(label, color = tint) },
+        leadingIcon = {
+            if (active) Icon(XnotesIcons.check, null, tint = tint, modifier = Modifier.size(18.dp))
+            else Spacer(Modifier.size(18.dp))
+        },
+        trailingIcon = if (active) {
+            {
+                Icon(
+                    if (descending) XnotesIcons.arrowDown else XnotesIcons.arrowUp,
+                    if (descending) "Descending" else "Ascending",
+                    tint = tint,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        } else null,
+        onClick = { if (active) onPick(key, !descending) else onPick(key, key != ExplorerSortKey.NAME) },
+    )
+}
+
 // --- home pane: the folder explorer ---
 
 @Composable
@@ -561,6 +594,9 @@ private fun ExplorerSection(
         }
     }
     var menuOpen by remember(root) { mutableStateOf(false) }
+    // The More menu drills into a "Sort by" sub-list; reset to the main list whenever it closes.
+    var sortSubmenu by remember(root) { mutableStateOf(false) }
+    LaunchedEffect(menuOpen) { if (!menuOpen) sortSubmenu = false }
     var newMenuOpen by remember(root) { mutableStateOf(false) }
     val rootName by produceState(editor.cachedRootName(root), root) { value = withContext(Dispatchers.IO) { editor.browseRootName(root) } }
     val dismissInteraction = remember { MutableInteractionSource() }
@@ -621,8 +657,30 @@ private fun ExplorerSection(
                 Box {
                     IconAction(XnotesIcons.more, "More") { menuOpen = true }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Change folder") }, onClick = { menuOpen = false; onPickRoot() })
-                        DropdownMenuItem(text = { Text("Forget folder") }, onClick = { menuOpen = false; editor.clearBrowseRoot() })
+                        if (sortSubmenu) {
+                            val sortKey = editor.explorerSortKey
+                            val sortDesc = editor.explorerSortDescending
+                            // Header doubles as "back"; tapping a field flips its direction when already
+                            // active, else switches to it (dates/size newest-or-largest first, name A→Z).
+                            DropdownMenuItem(
+                                text = { Text("Sort by", color = palette.textDim.toComposeColor()) },
+                                leadingIcon = { Icon(XnotesIcons.prev, "Back", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(18.dp)) },
+                                onClick = { sortSubmenu = false },
+                            )
+                            HorizontalDivider(color = palette.border.toComposeColor())
+                            SortOption("Name", ExplorerSortKey.NAME, sortKey, sortDesc) { k, d -> editor.setExplorerSort(k, d); refreshKey++ }
+                            SortOption("Date modified", ExplorerSortKey.MODIFIED, sortKey, sortDesc) { k, d -> editor.setExplorerSort(k, d); refreshKey++ }
+                            SortOption("Size", ExplorerSortKey.SIZE, sortKey, sortDesc) { k, d -> editor.setExplorerSort(k, d); refreshKey++ }
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Sort by") },
+                                trailingIcon = { Icon(XnotesIcons.next, null, tint = palette.text.toComposeColor(), modifier = Modifier.size(18.dp)) },
+                                onClick = { sortSubmenu = true },
+                            )
+                            HorizontalDivider(color = palette.border.toComposeColor())
+                            DropdownMenuItem(text = { Text("Change folder") }, onClick = { menuOpen = false; onPickRoot() })
+                            DropdownMenuItem(text = { Text("Forget folder") }, onClick = { menuOpen = false; editor.clearBrowseRoot() })
+                        }
                     }
                 }
             } else {

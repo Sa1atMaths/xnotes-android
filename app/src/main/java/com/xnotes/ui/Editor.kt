@@ -51,6 +51,7 @@ import com.xnotes.format.XNoteFormatException
 import com.xnotes.platform.AndroidImageCodec
 import com.xnotes.platform.AndroidSurfaceFactory
 import com.xnotes.platform.AndroidTextMeasurer
+import com.xnotes.settings.ExplorerSortKey
 import com.xnotes.settings.Preferences
 import com.xnotes.settings.SettingsRepository
 import com.xnotes.ui.theme.Palette
@@ -1229,6 +1230,19 @@ class Editor(context: Context) {
         updateBrowseRoot(com.xnotes.platform.AppStorageDocumentsProvider.treeUri(appContext).toString())
     }
 
+    /** The field the explorer grid sorts by, and whether that sort is reversed. */
+    val explorerSortKey: ExplorerSortKey get() = settings.explorerSortKey
+    val explorerSortDescending: Boolean get() = settings.explorerSortDescending
+
+    /** Change the explorer sort, persist it, and re-sort every cached folder listing in place. */
+    fun setExplorerSort(key: ExplorerSortKey, descending: Boolean) {
+        if (settings.explorerSortKey == key && settings.explorerSortDescending == descending) return
+        settings = settings.copy(explorerSortKey = key, explorerSortDescending = descending)
+        settingsRepo.save(settings)
+        val cmp = explorerComparator(key, descending) { it.created }
+        browseCache.replaceAll { _, v -> v.sortedWith(cmp) }
+    }
+
     /** Forget the granted folder: release its SAF permission and clear the root. */
     fun clearBrowseRoot() {
         browseRoot?.let { old ->
@@ -1751,7 +1765,7 @@ class Editor(context: Context) {
         val withCreated = out.map {
             it.copy(created = createdStore.get(documentKey(it.documentUri)) ?: now, color = colors[it.name])
         }
-        val result = withCreated.sortedWith(explorerComparator { it.created })
+        val result = withCreated.sortedWith(explorerComparator(settings.explorerSortKey, settings.explorerSortDescending) { it.created })
         browseCache["$treeUri|$parentDocId"] = result
         return result
     }
@@ -1850,7 +1864,7 @@ class Editor(context: Context) {
     /**
      * Recursively finds notes at or below [startDocId] in tree [treeUri] whose name (sans `.xnote`)
      * contains [query], case-insensitively. Folders are descended into but not themselves returned;
-     * results are ordered newest-first like the grid. Does one provider query per folder, so it's IO
+     * results follow the explorer's chosen sort order. Does one provider query per folder, so it's IO
      * and can be slow on deep trees — call off-thread (and debounce the keystrokes that drive it).
      */
     fun searchNotes(treeUri: String, startDocId: String, query: String): List<BrowseEntry> {
@@ -1871,9 +1885,7 @@ class Editor(context: Context) {
                 }
             }
         }
-        return out.sortedWith(
-            compareByDescending<BrowseEntry> { it.created }.thenByDescending { it.modified }.thenBy { it.name.lowercase() },
-        )
+        return out.sortedWith(explorerComparator(settings.explorerSortKey, settings.explorerSortDescending) { it.created })
     }
 
     /** Warm the backstage caches off-thread (after launch) so its first open paints instantly. */

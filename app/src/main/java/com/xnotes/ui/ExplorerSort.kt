@@ -1,25 +1,31 @@
 package com.xnotes.ui
 
+import com.xnotes.settings.ExplorerSortKey
+
 /**
- * Orders explorer entries for the grid: folders first (rendered as chips), then files. Folders are
- * ascending by creation time (the most recently created folder sits last); files are descending (the
- * most recently created note sits first). [createdOf] supplies the app-tracked creation time (see
- * [com.xnotes.platform.CreationTimeStore]) — last-modified then name break ties, so a freshly granted
- * folder (every item stamped at the same discovery instant) still lists most-recently-edited first.
+ * Orders explorer entries for the grid: folders first (rendered as chips), then files, with the
+ * chosen [key]/[descending] sort applied within each group. [createdOf] supplies the app-tracked
+ * creation time (see [com.xnotes.platform.CreationTimeStore]); it breaks ties on the modified/size
+ * keys, and name is the final ascending tiebreaker so the order is always stable.
  *
  * Pure (no Android), so it's unit-tested directly on [BrowseEntry] lists.
  */
-internal fun explorerComparator(createdOf: (BrowseEntry) -> Long): Comparator<BrowseEntry> {
-    val folderOrder = compareBy<BrowseEntry>({ createdOf(it) }, { it.modified }, { it.name.lowercase() })
-    val fileOrder = compareByDescending<BrowseEntry> { createdOf(it) }
-        .thenByDescending { it.modified }
-        .thenBy { it.name.lowercase() }
+internal fun explorerComparator(
+    key: ExplorerSortKey,
+    descending: Boolean,
+    createdOf: (BrowseEntry) -> Long,
+): Comparator<BrowseEntry> {
+    val base: Comparator<BrowseEntry> = when (key) {
+        ExplorerSortKey.NAME -> compareBy { it.name.lowercase() }
+        ExplorerSortKey.MODIFIED -> compareBy({ it.modified }, { createdOf(it) })
+        ExplorerSortKey.SIZE -> compareBy({ it.size }, { createdOf(it) })
+    }
+    val within = (if (descending) base.reversed() else base).thenBy { it.name.lowercase() }
     return Comparator { a, b ->
         when {
             a.isDir && !b.isDir -> -1
             !a.isDir && b.isDir -> 1
-            a.isDir -> folderOrder.compare(a, b)
-            else -> fileOrder.compare(a, b)
+            else -> within.compare(a, b)
         }
     }
 }

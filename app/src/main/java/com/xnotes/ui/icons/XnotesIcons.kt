@@ -120,6 +120,8 @@ object XnotesIcons {
     val home = icon("M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z", "M9 22V12h6v10")
     val share = icon("M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8", "M16 6l-4-4-4 4", "M12 2v13")
     val check = icon("M20 6 9 17l-5-5")
+    val arrowUp = icon("M12 19V5", "M5 12l7-7 7 7")
+    val arrowDown = icon("M12 5v14", "M19 12l-7 7-7-7")
     val newFolder = icon("M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2Z", "M12 11v6", "M9 14h6")
     val paste = icon("M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", "M9 2h6a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z")
     val more = icon(circle(12.0, 5.0, 1.0), circle(12.0, 12.0, 1.0), circle(12.0, 19.0, 1.0))
