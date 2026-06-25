@@ -75,7 +75,8 @@ data class ContextMenuTarget(val viewportX: Double, val viewportY: Double, val c
 /**
  * One entry (folder or .xnote file) in the in-app explorer. [documentUri] is a SAF document URI.
  * [modified] is SAF's last-modified time; [created] is the app-tracked creation time used for grid
- * ordering (SAF exposes no creation time — see [CreationTimeStore]).
+ * ordering (SAF exposes no creation time — see [CreationTimeStore]). [parentDocId] is the listing
+ * folder (where colour writes go), and [color] is the item's explorer colour code, if any.
  */
 data class BrowseEntry(
     val name: String,
@@ -84,6 +85,8 @@ data class BrowseEntry(
     val size: Long = 0,
     val modified: Long = 0,
     val created: Long = 0,
+    val parentDocId: String = "",
+    val color: Rgba? = null,
 )
 
 /** Whether a pending import came from the PDF picker or the system "Open…" file picker. */
@@ -91,6 +94,10 @@ enum class ImportKind { PDF, OPEN }
 
 /** A picked file awaiting a name before it's saved into the explorer's current folder. */
 data class PendingImport(val kind: ImportKind, val defaultName: String, val uri: String)
+
+/** Per-folder colour sidecar: a hidden ".xnote" dir holding "colors.json" (item name -> hex). */
+private const val SIDECAR_DIR = ".xnote"
+private const val SIDECAR_FILE = "colors.json"
 
 @Stable
 class Editor(context: Context) {
@@ -1703,6 +1710,7 @@ class Editor(context: Context) {
         val tree = android.net.Uri.parse(treeUri)
         val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentDocId)
         val out = ArrayList<BrowseEntry>()
+        var sidecarDocId: String? = null
         runCatching {
             appContext.contentResolver.query(
                 childrenUri,
@@ -1719,25 +1727,122 @@ class Editor(context: Context) {
                     val name = c.getString(0) ?: continue
                     val id = c.getString(1) ?: continue
                     val isDir = c.getString(2) == android.provider.DocumentsContract.Document.MIME_TYPE_DIR
-                    if (isDir || name.endsWith(".xnote", ignoreCase = true)) {
-                        val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id).toString()
-                        val size = if (!c.isNull(3)) c.getLong(3) else 0L
-                        val modified = if (!c.isNull(4)) c.getLong(4) else 0L
-                        out.add(BrowseEntry(name, docUri, isDir, size, modified))
+                    if (isDir) {
+                        // The colour sidecar is captured (read below) but never listed; other
+                        // dot-folders stay hidden from the explorer too.
+                        if (name == SIDECAR_DIR) { sidecarDocId = id; continue }
+                        if (name.startsWith(".")) continue
+                    } else if (!name.endsWith(".xnote", ignoreCase = true)) {
+                        continue
                     }
+                    val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id).toString()
+                    val size = if (!c.isNull(3)) c.getLong(3) else 0L
+                    val modified = if (!c.isNull(4)) c.getLong(4) else 0L
+                    out.add(BrowseEntry(name, docUri, isDir, size, modified, parentDocId = parentDocId))
                 }
             }
         }
+        val colors = sidecarDocId?.let { readSidecarColors(tree, it) }.orEmpty()
         // Stamp any item we haven't seen before with the moment we discovered it, so the grid can
         // order by creation even though SAF reports only last-modified: items the app created are
         // discovered on the listing right after, and an externally-added file is "created" when found.
         val now = System.currentTimeMillis()
         createdStore.stampMissing(out.map { documentKey(it.documentUri) }, now)
-        val withCreated = out.map { it.copy(created = createdStore.get(documentKey(it.documentUri)) ?: now) }
+        val withCreated = out.map {
+            it.copy(created = createdStore.get(documentKey(it.documentUri)) ?: now, color = colors[it.name])
+        }
         val result = withCreated.sortedWith(explorerComparator { it.created })
         browseCache["$treeUri|$parentDocId"] = result
         return result
     }
+
+    // --- per-folder colour sidecar (a hidden ".xnote/colors.json" beside the items it colours) ---
+
+    /** Doc id of the child named [name] under [parentDocId] (a dir when [dir], else a file), or null. */
+    private fun findChildDocId(tree: android.net.Uri, parentDocId: String, name: String, dir: Boolean): String? = runCatching {
+        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentDocId)
+        appContext.contentResolver.query(
+            childrenUri,
+            arrayOf(
+                android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+            ),
+            null, null, null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val isDir = c.getString(2) == android.provider.DocumentsContract.Document.MIME_TYPE_DIR
+                if (isDir == dir && c.getString(0) == name) return@use c.getString(1)
+            }
+            null
+        }
+    }.getOrNull()
+
+    /** Reads the colour map (item name -> colour) from sidecar dir [sidecarDocId]. Forgiving. */
+    private fun readSidecarColors(tree: android.net.Uri, sidecarDocId: String): Map<String, Rgba> {
+        val fileId = findChildDocId(tree, sidecarDocId, SIDECAR_FILE, dir = false) ?: return emptyMap()
+        val fileUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, fileId)
+        val text = runCatching {
+            appContext.contentResolver.openInputStream(fileUri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+        }.getOrNull() ?: return emptyMap()
+        return runCatching {
+            val obj = org.json.JSONObject(text).optJSONObject("colors") ?: return emptyMap()
+            val map = HashMap<String, Rgba>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                Rgba.fromHex(obj.optString(k))?.let { map[k] = it }
+            }
+            map
+        }.getOrDefault(emptyMap())
+    }
+
+    /** Overwrites sidecar dir [sidecarDocId]'s colors.json with [map], creating the file if needed. */
+    private fun writeSidecarColors(tree: android.net.Uri, sidecarDocId: String, map: Map<String, Rgba>): Boolean {
+        var fileId = findChildDocId(tree, sidecarDocId, SIDECAR_FILE, dir = false)
+        if (fileId == null) {
+            val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, sidecarDocId)
+            val created = android.provider.DocumentsContract.createDocument(
+                appContext.contentResolver, dirUri, "application/octet-stream", SIDECAR_FILE,
+            ) ?: return false
+            fileId = android.provider.DocumentsContract.getDocumentId(created)
+        }
+        val colors = org.json.JSONObject()
+        for ((k, v) in map) colors.put(k, Rgba.toHex(v))
+        val obj = org.json.JSONObject().put("version", 1).put("colors", colors)
+        val fileUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, fileId)
+        return runCatching {
+            appContext.contentResolver.openOutputStream(fileUri, "wt")?.use { it.write(obj.toString().toByteArray(Charsets.UTF_8)) }
+            true
+        }.getOrDefault(false)
+    }
+
+    /** Sets (or clears, when [color] is null) the explorer colour for [itemName] in folder [parentDocId];
+     *  persisted to that folder's hidden ".xnote/colors.json". IO, call off-thread. */
+    fun setItemColor(treeUri: String, parentDocId: String, itemName: String, color: Rgba?): Boolean = runCatching {
+        val tree = android.net.Uri.parse(treeUri)
+        val sidecarId = findChildDocId(tree, parentDocId, SIDECAR_DIR, dir = true) ?: run {
+            if (color == null) return@runCatching true // nothing stored, nothing to clear
+            val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, parentDocId)
+            val created = android.provider.DocumentsContract.createDocument(
+                appContext.contentResolver, parent, android.provider.DocumentsContract.Document.MIME_TYPE_DIR, SIDECAR_DIR,
+            ) ?: return@runCatching false
+            android.provider.DocumentsContract.getDocumentId(created)
+        }
+        val map = readSidecarColors(tree, sidecarId).toMutableMap()
+        if (color == null) map.remove(itemName) else map[itemName] = color
+        writeSidecarColors(tree, sidecarId, map)
+    }.getOrDefault(false)
+
+    /** Carries a colour across a rename: moves key [oldName] -> [newName] in [parentDocId]'s sidecar. */
+    fun moveItemColor(treeUri: String, parentDocId: String, oldName: String, newName: String): Boolean = runCatching {
+        val tree = android.net.Uri.parse(treeUri)
+        val sidecarId = findChildDocId(tree, parentDocId, SIDECAR_DIR, dir = true) ?: return@runCatching true
+        val map = readSidecarColors(tree, sidecarId).toMutableMap()
+        val c = map.remove(oldName) ?: return@runCatching true
+        map[newName] = c
+        writeSidecarColors(tree, sidecarId, map)
+    }.getOrDefault(false)
 
     /** Last-listed children for a folder, to seed the explorer instantly before the refresh. */
     fun cachedChildren(treeUri: String, parentDocId: String): List<BrowseEntry>? = browseCache["$treeUri|$parentDocId"]
