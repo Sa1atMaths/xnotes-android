@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.model.Page
@@ -95,7 +96,7 @@ fun SidePanel(
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when (tab) {
                 0 -> PagesTab(editor, onSharePages, onSavePagesAsPdf, onSavePagesAsImages)
-                1 -> EmptyHint("— no table of contents —")
+                1 -> ContentsTab(editor)
                 else -> BookmarksTab(editor)
             }
         }
@@ -428,6 +429,44 @@ private fun VerticalScrollbar(listState: LazyListState, modifier: Modifier = Mod
                 )
             },
     )
+}
+
+@Composable
+private fun ContentsTab(editor: Editor) {
+    val palette = LocalPalette.current
+    // tocVersion bumps when the off-thread outline parse lands (and to empty on document swap).
+    val version = editor.tocVersion
+    val entries = remember(version) { editor.tableOfContents }
+    if (entries.isEmpty()) {
+        EmptyHint("— no table of contents —")
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        itemsIndexed(entries) { _, e ->
+            val hasTarget = e.destPage >= 0
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (hasTarget) Modifier.clickable { editor.goToTocEntry(e) } else Modifier)
+                    .padding(
+                        start = (10 + e.level.coerceAtMost(6) * 12).dp,
+                        end = 10.dp,
+                        top = 6.dp,
+                        bottom = 6.dp,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    e.title,
+                    color = (if (hasTarget) palette.text else palette.textDim).toComposeColor(),
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
 }
 
 @Composable
