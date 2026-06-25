@@ -49,11 +49,33 @@ object StrokeEngine {
      *  un-tapered, so a quick tick doesn't collapse to nothing. */
     const val TAPER_MIN_LEN = 8.0
 
+    /** Round-cap pens hold their width over this many samples at each end (see [holdEndPressure]),
+     *  enough to cover the EMA pressure ramp so the cap meets the line at the body width. */
+    const val CAP_HOLD_SAMPLES = 4
+
     /** Taper pen: the taper at each end is capped at this fraction of the stroke's own length,
      *  so a large taper value on a short stroke only eats this much per end instead of collapsing
      *  the whole stroke into a point. With the cap at 0.1 the middle 80% always reaches full
      *  width; a value that already fits under the cap is used unchanged (a fixed arc length). */
     const val TAPER_MAX_FRACTION = 0.1
+
+    /** Holds the round-cap pen's first/last [CAP_HOLD_SAMPLES] samples up to the settled pressure
+     *  just inside each end, so a light pen-down/up can't pinch the round cap thinner than the line.
+     *  Only raises width, never lowers it, so the heavier middle and any deliberate mid-stroke
+     *  pressure dip are untouched. The window halves on very short strokes so head and tail can't
+     *  cross. The terminal taper is intentionally filled: a light lift-off is the same signal as the
+     *  pinch, so the regular pen ends square-full and rounded rather than easing to a thin tip. */
+    private fun holdEndPressure(p: List<Double>): List<Double> {
+        val n = p.size
+        val w = min(CAP_HOLD_SAMPLES, (n - 1) / 2)
+        if (w < 1) return p
+        val out = p.toDoubleArray()
+        val headFloor = p[w]
+        for (i in 0 until w) if (out[i] < headFloor) out[i] = headFloor
+        val tailFloor = p[n - 1 - w]
+        for (i in n - w until n) if (out[i] < tailFloor) out[i] = tailFloor
+        return out.asList()
+    }
 
     /** One-pole IIR low-pass (exponential moving average). */
     fun ema(values: List<Double>, alpha: Double = ALPHA): List<Double> {
@@ -185,7 +207,12 @@ object StrokeEngine {
         //    toward the midpoint, leaving it short of the pointer).
         val sx = if (smooth) ema(samples.map { it.x }) else samples.map { it.x }
         val sy = if (smooth) ema(samples.map { it.y }) else samples.map { it.y }
-        val sp = ema(samples.map { it.pressure })
+        // Round-capped pressure pens land and lift light, so the ribbon would pinch thin exactly
+        // where the round cap sits; hold the body width out to each end so the cap meets the line
+        // at full width. The flat-capped pens (and the constant-width highlighter) skip this.
+        val sp = ema(samples.map { it.pressure }).let {
+            if (roundCaps && pressureEnabled) holdEndPressure(it) else it
+        }
         val centers = (0 until n).map { Pt(sx[it], sy[it]) }
 
         fun hw(i: Int, ty: Double) = halfWidth(baseWidth, pressureEnabled, m, ds, sp[i], ty)

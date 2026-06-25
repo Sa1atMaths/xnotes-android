@@ -207,6 +207,30 @@ class StrokeEngineTest {
         assertEquals(1.5, g.caps[1].radius, 1e-9)
     }
 
+    @Test fun penRoundCapsDoNotPinchAtLightPenDownAndUp() {
+        // Pen-down and pen-up samples arrive light; without the end-width hold the cap would shrink
+        // to ~0.62 (the 0.1-pressure tip) against a ~1.5 body. The hold lifts the ends to the
+        // settled body pressure so each cap meets the line at nearly full width (no pinch), and
+        // never overshoots it (no bulge past the ribbon).
+        val pts = (0..11).map { i -> Sample(i * 10.0, 0.0, if (i == 0 || i == 11) 0.1 else 1.0) }
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, roundCaps = true)
+        val body = g.halfWidths.maxOrNull()!!
+        assertEquals(2, g.caps.size)
+        assertTrue("head cap should not pinch to the light tip", g.caps[0].radius > 1.4)
+        assertTrue("tail cap should not pinch to the light tip", g.caps[1].radius > 1.4)
+        assertTrue("caps never exceed the body width", g.caps[0].radius <= body + 1e-9)
+        assertTrue(g.caps[1].radius <= body + 1e-9)
+    }
+
+    @Test fun penHoldOnlyRaisesTheEndsNeverThinsTheMiddle() {
+        // The hold only lifts the end samples up to the inner body width; a mid-stroke pressure dip
+        // is left alone, so the ribbon still narrows in the middle where the pen was pressed lighter.
+        val pts = (0..11).map { i -> Sample(i * 10.0, 0.0, if (i in 5..6) 0.2 else 1.0) }
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, roundCaps = true)
+        assertTrue("ends held to the body width", g.caps[0].radius > 1.4 && g.caps[1].radius > 1.4)
+        assertTrue("mid-stroke dip survives", g.halfWidths.minOrNull()!! < 1.2)
+    }
+
     @Test fun calligraphyWidthGlidesAcrossADirectionChange() {
         // The nib width is low-passed, so when an L-stroke turns from a long rightward run
         // (thick horizontal regime) into a long upward run (thin vertical regime), the width
