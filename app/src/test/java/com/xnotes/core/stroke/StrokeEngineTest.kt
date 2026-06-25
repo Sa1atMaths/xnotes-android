@@ -197,14 +197,14 @@ class StrokeEngineTest {
         assertEquals(8.0, g.caps[1].radius, 1e-9)
     }
 
-    @Test fun penEndsAreFlatNotRoundCapped() {
-        // With ds = 0 a multi-sample pen ribbon also ends flat (no caps); the half-widths are
-        // still the pure-pressure value, so only the rounded ends are gone.
+    @Test fun penKeepsRoundEndCaps() {
+        // The regular pen rounds its ends like the highlighter: roundCaps = true emits a head and
+        // tail disc sized to the ribbon's half-width, which (ds = 0) is the pure-pressure value.
         val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
-        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0)
-        assertTrue(g.caps.isEmpty())
-        assertEquals(1.5, g.halfWidths.first(), 1e-9) // 3.0 × 1.0 / 2
-        assertEquals(1.5, g.halfWidths.last(), 1e-9)
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, roundCaps = true)
+        assertEquals(2, g.caps.size)
+        assertEquals(1.5, g.caps[0].radius, 1e-9) // 3.0 × 1.0 / 2
+        assertEquals(1.5, g.caps[1].radius, 1e-9)
     }
 
     @Test fun calligraphyWidthGlidesAcrossADirectionChange() {

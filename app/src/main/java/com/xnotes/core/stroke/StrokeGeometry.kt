@@ -11,8 +11,8 @@ data class Sample(val x: Double, val y: Double, val pressure: Double, val t: Dou
     val pos: Pt get() = Pt(x, y)
 }
 
-/** A round dot for a single-sample tap, or the highlighter's round head/tail end-caps; every
- *  other multi-sample ribbon ends flat and emits no caps. */
+/** A round dot for a single-sample tap, or the pen's and highlighter's round head/tail end-caps;
+ *  every other multi-sample ribbon ends flat and emits no caps. */
 data class Cap(val center: Pt, val radius: Double)
 
 /**

@@ -238,10 +238,10 @@ object StrokeEngine {
         outline.addAll(left)
         for (i in right.indices.reversed()) outline.add(right[i])
 
-        // 9. End caps only when [roundCaps] is set (the highlighter): two discs sized to the
-        //    ribbon's own half-width round the head and tail off. Every other pen leaves its ends
-        //    flat (butt), and the taper pen already came to a point. A lone tap is still a round
-        //    dot (the n == 1 path above).
+        // 9. End caps only when [roundCaps] is set (the pen and highlighter): two discs sized to
+        //    the ribbon's own half-width round the head and tail off. The speed/calligraphy pens
+        //    leave their ends flat (butt), and the taper pen already came to a point. A lone tap is
+        //    still a round dot (the n == 1 path above).
         val caps = if (roundCaps) listOf(
             Cap(centers[0], halfWidths[0]),
             Cap(centers[n - 1], halfWidths[n - 1]),

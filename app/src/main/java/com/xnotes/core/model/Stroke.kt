@@ -59,7 +59,7 @@ class Stroke(
             config.taperLength,
             speedScale,
             smooth = !straight,
-            roundCaps = tool == Tool.HIGHLIGHTER,
+            roundCaps = tool == Tool.PEN || tool == Tool.HIGHLIGHTER,
         ).also { cachedGeometry = it }
     }
 
