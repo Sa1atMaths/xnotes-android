@@ -76,7 +76,9 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
     // never the field offset, so a manual pan is not snapped back to the caret.
     LaunchedEffect(value.text, value.selection, layout, editor.viewportHeightPx) {
         val lay = layout ?: return@LaunchedEffect
-        val caret = value.selection.end.coerceIn(0, value.text.length)
+        // Clamp to the laid-out length, not value.text.length: fast typing outruns onTextLayout, so a
+        // stale (shorter) layout would reject value's newer caret offset. The next layout pass corrects it.
+        val caret = value.selection.end.coerceIn(0, lay.layoutInput.text.length)
         val rect = lay.getCursorRect(caret)
         val f = currentField
         editor.ensureEditingCaretVisible((f.y + rect.top).toFloat(), (f.y + rect.bottom).toFloat())
