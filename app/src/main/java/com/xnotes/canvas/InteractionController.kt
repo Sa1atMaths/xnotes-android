@@ -2038,7 +2038,13 @@ class InteractionController(
         val content = selectionBoundsContent() ?: return null
         val tl = state.contentToViewport(content.topLeft)
         val br = state.contentToViewport(Pt(content.right, content.bottom))
-        return Rect.fromPoints(tl, br)
+        val rect = Rect.fromPoints(tl, br)
+        // Raise the menu's anchor top above the rotate grip (drawn ROTATE_ARM + grip radius above the
+        // box) so the floating action bar floats over the grip instead of covering it. Bottom is left
+        // put, so the below-the-selection fallback placement is unchanged.
+        if (selectionRotatePoint() == null) return rect
+        val clearance = ROTATE_ARM + HANDLE_SIZE * 0.6
+        return Rect(rect.left, rect.top - clearance, rect.w, rect.h + clearance)
     }
 
     // --- PAN ---
