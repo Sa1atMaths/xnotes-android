@@ -18,6 +18,10 @@ data class ResizeHandle(val id: HandleId, val content: Pt)
 object ResizeMath {
     const val MIN_SIZE = 24.0
 
+    /** Lowest scale a generic box-handle drag yields, so a selection can't collapse to zero or
+     *  flip. A ratio floor (vs the absolute [MIN_SIZE]) keeps thin selections from exploding. */
+    const val MIN_SCALE = 0.05
+
     /** Handle positions in content space for [item] on a page at [pageTopLeft]. */
     fun handles(item: CanvasItem, pageTopLeft: Pt): List<ResizeHandle> = when (item) {
         is ImageItem -> rectCorners(item.rect, pageTopLeft)
@@ -88,20 +92,18 @@ object ResizeMath {
         HandleId.L, HandleId.R -> {
             val anchorX = if (handle == HandleId.L) box.right else box.left
             val grabX = if (handle == HandleId.L) box.left else box.right
-            ScaleSpec(Pt(anchorX, box.top), axisScale(pointer.x, anchorX, grabX, box.w), 1.0)
+            ScaleSpec(Pt(anchorX, box.top), axisScale(pointer.x, anchorX, grabX), 1.0)
         }
         HandleId.T, HandleId.B -> {
             val anchorY = if (handle == HandleId.T) box.bottom else box.top
             val grabY = if (handle == HandleId.T) box.top else box.bottom
-            ScaleSpec(Pt(box.left, anchorY), 1.0, axisScale(pointer.y, anchorY, grabY, box.h))
+            ScaleSpec(Pt(box.left, anchorY), 1.0, axisScale(pointer.y, anchorY, grabY))
         }
         else -> {
+            // A corner is aspect-locked: project the pointer onto the box diagonal from the opposite
+            // (anchored) corner, so the one factor follows the drag and shrinks as well as grows.
             val anchor = cornerAnchor(box, handle)
-            val grab = grabbedCorner(box, handle)
-            val s = max(
-                axisScale(pointer.x, anchor.x, grab.x, box.w),
-                axisScale(pointer.y, anchor.y, grab.y, box.h),
-            )
+            val s = diagonalScale(anchor, grabbedCorner(box, handle), pointer)
             ScaleSpec(anchor, s, s)
         }
     }
@@ -113,11 +115,22 @@ object ResizeMath {
         else -> Pt(box.right, box.bottom) // BR
     }
 
-    /** Positive scale of one axis from [anchor] toward [grab], floored so the span keeps [MIN_SIZE]. */
-    private fun axisScale(pointer: Double, anchor: Double, grab: Double, dim: Double): Double {
+    /** Single-axis scale from [anchor] toward [grab], floored at [MIN_SCALE] so the box can't
+     *  collapse or flip. A ratio floor (not an absolute one) keeps thin selections from exploding. */
+    private fun axisScale(pointer: Double, anchor: Double, grab: Double): Double {
         val denom = grab - anchor
         if (abs(denom) < 1e-9) return 1.0
-        return max((pointer - anchor) / denom, MIN_SIZE / dim)
+        return max((pointer - anchor) / denom, MIN_SCALE)
+    }
+
+    /** Uniform scale from projecting [pointer] onto the [anchor]->[grab] diagonal, floored at
+     *  [MIN_SCALE]. */
+    private fun diagonalScale(anchor: Pt, grab: Pt, pointer: Pt): Double {
+        val dx = grab.x - anchor.x
+        val dy = grab.y - anchor.y
+        val denom = dx * dx + dy * dy
+        if (denom < 1e-9) return 1.0
+        return max(((pointer.x - anchor.x) * dx + (pointer.y - anchor.y) * dy) / denom, MIN_SCALE)
     }
 
     private fun cornerAnchor(box: Rect, handle: HandleId): Pt = when (handle) {

@@ -114,6 +114,19 @@ class ResizeMathTest {
 
     @Test fun scaleClampsAwayFromCollapse() {
         val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 50.0), HandleId.R, Pt(1.0, 0.0))
-        assertEquals(ResizeMath.MIN_SIZE / 100.0, sc.sx, 1e-9) // floored so the span keeps MIN_SIZE
+        assertEquals(ResizeMath.MIN_SCALE, sc.sx, 1e-9) // floored so the box can't collapse or flip
+    }
+
+    @Test fun thinSelectionEdgeScaleDoesNotExplode() {
+        // A 4px-tall selection (e.g. a horizontal stroke) must not force a huge minimum scale.
+        val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 4.0), HandleId.B, Pt(50.0, 6.0))
+        assertEquals(1.5, sc.sy, 1e-9)
+    }
+
+    @Test fun cornerShrinksWhenDraggedInward() {
+        // Diagonal projection lets a corner shrink, not only grow.
+        val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 50.0), HandleId.BR, Pt(50.0, 25.0))
+        assertEquals(0.5, sc.sx, 1e-9)
+        assertEquals(0.5, sc.sy, 1e-9)
     }
 }
