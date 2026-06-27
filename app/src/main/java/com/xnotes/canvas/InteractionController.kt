@@ -265,6 +265,8 @@ class InteractionController(
     private var eraserCursor: Pt? = null // viewport pixels
     /** Tool armed just before the eraser was selected, for the "switch back after erasing" option. */
     private var toolBeforeEraser: Tool? = null
+    /** Tool armed just before the select tool, for the "switch back after a selection action" option. */
+    private var toolBeforeSelect: Tool? = null
     /** Tool armed just before the screenshot tool, to return to after a capture is copied. */
     private var toolBeforeScreenshot: Tool? = null
     /** Tool armed just before the text tool, to return to once an edit is committed. */
@@ -338,8 +340,9 @@ class InteractionController(
         if (t == tool) {
             return
         }
-        // Remember what to re-arm if the eraser/screenshot/text later switches back (the tool it replaced).
+        // Remember what to re-arm if the eraser/select/screenshot/text later switches back (the tool it replaced).
         if (t == Tool.ERASER) toolBeforeEraser = tool
+        if (t == Tool.SELECT) toolBeforeSelect = tool
         if (t == Tool.SCREENSHOT) toolBeforeScreenshot = tool
         if (t == Tool.TEXT) toolBeforeText = tool
         commitTextEdit()
@@ -1060,6 +1063,19 @@ class InteractionController(
         if (back.isStroke) setTool(back)
     }
 
+    /**
+     * "Switch back after a selection action": once a select-tool action (move, resize, or a menu
+     * op like delete/cut/copy/duplicate) completes, re-arm the pen/highlighter that was active
+     * before the select tool. Only when the armed tool is the select tool and the remembered tool
+     * is a stroke tool; a long-press temporary grab is left to its own restore on deselect.
+     */
+    private fun maybeSwitchBackAfterSelect() {
+        if (longPressPrevTool != null) return
+        if (tool != Tool.SELECT || !configFor(Tool.SELECT).switchBackAfterSelect) return
+        val back = toolBeforeSelect ?: return
+        if (back.isStroke) setTool(back)
+    }
+
     // --- SELECT / BAND ---
 
     /** True when [content] lands on the active selection — a resize handle of a single
@@ -1228,7 +1244,8 @@ class InteractionController(
 
     private fun endMove(content: Pt) {
         moveOffset = content - moveOrigin
-        if (abs(moveOffset.x) > MOVE_EPS || abs(moveOffset.y) > MOVE_EPS) {
+        val moved = abs(moveOffset.x) > MOVE_EPS || abs(moveOffset.y) > MOVE_EPS
+        if (moved) {
             val items = selection.map { it.item }
             for (item in items) item.translate(moveOffset.x, moveOffset.y)
             lassoPolygon = lassoPolygon?.map { Pt(it.x + moveOffset.x, it.y + moveOffset.y) }
@@ -1243,6 +1260,7 @@ class InteractionController(
         mode = PointerMode.IDLE
         refreshSelectionMenu()
         requestRender()
+        if (moved) maybeSwitchBackAfterSelect()
     }
 
     // --- RESIZE ---
@@ -1283,9 +1301,11 @@ class InteractionController(
     private fun endResize() {
         val item = resizeItem as? Resizable
         val old = resizeOldGeom
+        var changed = false
         if (item != null && old != null) {
             val new = item.geometry()
             if (new != old) {
+                changed = true
                 history.push(ResizeItem(item, old, new))
                 state.document.dirty = true
                 // The resized item stays lifted (overlay-drawn); the ink cache it was already
@@ -1299,6 +1319,7 @@ class InteractionController(
         mode = PointerMode.IDLE
         refreshSelectionMenu()
         requestRender()
+        if (changed) maybeSwitchBackAfterSelect()
     }
 
     // --- SHAPE ---
@@ -1771,6 +1792,7 @@ class InteractionController(
         // cache is left untouched — no full flush, no flicker.
         clearSelection()
         onContentChanged()
+        maybeSwitchBackAfterSelect()
     }
 
     /**
@@ -1822,6 +1844,7 @@ class InteractionController(
         }
         state.document.dirty = true
         onContentChanged()
+        maybeSwitchBackAfterSelect()
     }
 
     fun escape() {
@@ -1832,24 +1855,33 @@ class InteractionController(
 
     // --- clipboard: copy / cut / duplicate / paste ---
 
-    fun copySelection() {
+    /** Copy the selection into the in-app clipboard. Pure: no tool/selection side effects, so
+     *  cut/duplicate can reuse it without tripping the select tool's switch-back. */
+    private fun copyToClipboard() {
         if (selection.isEmpty()) return
         itemClipboard.clear()
         selection.forEach { itemClipboard.add(cloneItem(it.item)) }
     }
 
+    fun copySelection() {
+        if (selection.isEmpty()) return
+        copyToClipboard()
+        maybeSwitchBackAfterSelect()
+    }
+
     fun cutSelection() {
         if (selection.isEmpty()) return
-        copySelection()
-        deleteSelection()
+        copyToClipboard()
+        deleteSelection() // also runs the select tool's switch-back, once
     }
 
     fun duplicateSelection() {
         if (selection.isEmpty()) return
-        copySelection()
+        copyToClipboard()
         val pageIndex = selection.first().pageIndex
         // Paste offset slightly from the originals (not repositioned to a point).
         pasteClonesOnPage(pageIndex, Pt.ZERO, offsetFromBoundsTopLeft = false, nudge = 24.0)
+        maybeSwitchBackAfterSelect()
     }
 
     /** Paste the clipboard items so their top-left lands at the given content point. */

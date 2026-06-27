@@ -48,6 +48,8 @@ data class ToolConfig(
     val eraseMode: EraseMode = EraseMode.STROKE,
     /** Eraser: re-arm the pen/highlighter used before the eraser once an erase lifts. Only [Tool.ERASER]. */
     val switchBackAfterErase: Boolean = false,
+    /** Select: re-arm the pen/highlighter used before the select tool once a selection action completes. Only [Tool.SELECT]. */
+    val switchBackAfterSelect: Boolean = false,
     /** Highlighter: commit each drag as a single straight segment (start → release). Only [Tool.HIGHLIGHTER]. */
     val straightLine: Boolean = false,
     /** When false, the pen draws at a constant on-screen size: at pen-down the width (and the
@@ -79,7 +81,7 @@ object ToolDefaults {
     }
 
     /** Tools whose config is persisted in settings (spec 09 §2). */
-    val persistedTools = listOf(Tool.PEN, Tool.DASHED, Tool.CALLIGRAPHY, Tool.SPEED, Tool.TAPER, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASSO)
+    val persistedTools = listOf(Tool.PEN, Tool.DASHED, Tool.CALLIGRAPHY, Tool.SPEED, Tool.TAPER, Tool.HIGHLIGHTER, Tool.ERASER, Tool.SELECT, Tool.LASSO)
 }
 
 /**

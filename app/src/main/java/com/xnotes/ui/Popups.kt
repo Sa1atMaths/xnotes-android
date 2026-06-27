@@ -309,6 +309,24 @@ fun EraserConfigPopup(editor: Editor, onDismiss: () -> Unit) {
     }
 }
 
+/** Select-tool configuration popup: just a SWITCH BACK toggle, mirroring the eraser's. */
+@Composable
+fun SelectConfigPopup(editor: Editor, onDismiss: () -> Unit) {
+    val base = remember { editor.toolConfig(Tool.SELECT) }
+    var switchBack by remember { mutableStateOf(base.switchBackAfterSelect) }
+
+    fun emit() = editor.updateToolConfig(Tool.SELECT, base.copy(switchBackAfterSelect = switchBack))
+
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        Column(Modifier.width(250.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
+            PopupTitle("SELECT")
+            // Re-arm the previous pen/highlighter once a selection action (move, resize, delete,
+            // cut, copy, duplicate) finishes, so a quick edit doesn't strand you in select.
+            ToggleRow("SWITCH BACK", switchBack) { switchBack = it; emit() }
+        }
+    }
+}
+
 /** Shape-tool configuration popup (spec 10 §3 / 04 §6): kind picker, WIDTH, FILL. */
 @Composable
 fun ShapeConfigPopup(editor: Editor, onDismiss: () -> Unit) {

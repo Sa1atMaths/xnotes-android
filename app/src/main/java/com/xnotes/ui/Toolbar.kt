@@ -217,7 +217,7 @@ private fun ToolButton(
     if (icon == null) return
     Box {
         ToolbarIcon(icon, tool.name, active = editor.tool == tool) {
-            if (editor.tool == tool && (tool.isStroke || tool == Tool.SHAPE || tool == Tool.ERASER)) {
+            if (editor.tool == tool && (tool.isStroke || tool == Tool.SHAPE || tool == Tool.ERASER || tool == Tool.SELECT)) {
                 setConfigForTool(tool)
             } else {
                 editor.selectTool(tool)
@@ -228,6 +228,7 @@ private fun ToolButton(
             when {
                 tool == Tool.SHAPE -> ShapeConfigPopup(editor) { setConfigForTool(null) }
                 tool == Tool.ERASER -> EraserConfigPopup(editor) { setConfigForTool(null) }
+                tool == Tool.SELECT -> SelectConfigPopup(editor) { setConfigForTool(null) }
                 else -> ToolConfigPopup(editor, tool) { setConfigForTool(null) }
             }
         }

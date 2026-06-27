@@ -162,6 +162,7 @@ data class Settings(
             .put("dash_gap", c.dashGap)
             .put("erase_mode", c.eraseMode.id)
             .put("switch_back_after_erase", c.switchBackAfterErase)
+            .put("switch_back_after_select", c.switchBackAfterSelect)
             .put("straight_line", c.straightLine)
             .put("scale", c.scale)
             .put("highlighter_alpha", c.highlighterAlpha)
@@ -184,6 +185,7 @@ data class Settings(
                 dashGap = o.optDouble("dash_gap", d.dashGap),
                 eraseMode = EraseMode.fromId(o.optString("erase_mode", d.eraseMode.id)),
                 switchBackAfterErase = o.optBoolean("switch_back_after_erase", d.switchBackAfterErase),
+                switchBackAfterSelect = o.optBoolean("switch_back_after_select", d.switchBackAfterSelect),
                 straightLine = o.optBoolean("straight_line", d.straightLine),
                 scale = o.optBoolean("scale", d.scale),
                 highlighterAlpha = o.optDouble("highlighter_alpha", d.highlighterAlpha),
