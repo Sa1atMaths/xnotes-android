@@ -525,7 +525,7 @@ private fun ExplorerSection(
     if (root == null) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(1f))
-            Text("Choose a folder to keep and browse your notes in.", color = palette.textDim.toComposeColor(), fontSize = 14.sp)
+            Text("Choose a folder to keep and browse your notes in.", color = palette.textDim.toComposeColor(), fontSize = 14.sp, textAlign = TextAlign.Center)
             Spacer(Modifier.height(16.dp))
             Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PrimaryButton(XnotesIcons.folder, "Choose folder", Modifier.fillMaxHeight(), onPickRoot)
