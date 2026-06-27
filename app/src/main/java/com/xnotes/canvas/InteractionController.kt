@@ -5,6 +5,7 @@ import android.os.Looper
 import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.MotionEvent
+import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
@@ -20,6 +21,7 @@ import com.xnotes.core.history.ReplacePageItems
 import com.xnotes.core.history.ResizeItem
 import com.xnotes.core.history.RestyleText
 import com.xnotes.core.history.RotateImage
+import com.xnotes.core.history.TransformItems
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.deepCopy
@@ -30,6 +32,7 @@ import com.xnotes.core.model.RectHandle
 import com.xnotes.core.model.Resizable
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.ShapeHandle
+import com.xnotes.core.model.GeometrySnapshot
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextHandle
@@ -62,7 +65,7 @@ import kotlin.math.sin
 
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode {
-    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, PAN, PINCH, TEXT_DRAG,
+    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, TRANSFORM, PAN, PINCH, TEXT_DRAG,
     RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE,
 }
 
@@ -288,6 +291,14 @@ class InteractionController(
     private var resizeHandle: HandleId? = null
     private var resizeOldGeom: GeoHandle? = null
     private var resizePageIndex: Int = -1
+
+    // GENERIC TRANSFORM (resize + rotate for any single non-line / multi / mixed selection)
+    private var txItems: List<Selected> = emptyList()
+    private var txSnaps: List<GeometrySnapshot> = emptyList()
+    private var txStartBox: Rect? = null
+    private var txHandle: HandleId? = null // non-null = scale via this box handle; null = rotate
+    private var txCenter = Pt.ZERO
+    private var txGrabAngle = 0.0
 
     // LONG-PRESS GRAB
     private val handler by lazy { Handler(Looper.getMainLooper()) } // lazy: see [choreographer]
@@ -636,6 +647,7 @@ class InteractionController(
             PointerMode.SHOT -> extendScreenshot(content)
             PointerMode.MOVE -> extendMove(content)
             PointerMode.RESIZE -> extendResize(content)
+            PointerMode.TRANSFORM -> extendTransform(content)
             PointerMode.SHAPE -> extendShape(content)
             PointerMode.TEXT_DRAG -> extendTextDrag(content)
             else -> Unit
@@ -698,6 +710,7 @@ class InteractionController(
             PointerMode.SHOT -> endScreenshot()
             PointerMode.MOVE -> endMove(content)
             PointerMode.RESIZE -> endResize()
+            PointerMode.TRANSFORM -> endTransform()
             PointerMode.SHAPE -> endShape()
             PointerMode.TEXT_DRAG -> endTextDrag(content)
             PointerMode.RULER_MOVE -> { mode = PointerMode.IDLE; requestRender() }
@@ -1077,48 +1090,76 @@ class InteractionController(
 
     // --- SELECT / BAND ---
 
-    /** True when [content] lands on the active selection — a resize handle of a single
-     *  resizable item, or inside the selection bounds. Lets a finger grab the selection
-     *  even when finger-draw is off (off the selection the finger still pans). */
+    /** The single selected line/arrow whose two endpoints are its own resize handles, or null.
+     *  Every other selection (single non-line, multi, mixed) uses the generic box handles. */
+    private fun singleEndpointShape(): Selected? {
+        val sel = selection.singleOrNull() ?: return null
+        val item = sel.item
+        return if (item is ShapeItem && item.shape.isEndpointShape) sel else null
+    }
+
+    /** Resize handles for the current selection in content space: a single line/arrow's two
+     *  endpoint handles, else the eight generic box handles around the selection bounds. */
+    private fun selectionResizeHandles(): List<ResizeHandle> {
+        val endpoint = singleEndpointShape()
+        if (endpoint != null) {
+            val pr = state.pageRects.getOrNull(endpoint.pageIndex) ?: return emptyList()
+            return ResizeMath.handles(endpoint.item, pr.topLeft)
+        }
+        return selectionBoundsContent()?.let { ResizeMath.boxHandles(it) } ?: emptyList()
+    }
+
+    /** Strokes and shapes rotate; images and text don't. A mixed selection rotates only when every
+     *  member is rotatable. */
+    private fun selectionIsRotatable(): Boolean =
+        selection.isNotEmpty() && selection.all { it.item is Stroke || it.item is ShapeItem }
+
+    /** Rotate-handle centre (content space, no move offset) above the selection box, or null when
+     *  the selection can't rotate or is a single line/arrow (reoriented by dragging an endpoint). */
+    private fun selectionRotatePoint(): Pt? {
+        if (!selectionIsRotatable() || singleEndpointShape() != null) return null
+        val box = selectionBoundsContent() ?: return null
+        return Pt(box.centerX, box.top - ROTATE_ARM / state.zoom)
+    }
+
+    /** True when [content] lands on the active selection — a resize or rotate handle, or inside the
+     *  selection bounds. Lets a finger grab the selection even when finger-draw is off (off the
+     *  selection the finger still pans). */
     private fun fingerHitsSelection(content: Pt): Boolean {
         if (selection.isEmpty()) return false
-        if (selection.size == 1 && selection[0].item is Resizable) {
-            val sel = selection[0]
-            state.pageRects.getOrNull(sel.pageIndex)?.let { pr ->
-                val handles = ResizeMath.handles(sel.item, pr.topLeft)
-                if (ResizeMath.hitHandle(handles, content, HANDLE_HIT / state.zoom) != null) return true
-            }
-        }
+        val tol = HANDLE_HIT / state.zoom
+        selectionRotatePoint()?.let { if (it.distanceTo(content) <= tol) return true }
+        if (ResizeMath.hitHandle(selectionResizeHandles(), content, tol) != null) return true
         return selectionBoundsContent()?.contains(content) == true
     }
 
-    /** If [content] lands on the settled selection, begin the matching gesture (a resize/rotate
-     *  handle, or a move when inside the bounds) and return true; else return false. Shared by the
-     *  select and lasso tools so both grab an existing selection the same way. */
-    private fun tryGrabSelection(content: Pt): Boolean {
+    /** If [content] grabs a resize or rotate handle of the settled selection, begin that gesture
+     *  and return true. Handles only; the caller handles an inside-the-bounds move. Shared by the
+     *  select and lasso tools so both grab handles the same way. */
+    private fun tryGrabSelectionHandle(content: Pt): Boolean {
         if (selection.isEmpty()) return false
-        if (selectionBoundsContent()?.contains(content) == true) {
-            beginMove(content)
+        val tol = HANDLE_HIT / state.zoom
+        selectionRotatePoint()?.let {
+            if (it.distanceTo(content) <= tol) {
+                beginTransform(null, content)
+                return true
+            }
+        }
+        val endpoint = singleEndpointShape()
+        if (endpoint != null) {
+            val pr = state.pageRects.getOrNull(endpoint.pageIndex) ?: return false
+            val id = ResizeMath.hitHandle(ResizeMath.handles(endpoint.item, pr.topLeft), content, tol) ?: return false
+            beginResize(endpoint, id)
             return true
         }
-        return false
+        val box = selectionBoundsContent() ?: return false
+        val id = ResizeMath.hitHandle(ResizeMath.boxHandles(box), content, tol) ?: return false
+        beginTransform(id, content)
+        return true
     }
 
     private fun beginSelect(content: Pt) {
-        // 1. Resize handle under the point (single resizable item selected)?
-        if (selection.size == 1 && selection[0].item is Resizable) {
-            val sel = selection[0]
-            val pr = state.pageRects.getOrNull(sel.pageIndex)
-            if (pr != null) {
-                val handles = ResizeMath.handles(sel.item, pr.topLeft)
-                val tol = HANDLE_HIT / state.zoom
-                val id = ResizeMath.hitHandle(handles, content, tol)
-                if (id != null) {
-                    beginResize(sel, id)
-                    return
-                }
-            }
-        }
+        if (tryGrabSelectionHandle(content)) return
         val pageIndex = state.pageIndexAtContent(content)
         if (pageIndex != null) {
             val pr = state.pageRects[pageIndex]
@@ -1156,9 +1197,13 @@ class InteractionController(
     // --- LASSO ---
 
     private fun beginLasso(content: Pt) {
-        // A tap that lands on the settled selection grabs it (resize/rotate handle or inside the
+        // A tap on the settled selection grabs it (a resize/rotate handle, or a move when inside the
         // bounding box) instead of starting a fresh lasso.
-        if (tryGrabSelection(content)) return
+        if (tryGrabSelectionHandle(content)) return
+        if (selection.isNotEmpty() && selectionBoundsContent()?.contains(content) == true) {
+            beginMove(content)
+            return
+        }
         clearSelection()
         lassoPoints.clear()
         lassoPoints.add(content)
@@ -1323,6 +1368,68 @@ class InteractionController(
         resizeItem = null
         resizeHandle = null
         resizeOldGeom = null
+        mode = PointerMode.IDLE
+        refreshSelectionMenu()
+        requestRender()
+        if (changed) maybeSwitchBackAfterSelect()
+    }
+
+    // --- TRANSFORM (generic resize + rotate) ---
+
+    /** Begin a generic resize ([handle] non-null) or rotate ([handle] null) of the whole selection.
+     *  Snapshots every member so each move can restore-then-rebake without drift. */
+    private fun beginTransform(handle: HandleId?, content: Pt) {
+        txItems = selection.toList()
+        txSnaps = txItems.map { it.item.snapshotGeometry() }
+        txStartBox = selectionBoundsContent()
+        txHandle = handle
+        if (handle == null) {
+            val c = txStartBox?.center ?: content
+            txCenter = c
+            txGrabAngle = atan2(content.y - c.y, content.x - c.x)
+        }
+        mode = PointerMode.TRANSFORM
+        onSelectionMenu(null) // hide while transforming
+    }
+
+    private fun extendTransform(content: Pt) {
+        val box = txStartBox ?: return
+        // Restore every member to its gesture-start geometry, then bake the current transform so the
+        // result is a pure function of the pointer (no per-frame compounding, e.g. of a rotation).
+        txItems.forEachIndexed { i, sel -> sel.item.restoreGeometry(txSnaps[i]) }
+        val sc = txHandle?.let { ResizeMath.scaleForHandle(box, it, content) }
+        val theta = if (txHandle == null) atan2(content.y - txCenter.y, content.x - txCenter.x) - txGrabAngle else 0.0
+        for (sel in txItems) {
+            val pr = state.pageRects.getOrNull(sel.pageIndex) ?: continue
+            val o = pr.topLeft // items hold page-local geometry, so shift the pivot into page space
+            val t = if (sc != null) {
+                Affine.scaleAbout(Pt(sc.anchor.x - o.x, sc.anchor.y - o.y), sc.sx, sc.sy)
+            } else {
+                Affine.rotateAbout(Pt(txCenter.x - o.x, txCenter.y - o.y), theta)
+            }
+            sel.item.applyTransform(t)
+        }
+        requestRender()
+    }
+
+    private fun endTransform() {
+        val items = txItems.map { it.item }
+        var changed = false
+        if (items.isNotEmpty()) {
+            val after = items.map { it.snapshotGeometry() }
+            if (after != txSnaps) {
+                changed = true
+                history.push(TransformItems(items, txSnaps, after))
+                state.document.dirty = true
+                // Members stay lifted (overlay-drawn); the ink cache they were lifted out of needs
+                // no repair — it is repainted at their new geometry on deselect.
+                onContentChanged()
+            }
+        }
+        txItems = emptyList()
+        txSnaps = emptyList()
+        txStartBox = null
+        txHandle = null
         mode = PointerMode.IDLE
         refreshSelectionMenu()
         requestRender()
@@ -2283,18 +2390,22 @@ class InteractionController(
                     selectionBoundsContent()?.translate(moveOffset.x, moveOffset.y)?.let { r.strokeRect(it, accent) }
             }
 
-            // Resize handles for a single resizable selection.
-            if (selection.size == 1 && selection[0].item is Resizable &&
-                mode != PointerMode.BAND && mode != PointerMode.LASSO_DRAW
-            ) {
-                val sel = selection[0]
-                val pr = state.pageRects.getOrNull(sel.pageIndex)
-                if (pr != null) {
-                    val side = HANDLE_SIZE / state.zoom
-                    for (h in ResizeMath.handles(sel.item, pr.topLeft)) {
-                        val c = Pt(h.content.x + moveOffset.x, h.content.y + moveOffset.y)
-                        r.fillRect(Rect(c.x - side / 2, c.y - side / 2, side, side), state.palette.accent)
+            // Resize + rotate handles for the settled selection (single, multi, or mixed).
+            if (selection.isNotEmpty() && mode != PointerMode.BAND && mode != PointerMode.LASSO_DRAW) {
+                val side = HANDLE_SIZE / state.zoom
+                val box = selectionBoundsContent()
+                // Rotate grip: a short stem from the top edge up to a round handle.
+                selectionRotatePoint()?.let { rp ->
+                    if (box != null) {
+                        val stemTop = Pt(box.centerX + moveOffset.x, box.top + moveOffset.y)
+                        val grip = Pt(rp.x + moveOffset.x, rp.y + moveOffset.y)
+                        r.strokePolyline(listOf(grip, stemTop), Pen(state.palette.accent, 1.3, cosmetic = true))
+                        r.fillCircle(grip, side * 0.6, state.palette.accent)
                     }
+                }
+                for (h in selectionResizeHandles()) {
+                    val c = Pt(h.content.x + moveOffset.x, h.content.y + moveOffset.y)
+                    r.fillRect(Rect(c.x - side / 2, c.y - side / 2, side, side), state.palette.accent)
                 }
             }
         }
@@ -2593,6 +2704,9 @@ class InteractionController(
         /** Touch radius (viewport px) around a handle centre — larger than the drawn
          *  square so a fingertip can grab it without the squares obscuring content. */
         const val HANDLE_HIT = 24.0
+
+        /** Gap (viewport px) from the selection's top edge up to the rotate grip. */
+        const val ROTATE_ARM = 28.0
         const val SHAPE_MIN_DRAG = 3.0
 
         /** Min capture size (content px, both axes) for the screenshot tool; below it a drag is a tap. */
