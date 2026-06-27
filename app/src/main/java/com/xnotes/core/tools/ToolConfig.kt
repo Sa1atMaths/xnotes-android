@@ -33,9 +33,9 @@ data class ToolConfig(
     // New fields go *after* `rgba` so the positional constructor stays stable.
     /** Velocity thinning (the speed pen): 0 = none; up the line thins as it moves faster. */
     val speedStrength: Double = 0.0,
-    /** Entrance/exit taper (the taper pen): 0 = none; the fixed arc length (content px)
-     *  over which each end eases to a point, independent of the stroke's total length. */
-    val taperLength: Double = 0.0,
+    /** Taper pen: when true the width eases across the whole stroke, full at the head down to
+     *  [taperMinFactor] of full width at the tip. */
+    val taperEnabled: Boolean = false,
     /** Neon glow: a soft luminous halo under a bright core. Composable onto any stroke tool. */
     val neon: Boolean = false,
     /** Glow intensity (the neon halo): 0 = faint & tight, 1 = bright & wide. Only used when [neon]. */
@@ -65,19 +65,23 @@ data class ToolConfig(
     val colorOverride: Rgba? = null,
     /** Taper pen: width fraction the tapered end keeps, in `[0, 1]` (the floor of the tail ease).
      *  0 = the tail comes to a sharp point; 0.1 = it bottoms out at a tenth of full width. Only
-     *  used when [taperLength] > 0. */
+     *  used when [taperEnabled]. */
     val taperMinFactor: Double = 0.0,
 )
 
 /** Factory defaults per tool (spec 04 §3). */
 object ToolDefaults {
+    /** Tip width the taper pen eases down to, and the value assumed for legacy taper strokes that
+     *  predate the setting, so they reload tapered rather than as a sharp point. */
+    const val DEFAULT_TAPER_TIP = 0.30
+
     fun configFor(tool: Tool): ToolConfig = when (tool) {
         Tool.PEN -> ToolConfig(baseWidth = 3.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0)
         // Dashed pen: uniform-width (pressure off), so its dashes stay even; dash/gap set the rhythm.
         Tool.DASHED -> ToolConfig(baseWidth = 3.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0, dashLength = 10.0, dashGap = 8.0)
         Tool.CALLIGRAPHY -> ToolConfig(baseWidth = 6.0, pressureEnabled = true, pressureMinFactor = 0.40, directionStrength = 0.60)
         Tool.SPEED -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0, speedStrength = 0.8)
-        Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperLength = 40.0, taperMinFactor = 0.10)
+        Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperEnabled = true, taperMinFactor = DEFAULT_TAPER_TIP)
         Tool.HIGHLIGHTER -> ToolConfig(baseWidth = 16.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0, highlighterAlpha = 0.50)
         Tool.ERASER -> ToolConfig(baseWidth = 24.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
         Tool.LASSO -> ToolConfig(baseWidth = 2.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)

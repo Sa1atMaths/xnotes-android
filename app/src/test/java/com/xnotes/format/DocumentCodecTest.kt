@@ -194,16 +194,45 @@ class DocumentCodecTest {
         val doc = Document(dpi = 150)
         val page = Page(1240.0, 1754.0)
         page.items.add(Stroke(Tool.PEN, ToolConfig(neon = true, neonStrength = 0.85), mutableListOf(Sample(1.0, 2.0, 1.0))))
-        page.items.add(Stroke(Tool.TAPER, ToolConfig(taperLength = 40.0, taperMinFactor = 0.30), mutableListOf(Sample(3.0, 4.0, 1.0), Sample(8.0, 9.0, 1.0))))
+        page.items.add(Stroke(Tool.TAPER, ToolConfig(taperEnabled = true, taperMinFactor = 0.30), mutableListOf(Sample(3.0, 4.0, 1.0), Sample(8.0, 9.0, 1.0))))
         doc.pages.add(page)
 
         val items = roundTrip(doc).pages[0].items
         assertTrue((items[0] as Stroke).config.neon)
         assertEquals(0.85, (items[0] as Stroke).config.neonStrength, 1e-9)   // intensity survives
         val taper = items[1] as Stroke
-        assertEquals(40.0, taper.config.taperLength, 1e-9)
+        assertTrue(taper.config.taperEnabled)
         assertEquals(0.30, taper.config.taperMinFactor, 1e-9)   // tip-width floor survives
         assertEquals(0.0, taper.samples[0].t, 1e-9)   // non-speed stroke writes no time
+    }
+
+    @Test fun legacyTaperLengthLoadsAsEnabledTaper() {
+        // Files written before the whole-stroke taper carry taper_length but no taper_enabled; a
+        // positive legacy length must still load as an enabled taper so old notes keep tapering.
+        val out = ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use {
+            it.putNextEntry(java.util.zip.ZipEntry("manifest.json"))
+            it.write(
+                ("{\"format\":\"xnote\",\"pages\":[{\"width\":100,\"height\":100,\"items\":[" +
+                    "{\"kind\":\"stroke\",\"tool\":\"taper\",\"config\":{\"taper_length\":40.0}," +
+                    "\"samples\":[[1,2,1.0]]}]}]}").toByteArray(),
+            )
+            it.closeEntry()
+        }
+        val stroke = codec.read(ByteArrayInputStream(out.toByteArray())).pages[0].items[0] as Stroke
+        assertTrue(stroke.config.taperEnabled)
+        assertEquals(0.30, stroke.config.taperMinFactor, 1e-9)   // legacy taper assumes the default tip
+    }
+
+    @Test fun taperZeroTipWidthRoundTripsAsZero() {
+        // A deliberately sharp taper (0% tip) must survive as 0, not pick up the legacy default.
+        val doc = Document(dpi = 150)
+        val page = Page(100.0, 100.0)
+        page.items.add(Stroke(Tool.TAPER, ToolConfig(taperEnabled = true, taperMinFactor = 0.0), mutableListOf(Sample(1.0, 2.0, 1.0), Sample(8.0, 9.0, 1.0))))
+        doc.pages.add(page)
+        val stroke = roundTrip(doc).pages[0].items[0] as Stroke
+        assertTrue(stroke.config.taperEnabled)
+        assertEquals(0.0, stroke.config.taperMinFactor, 1e-9)
     }
 
     @Test fun strokeMissingFieldsTakeDefaults() {

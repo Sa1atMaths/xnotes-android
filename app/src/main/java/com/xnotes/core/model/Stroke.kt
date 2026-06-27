@@ -59,7 +59,7 @@ class Stroke(
             config.pressureMinFactor,
             config.directionStrength,
             config.speedStrength,
-            config.taperLength,
+            config.taperEnabled,
             config.taperMinFactor,
             speedScale,
             smooth = !straight,
@@ -280,7 +280,6 @@ class Stroke(
         if (k != 1.0) {
             config = config.copy(
                 baseWidth = config.baseWidth * k,
-                taperLength = config.taperLength * k,
                 dashLength = config.dashLength * k,
                 dashGap = config.dashGap * k,
             )

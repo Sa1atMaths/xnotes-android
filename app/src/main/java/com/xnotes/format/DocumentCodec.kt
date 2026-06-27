@@ -22,6 +22,7 @@ import com.xnotes.core.stroke.Sample
 import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConfig
+import com.xnotes.core.tools.ToolDefaults
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -208,8 +209,10 @@ class DocumentCodec(
         // New style fields are written only when set, so a plain pen/calligraphy
         // stroke's config is byte-for-byte what older versions wrote.
         if (s.config.speedStrength != 0.0) config.put("speed_strength", s.config.speedStrength)
-        if (s.config.taperLength != 0.0) config.put("taper_length", s.config.taperLength)
-        if (s.config.taperMinFactor != 0.0) config.put("taper_min_factor", s.config.taperMinFactor)
+        if (s.config.taperEnabled) {
+            config.put("taper_enabled", true)
+            config.put("taper_min_factor", s.config.taperMinFactor)
+        }
         if (s.config.neon) {
             config.put("neon", true)
             config.put("neon_strength", s.config.neonStrength)
@@ -300,8 +303,10 @@ class DocumentCodec(
             directionStrength = c?.optDouble("direction_strength", def.directionStrength) ?: def.directionStrength,
             rgba = readRgba(c?.optJSONArray("rgba")) ?: def.rgba,
             speedStrength = c?.optDouble("speed_strength", def.speedStrength) ?: def.speedStrength,
-            taperLength = c?.optDouble("taper_length", def.taperLength) ?: def.taperLength,
-            taperMinFactor = c?.optDouble("taper_min_factor", def.taperMinFactor) ?: def.taperMinFactor,
+            taperEnabled = c?.let { it.optBoolean("taper_enabled", it.optDouble("taper_length", 0.0) > 0.0) } ?: def.taperEnabled,
+            // Absent on legacy taper strokes -> the current default tip, so old tapers reload
+            // tapered rather than as a sharp point.
+            taperMinFactor = c?.optDouble("taper_min_factor", ToolDefaults.DEFAULT_TAPER_TIP) ?: ToolDefaults.DEFAULT_TAPER_TIP,
             neon = c?.optBoolean("neon", def.neon) ?: def.neon,
             neonStrength = c?.optDouble("neon_strength", def.neonStrength) ?: def.neonStrength,
             dashLength = c?.optDouble("dash_length", def.dashLength) ?: def.dashLength,

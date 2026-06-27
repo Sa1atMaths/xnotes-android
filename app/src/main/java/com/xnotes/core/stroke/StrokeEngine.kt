@@ -186,32 +186,29 @@ object StrokeEngine {
     }
 
     /**
-     * Per-point width multipliers in `[taperMinFactor, 1]` for the **taper pen**: only the
-     * stroke's **end** eases down (to [taperMinFactor] of full width, or a sharp point when that is
-     * 0); the head (pen-down) stays square at full width. [taperLength] is the arc length (content
-     * px) over which the tail eases in, used as-is with no fraction cap, so a value longer than the
-     * stroke just keeps ramping past the head (which then never reaches full width). Returns
-     * all-`1.0` when off or the stroke is too short ([TAPER_MIN_LEN]).
+     * Per-point width multipliers in `[taperMinFactor, 1]` for the **taper pen**: the width eases
+     * across the **whole stroke**, full at the head and easing down to [taperMinFactor] of full at
+     * the tip (a sharp point when that is 0). Longer strokes just stretch the same profile. Returns
+     * all-`1.0` when [taperEnabled] is false or the stroke is too short ([TAPER_MIN_LEN]).
      */
-    fun taperFactors(centers: List<Pt>, taperLength: Double, taperMinFactor: Double): List<Double> {
+    fun taperFactors(centers: List<Pt>, taperEnabled: Boolean, taperMinFactor: Double): List<Double> {
         val n = centers.size
-        if (taperLength <= 0.0 || n < 2) return List(n) { 1.0 }
+        if (!taperEnabled || n < 2) return List(n) { 1.0 }
         val cum = DoubleArray(n)
         for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
         val total = cum[n - 1]
         if (total < TAPER_MIN_LEN) return List(n) { 1.0 }
         return (0 until n).map { i ->
-            // Arc distance back from the stroke's end, ramped over the taper length. Only the tail
-            // tapers (the head stays full width), the length is used as-is (no fraction cap), and
-            // the tail bottoms out at taperMinFactor of full instead of a sharp point.
-            val edge = ((total - cum[i]) / taperLength).coerceIn(0.0, 1.0)
+            // Fractional arc position: 1 at the head, easing to 0 at the tip. The whole stroke is
+            // the taper; the tip bottoms out at taperMinFactor of full instead of a sharp point.
+            val edge = (total - cum[i]) / total
             taperMinFactor + (1.0 - taperMinFactor) * logisticEase(edge, TAPER_CURVE_K)
         }
     }
 
     /**
      * Builds [StrokeGeometry] from [samples] and the style fields. [speedStrength]
-     * and [taperLength] default to off, in which case the output is identical to
+     * and [taperEnabled] default to off, in which case the output is identical to
      * the four-field pen/calligraphy pipeline (spec 03 conformance).
      */
     fun build(
@@ -221,7 +218,7 @@ object StrokeEngine {
         m: Double,
         ds: Double,
         speedStrength: Double = 0.0,
-        taperLength: Double = 0.0,
+        taperEnabled: Boolean = false,
         taperMinFactor: Double = 0.0,
         speedScale: Double = 1.0,
         smooth: Boolean = true,
@@ -267,7 +264,7 @@ object StrokeEngine {
 
         // Optional width multipliers: speed thins fast travel, taper points the ends.
         val sf = speedFactors(samples, speedStrength, speedScale)
-        val tf = taperFactors(centers, taperLength, taperMinFactor)
+        val tf = taperFactors(centers, taperEnabled, taperMinFactor)
 
         // Calligraphy: low-pass the direction channel (the tangent's y that sets nib width)
         // so the width glides between thick and thin instead of snapping when the stroke

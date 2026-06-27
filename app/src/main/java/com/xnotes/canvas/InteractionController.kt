@@ -758,7 +758,6 @@ class InteractionController(
             cfg0.copy(
                 rgba = drawColor,
                 baseWidth = cfg0.baseWidth / z,
-                taperLength = cfg0.taperLength / z,
                 dashLength = cfg0.dashLength / z,
                 dashGap = cfg0.dashGap / z,
                 scale = true,
