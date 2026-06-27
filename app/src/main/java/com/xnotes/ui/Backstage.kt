@@ -2,6 +2,7 @@ package com.xnotes.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -211,24 +212,28 @@ private fun BackstageContent(
     val palette = LocalPalette.current
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
     var sidebarOpen by remember { mutableStateOf(!compact) }
+    // Close animates only on a true dismiss ("<", scrim, back); a command swaps the pane
+    // already composed underneath, so it closes instantly.
+    var animateClose by remember { mutableStateOf(true) }
+    val dismissSidebar = { animateClose = true; sidebarOpen = false }
 
     // A folder is required for these actions; without one, send the user to pick a folder first.
     val selectView: (BackstageView) -> Unit = { v ->
         if (v == BackstageView.HOME) createMode = CreateMode.NONE
         onSelectView(v)
-        if (compact) sidebarOpen = false
+        if (compact) { animateClose = false; sidebarOpen = false }
     }
     val newNote: () -> Unit = {
         if (editor.browseRoot != null) { onSelectView(BackstageView.HOME); createMode = CreateMode.FILE } else onPickRoot()
-        if (compact) sidebarOpen = false
+        if (compact) { animateClose = false; sidebarOpen = false }
     }
     val importPdf: () -> Unit = {
         if (editor.browseRoot != null) onImportPdf() else onPickRoot()
-        if (compact) sidebarOpen = false
+        if (compact) { animateClose = false; sidebarOpen = false }
     }
     val openSystem: () -> Unit = {
         if (editor.browseRoot != null) onOpenSystem() else onPickRoot()
-        if (compact) sidebarOpen = false
+        if (compact) { animateClose = false; sidebarOpen = false }
     }
 
     // Home is the app's root, so it owns every back press while it's up (the editor sits
@@ -239,7 +244,7 @@ private fun BackstageContent(
     // explorer's own (more-nested) handler before this one ever sees the press.
     BackHandler {
         when {
-            compact && sidebarOpen -> sidebarOpen = false
+            compact && sidebarOpen -> dismissSidebar()
             // Preferences and About are sub-pages of Home: back lands on Home rather than leaving the app.
             view == BackstageView.PREFERENCES || view == BackstageView.ABOUT -> selectView(BackstageView.HOME)
             createMode != CreateMode.NONE -> createMode = CreateMode.NONE
@@ -250,18 +255,23 @@ private fun BackstageContent(
     if (compact) {
         Box(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
             BackstageMain(
-                Modifier.fillMaxSize(), editor, view, compact, sidebarOpen, { sidebarOpen = true }, { selectView(BackstageView.HOME) },
+                Modifier.fillMaxSize(), editor, view, compact, sidebarOpen, { animateClose = true; sidebarOpen = true }, { selectView(BackstageView.HOME) },
                 onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
             )
-            AnimatedVisibility(visible = sidebarOpen, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { sidebarOpen = false })
+            AnimatedVisibility(
+                visible = sidebarOpen,
+                enter = fadeIn(),
+                exit = if (animateClose) fadeOut() else ExitTransition.None,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { dismissSidebar() })
             }
             AnimatedVisibility(
                 visible = sidebarOpen,
                 enter = slideInHorizontally(initialOffsetX = { -it }),
-                exit = slideOutHorizontally(targetOffsetX = { -it }),
+                exit = if (animateClose) slideOutHorizontally(targetOffsetX = { -it }) else ExitTransition.None,
             ) {
-                BackstageSidebar(Modifier.width(296.dp), view, { sidebarOpen = false }, selectView, newNote, importPdf, openSystem)
+                BackstageSidebar(Modifier.width(296.dp), view, dismissSidebar, selectView, newNote, importPdf, openSystem)
             }
         }
     } else {
