@@ -2,6 +2,7 @@ package com.xnotes.canvas
 
 import com.xnotes.core.FakeRasterSurface
 import com.xnotes.core.FakeTextMeasurer
+import com.xnotes.core.geometry.Obb
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.ImageItem
@@ -128,5 +129,34 @@ class ResizeMathTest {
         val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 50.0), HandleId.BR, Pt(50.0, 25.0))
         assertEquals(0.5, sc.sx, 1e-9)
         assertEquals(0.5, sc.sy, 1e-9)
+    }
+
+    @Test fun obbHandlesAreEightAtCorners() {
+        val h = ResizeMath.obbHandles(Obb.fromAabb(Rect(0.0, 0.0, 100.0, 50.0)))
+        assertEquals(8, h.size)
+        assertTrue(h.any { it.id == HandleId.TL && it.content == Pt(0.0, 0.0) })
+        assertTrue(h.any { it.id == HandleId.BR && it.content == Pt(100.0, 50.0) })
+    }
+
+    @Test fun obbCornerResizeAnchorsOppositeCorner() {
+        val res = ResizeMath.obbResize(Obb.fromAabb(Rect(0.0, 0.0, 100.0, 50.0)), HandleId.BR, Pt(150.0, 75.0))
+        // BR dragged 1.5x about the TL corner: box spans (0,0)..(150,75).
+        assertEquals(75.0, res.obb.halfW, 1e-9)
+        assertEquals(37.5, res.obb.halfH, 1e-9)
+        assertEquals(Pt(0.0, 0.0), res.obb.corners()[0])
+        assertEquals(Pt(150.0, 75.0), res.obb.corners()[2])
+    }
+
+    @Test fun obbResizeTransformReproducesNewBox() {
+        // The baked transform applied to the old corners must reproduce the new box's corners,
+        // even when the box is tilted (so the chrome and the items never disagree).
+        val obb = Obb(Pt(50.0, 30.0), 50.0, 30.0, 0.4)
+        val pointer = obb.localToWorld(Pt(80.0, 50.0)) // drag the BR corner outward in the local frame
+        val res = ResizeMath.obbResize(obb, HandleId.BR, pointer)
+        obb.corners().zip(res.obb.corners()).forEach { (oldC, newC) ->
+            val t = res.transform.apply(oldC)
+            assertEquals(newC.x, t.x, 1e-6)
+            assertEquals(newC.y, t.y, 1e-6)
+        }
     }
 }

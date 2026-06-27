@@ -22,6 +22,18 @@ data class Affine(
 ) {
     fun apply(p: Pt): Pt = Pt(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
 
+    /**
+     * This content-space transform expressed in a frame translated by [offset], so it can be
+     * applied to page-local geometry on a page whose origin is [offset]. The linear part is
+     * unchanged; only the translation shifts. Equivalent to `translate(-offset) ∘ this ∘
+     * translate(offset)`.
+     */
+    fun translatedFrame(offset: Pt): Affine = Affine(
+        a, b, c, d,
+        a * offset.x + c * offset.y + e - offset.x,
+        b * offset.x + d * offset.y + f - offset.y,
+    )
+
     /** Linear scale of each axis (sign-free); a pure rotation gives 1.0, 1.0. */
     val scaleX: Double get() = hypot(a, b)
     val scaleY: Double get() = hypot(c, d)
@@ -53,6 +65,28 @@ data class Affine(
                 cs, sn, -sn, cs,
                 center.x - cs * center.x + sn * center.y,
                 center.y - sn * center.x - cs * center.y,
+            )
+        }
+
+        /**
+         * Scale by ([sx], [sy]) along axes rotated by [axisAngle] (radians), about [anchor], which
+         * stays fixed. A uniform scale reduces to [scaleAbout] (rotation-invariant); a single-axis
+         * scale of a turned box becomes a shear in world axes. Used to resize an oriented selection
+         * box in its own frame. Its `determinant` is `sx*sy`, so width still scales by `sqrt(sx*sy)`.
+         */
+        fun scaleAlongAxes(anchor: Pt, axisAngle: Double, sx: Double, sy: Double): Affine {
+            val cs = cos(axisAngle)
+            val sn = sin(axisAngle)
+            val cc = cs * cs
+            val ss = sn * sn
+            val csn = cs * sn
+            val m00 = sx * cc + sy * ss
+            val m11 = sx * ss + sy * cc
+            val m01 = (sx - sy) * csn // symmetric: the (0,1) and (1,0) terms are equal
+            return Affine(
+                m00, m01, m01, m11,
+                anchor.x - (m00 * anchor.x + m01 * anchor.y),
+                anchor.y - (m01 * anchor.x + m11 * anchor.y),
             )
         }
     }

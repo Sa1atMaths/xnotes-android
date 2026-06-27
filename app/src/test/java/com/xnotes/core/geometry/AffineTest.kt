@@ -45,4 +45,32 @@ class AffineTest {
         assertEquals(1.0, t.linearScale, 1e-9)
         assertFalse(t.isAxisAligned)
     }
+
+    @Test fun scaleAlongAxesUniformMatchesScaleAbout() {
+        val anchor = Pt(5.0, 7.0)
+        val along = Affine.scaleAlongAxes(anchor, 0.9, 2.0, 2.0) // a uniform scale is rotation-invariant
+        val about = Affine.scaleAbout(anchor, 2.0, 2.0)
+        val p = Pt(11.0, 3.0)
+        assertEquals(about.apply(p).x, along.apply(p).x, 1e-9)
+        assertEquals(about.apply(p).y, along.apply(p).y, 1e-9)
+    }
+
+    @Test fun scaleAlongAxesKeepsAnchorAndAreaScale() {
+        val anchor = Pt(3.0, 4.0)
+        val t = Affine.scaleAlongAxes(anchor, 1.1, 2.0, 3.0)
+        assertEquals(anchor.x, t.apply(anchor).x, 1e-9)
+        assertEquals(anchor.y, t.apply(anchor).y, 1e-9)
+        assertEquals(6.0, t.determinant, 1e-9) // det = sx*sy regardless of axis angle
+        assertEquals(Math.sqrt(6.0), t.linearScale, 1e-9)
+    }
+
+    @Test fun translatedFrameMatchesContentSpace() {
+        val m = Affine.rotateAbout(Pt(40.0, 50.0), 0.6)
+        val offset = Pt(10.0, 20.0)
+        val local = Pt(7.0, 9.0)
+        val viaFrame = m.translatedFrame(offset).apply(local)
+        val viaContent = m.apply(Pt(local.x + offset.x, local.y + offset.y))
+        assertEquals(viaContent.x - offset.x, viaFrame.x, 1e-9)
+        assertEquals(viaContent.y - offset.y, viaFrame.y, 1e-9)
+    }
 }

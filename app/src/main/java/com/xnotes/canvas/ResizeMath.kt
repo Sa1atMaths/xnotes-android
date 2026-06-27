@@ -1,5 +1,7 @@
 package com.xnotes.canvas
 
+import com.xnotes.core.geometry.Affine
+import com.xnotes.core.geometry.Obb
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.CanvasItem
@@ -82,6 +84,44 @@ object ResizeMath {
 
     /** A scale about [anchor] by ([sx], [sy]) — the transform a box-handle drag maps to. */
     data class ScaleSpec(val anchor: Pt, val sx: Double, val sy: Double)
+
+    /** The eight handles of an oriented box, in world space. */
+    fun obbHandles(obb: Obb): List<ResizeHandle> = listOf(
+        ResizeHandle(HandleId.TL, obb.localToWorld(Pt(-obb.halfW, -obb.halfH))),
+        ResizeHandle(HandleId.T, obb.localToWorld(Pt(0.0, -obb.halfH))),
+        ResizeHandle(HandleId.TR, obb.localToWorld(Pt(obb.halfW, -obb.halfH))),
+        ResizeHandle(HandleId.R, obb.localToWorld(Pt(obb.halfW, 0.0))),
+        ResizeHandle(HandleId.BR, obb.localToWorld(Pt(obb.halfW, obb.halfH))),
+        ResizeHandle(HandleId.B, obb.localToWorld(Pt(0.0, obb.halfH))),
+        ResizeHandle(HandleId.BL, obb.localToWorld(Pt(-obb.halfW, obb.halfH))),
+        ResizeHandle(HandleId.L, obb.localToWorld(Pt(-obb.halfW, 0.0))),
+    )
+
+    /** Top-edge midpoint of an oriented box in world space (the rotate stem's base). */
+    fun obbTopMid(obb: Obb): Pt = obb.localToWorld(Pt(0.0, -obb.halfH))
+
+    /** The rotate-grip centre, [arm] (content px) out past the box's top edge along its local up. */
+    fun obbRotateGrip(obb: Obb, arm: Double): Pt = obb.localToWorld(Pt(0.0, -obb.halfH - arm))
+
+    /** The affine to bake into the items, plus the resulting oriented box. */
+    data class ObbResize(val transform: Affine, val obb: Obb)
+
+    /**
+     * Drag a box handle of an oriented box [obb] to world [pointer]: scale in the box's own frame
+     * (corner uniform, edge single-axis) about the opposite handle, returning the world-space affine
+     * to bake into the items and the new oriented box. The two stay consistent — applying the affine
+     * to [obb]'s corners reproduces the returned box's corners.
+     */
+    fun obbResize(obb: Obb, handle: HandleId, pointer: Pt): ObbResize {
+        val local = obb.worldToLocal(pointer)
+        val localBox = Rect(-obb.halfW, -obb.halfH, obb.halfW * 2.0, obb.halfH * 2.0)
+        val sc = scaleForHandle(localBox, handle, local)
+        val transform = Affine.scaleAlongAxes(obb.localToWorld(sc.anchor), obb.angle, sc.sx, sc.sy)
+        // The local box was centred at the origin; scaling about sc.anchor moves that centre.
+        val newCenterLocal = Pt(sc.anchor.x * (1.0 - sc.sx), sc.anchor.y * (1.0 - sc.sy))
+        val newObb = Obb(obb.localToWorld(newCenterLocal), obb.halfW * sc.sx, obb.halfH * sc.sy, obb.angle)
+        return ObbResize(transform, newObb)
+    }
 
     /**
      * The scale a box-handle drag produces: a corner scales both axes by one factor (aspect-locked,
