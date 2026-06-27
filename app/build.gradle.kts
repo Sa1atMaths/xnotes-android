@@ -23,8 +23,8 @@ android {
         applicationId = "com.xnotes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.7.12"
+        versionCode = 31
+        versionName = "0.7.13"
     }
 
     // F-Droid rejects the AGP dependency-metadata block in the APK signing block.
