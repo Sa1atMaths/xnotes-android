@@ -24,7 +24,9 @@ import com.xnotes.R
 @Composable
 fun XnotesLoader(modifier: Modifier = Modifier) {
     val cfg = LocalConfiguration.current
-    val side = (minOf(cfg.screenWidthDp, cfg.screenHeightDp) * 0.35f).dp
+    // Scale with the short edge but cap it, so phones render big without tablets ballooning.
+    val shortEdge = minOf(cfg.screenWidthDp, cfg.screenHeightDp)
+    val side = minOf(shortEdge * 0.55f, 288f).dp
     Box(
         modifier.fillMaxSize().background(Color.Black),
         contentAlignment = Alignment.Center,
