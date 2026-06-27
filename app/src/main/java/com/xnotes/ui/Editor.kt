@@ -2048,7 +2048,7 @@ class Editor(context: Context) {
         tool = t
     }
 
-    /** Run the action a two/three-finger tap is mapped to (preferences); "none" does nothing. */
+    /** Run the action a two/three-finger tap or stylus double-tap is mapped to; "none" does nothing. */
     private fun dispatchTapGesture(action: String) = when (action) {
         "undo" -> undo()
         "redo" -> redo()
@@ -2487,12 +2487,33 @@ class Editor(context: Context) {
     /** Feeder C entry point: route stylus side-button key presses (Bluetooth/USI pens) to the
      *  controller's held latch. Returns true when consumed, so the host swallows the key. */
     fun onStylusButtonKey(e: android.view.KeyEvent): Boolean {
+        if (e.keyCode == penGestureKeycode) return onPenGestureKey(e)
         val down = when (e.action) {
             android.view.KeyEvent.ACTION_DOWN -> true
             android.view.KeyEvent.ACTION_UP -> false
             else -> return false
         }
         return controller.onStylusButtonKey(e.keyCode, down)
+    }
+
+    // Pens with no side button (e.g. Huawei M-Pencil) report a barrel double-tap as a vendor key
+    // code with no standard mapping (718). One physical double-tap arrives as two quick presses, so
+    // a pair within the window fires the mapped gesture once. Consumed only when the gesture is set.
+    private val penGestureKeycode = 718
+    private val penDoubleTapMs = 600L
+    private var lastPenTapMs = 0L
+    private fun onPenGestureKey(e: android.view.KeyEvent): Boolean {
+        if (preferences.stylusDoubleTap == "none") return false
+        if (e.action == android.view.KeyEvent.ACTION_DOWN) {
+            val t = e.eventTime
+            if (lastPenTapMs != 0L && t - lastPenTapMs <= penDoubleTapMs) {
+                lastPenTapMs = 0L
+                dispatchTapGesture(preferences.stylusDoubleTap)
+            } else {
+                lastPenTapMs = t
+            }
+        }
+        return true
     }
 
     fun newNote() {
