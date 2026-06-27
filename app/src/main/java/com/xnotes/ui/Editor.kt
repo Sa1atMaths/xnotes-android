@@ -226,6 +226,11 @@ class Editor(context: Context) {
         private set
     /** Flipped by the import dialog's Cancel so the in-flight stream-copy aborts at its next buffer. */
     private val importCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** True while a tapped note is being read off-thread; drives the "Opening note…" dialog. */
+    var opening by mutableStateOf(false)
+        private set
+    /** Flipped by the open dialog's Cancel so a slow open is discarded instead of swapped in. */
+    private val openCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
     var zoomLocked by mutableStateOf(false)
         private set
     var rulerVisible by mutableStateOf(false)
@@ -1102,9 +1107,25 @@ class Editor(context: Context) {
 
     // --- file operations (SAF streams provided by the activity) ---
 
-    fun open(input: InputStream, uri: String, name: String? = null) {
+    /**
+     * Open the note at [uri], driving the "Opening note…" dialog via [opening]. The heavy part is
+     * [DocumentCodec.read] streaming a (possibly large) embedded PDF out to a temp file; on the main
+     * thread that would freeze the UI and stall the spinner, so only the read runs on IO and the
+     * document swap ([replaceDocument], which only invalidates caches and requests an off-thread
+     * render) stays on the caller's main thread. A mid-read Cancel ([cancelOpenInProgress]) discards
+     * the loaded note and leaves the explorer as it was. A second tap while one open is in flight is
+     * ignored, so two reads never race to swap in a document.
+     */
+    suspend fun openAsync(uri: String, name: String? = null) {
+        if (opening) return
+        openCancelled.set(false)
+        opening = true
         try {
-            val doc = codec.read(input, pdfDir)
+            val doc = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir) }
+            }
+            if (doc == null) { message = "Could not open that note."; return }
+            if (openCancelled.get()) { doc.pdfFile?.delete(); return } // tapped Cancel mid-read; stay put
             doc.path = uri
             doc.displayName = name
             doc.dirty = false
@@ -1115,8 +1136,13 @@ class Editor(context: Context) {
             message = e.message ?: "Not an xnotes document."
         } catch (e: Exception) {
             message = "Could not open the note."
+        } finally {
+            opening = false
         }
     }
+
+    /** Aborts an in-flight open (the dialog's Cancel) so the loaded note is discarded, not shown. */
+    fun cancelOpenInProgress() { openCancelled.set(true) }
 
     fun save(output: OutputStream, uri: String, name: String? = null) {
         try {

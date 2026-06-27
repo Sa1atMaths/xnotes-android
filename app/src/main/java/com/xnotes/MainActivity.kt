@@ -358,12 +358,9 @@ private fun EditorScreen(
     }
 
     fun openTreeFile(uriStr: String) {
-        val uri = Uri.parse(uriStr)
-        val name = displayNameOf(resolver, uri)
-        val opened = runCatching {
-            resolver.openInputStream(uri)?.use { s -> editor.open(s, uriStr, name) } != null
-        }.getOrDefault(false)
-        if (!opened) editor.message = "Could not open that note."
+        val name = displayNameOf(resolver, Uri.parse(uriStr))
+        // Read off-thread behind the "Opening note…" spinner so a big embedded PDF doesn't freeze the UI.
+        scope.launch { editor.openAsync(uriStr, name) }
     }
 
     fun stemOf(uriStr: String): String =
@@ -686,6 +683,18 @@ private fun EditorScreen(
             onCancel = { editor.cancelImportInProgress() }, // the stream-copy stops at its next buffer
         )
     }
+    // Tapping a note reads it off-thread (editor.opening). Only show the spinner once the read has run
+    // long enough to matter, so opening a small note never flashes a dialog; a big PDF gets the loader.
+    var showOpening by remember { mutableStateOf(false) }
+    LaunchedEffect(editor.opening) {
+        if (editor.opening) { delay(160); showOpening = editor.opening } else showOpening = false
+    }
+    if (showOpening && editor.opening) {
+        SpinnerDialog("Opening note…", onCancel = {
+            editor.cancelOpenInProgress() // discard the loaded note when its read returns
+            showOpening = false           // dismiss at once; editor.opening clears as the read unwinds
+        })
+    }
 }
 
 /**
@@ -778,14 +787,14 @@ private fun PdfExportDialog(done: Int, total: Int, onCancel: () -> Unit) {
 }
 
 /**
- * Indeterminate "Importing PDF…" dialog shown while a picked PDF (or `.xnote`) is streamed into a
- * new note off the main thread. Import has no natural page-by-page progress — the cost is copying
- * the (possibly large) source bytes — so it shows an animated spinner rather than a percentage.
- * Dismissing it (Cancel, back, or tapping outside) aborts the copy via [onCancel]. Styled to match
+ * Indeterminate spinner dialog: a styled card with an animated [CircularProgressIndicator], a
+ * [title], a "This may take a moment." line, and a Cancel button. Shared by the "Importing…"
+ * (PDF/note copy) and "Opening note…" (off-thread read) flows, neither of which has a meaningful
+ * percentage. Dismissing it (Cancel, back, or tapping outside) calls [onCancel]. Styled to match
  * [PdfExportDialog].
  */
 @Composable
-private fun PdfImportDialog(isPdf: Boolean, onCancel: () -> Unit) {
+private fun SpinnerDialog(title: String, onCancel: () -> Unit) {
     val palette = LocalPalette.current
     androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
         Column(
@@ -804,17 +813,9 @@ private fun PdfImportDialog(isPdf: Boolean, onCancel: () -> Unit) {
                 )
             }
             Spacer(Modifier.height(18.dp))
-            Text(
-                if (isPdf) "Importing PDF…" else "Importing note…",
-                color = palette.text.toComposeColor(),
-                fontSize = 15.sp,
-            )
+            Text(title, color = palette.text.toComposeColor(), fontSize = 15.sp)
             Spacer(Modifier.height(4.dp))
-            Text(
-                "This may take a moment.",
-                color = palette.textDim.toComposeColor(),
-                fontSize = 13.sp,
-            )
+            Text("This may take a moment.", color = palette.textDim.toComposeColor(), fontSize = 13.sp)
             Spacer(Modifier.height(14.dp))
             androidx.compose.material3.TextButton(onClick = onCancel) {
                 Text("Cancel", color = palette.accent.toComposeColor())
@@ -822,6 +823,15 @@ private fun PdfImportDialog(isPdf: Boolean, onCancel: () -> Unit) {
         }
     }
 }
+
+/**
+ * Indeterminate "Importing PDF…"/"Importing note…" dialog shown while a picked PDF (or `.xnote`) is
+ * streamed into a new note off the main thread. Import has no natural page-by-page progress — the
+ * cost is copying the (possibly large) source bytes — so it shows an animated spinner.
+ */
+@Composable
+private fun PdfImportDialog(isPdf: Boolean, onCancel: () -> Unit) =
+    SpinnerDialog(if (isPdf) "Importing PDF…" else "Importing note…", onCancel)
 
 /**
  * Subtle, non-blocking hint shown bottom-right while a dark-mode PDF's embedded-image colours are
