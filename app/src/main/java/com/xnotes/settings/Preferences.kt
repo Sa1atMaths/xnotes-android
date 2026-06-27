@@ -35,6 +35,9 @@ data class Preferences(
     val twoFingerTap: String = "none",
     /** Action mapped to a clean three-finger tap; "none" (default) disables it. */
     val threeFingerTap: String = "none",
+    /** Action mapped to a stylus barrel double-tap (pens with no side button, e.g. Huawei M-Pencil
+     *  whose double-tap arrives as keycode 718); "none" (default) disables it. */
+    val stylusDoubleTap: String = "none",
     /** Horizontal margin (px) on each side of the page column; 0 ⇒ fit-width fills the screen. */
     val sideMargin: Double = 16.0,
     /** Long-edge cap (px) for the on-screen page cache; higher holds more of the page ready at deep zoom. */
@@ -62,6 +65,7 @@ data class Preferences(
         .put("pen_button_hover", penButtonHover)
         .put("two_finger_tap", twoFingerTap)
         .put("three_finger_tap", threeFingerTap)
+        .put("stylus_double_tap", stylusDoubleTap)
         .put("side_margin", sideMargin)
         .put("max_cache_resolution", maxCacheResolution)
         .apply { startFullscreen?.let { put("start_fullscreen", it) } }
@@ -94,6 +98,7 @@ data class Preferences(
                 penButtonHover = o.optBoolean("pen_button_hover", false),
                 twoFingerTap = tapAction("two_finger_tap"),
                 threeFingerTap = tapAction("three_finger_tap"),
+                stylusDoubleTap = tapAction("stylus_double_tap"),
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
                 startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
