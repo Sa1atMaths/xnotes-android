@@ -189,6 +189,9 @@ fun Backstage(
 /** Width at or above which the sidebar is a persistent pane rather than a drawer. */
 private const val COMPACT_WIDTH_DP = 600
 
+/** Open/close animation duration for the sidebar drawer/pane and its scrim. */
+private const val SIDEBAR_ANIM_MS = 150
+
 /**
  * The home-first layout: the explorer (or Preferences) fills the screen, with a
  * command sidebar that's a collapsible left pane on wide screens and a slide-over drawer on
@@ -260,16 +263,16 @@ private fun BackstageContent(
             )
             AnimatedVisibility(
                 visible = sidebarOpen,
-                enter = fadeIn(),
-                exit = if (animateClose) fadeOut() else ExitTransition.None,
+                enter = fadeIn(animationSpec = tween(SIDEBAR_ANIM_MS)),
+                exit = if (animateClose) fadeOut(animationSpec = tween(SIDEBAR_ANIM_MS)) else ExitTransition.None,
                 modifier = Modifier.fillMaxSize(),
             ) {
                 Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable { dismissSidebar() })
             }
             AnimatedVisibility(
                 visible = sidebarOpen,
-                enter = slideInHorizontally(initialOffsetX = { -it }),
-                exit = if (animateClose) slideOutHorizontally(targetOffsetX = { -it }) else ExitTransition.None,
+                enter = slideInHorizontally(animationSpec = tween(SIDEBAR_ANIM_MS), initialOffsetX = { -it }),
+                exit = if (animateClose) slideOutHorizontally(animationSpec = tween(SIDEBAR_ANIM_MS), targetOffsetX = { -it }) else ExitTransition.None,
             ) {
                 BackstageSidebar(Modifier.width(296.dp), view, dismissSidebar, selectView, newNote, importPdf, openSystem)
             }
@@ -278,8 +281,8 @@ private fun BackstageContent(
         Row(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
             AnimatedVisibility(
                 visible = sidebarOpen,
-                enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
-                exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
+                enter = expandHorizontally(animationSpec = tween(SIDEBAR_ANIM_MS), expandFrom = Alignment.Start) + fadeIn(animationSpec = tween(SIDEBAR_ANIM_MS)),
+                exit = shrinkHorizontally(animationSpec = tween(SIDEBAR_ANIM_MS), shrinkTowards = Alignment.Start) + fadeOut(animationSpec = tween(SIDEBAR_ANIM_MS)),
             ) {
                 BackstageSidebar(Modifier.width(264.dp), view, { sidebarOpen = false }, selectView, newNote, importPdf, openSystem)
             }
