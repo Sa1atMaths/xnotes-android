@@ -69,6 +69,10 @@ class DebugOverlay {
             if (snap.presentationActive) add("pr  cache  ${snap.presPages} pg")
             add("cache mem  %.1f MB".format(snap.bytes / MB))
             add("heap  %.0f / %.0f MB".format(heapUsedMb, heapMaxMb))
+            if (state.lastOpenTotalMs >= 0) {
+                add("open      ${state.lastOpenTotalMs} ms")
+                add("open read ${state.lastOpenReadMs} ms")
+            }
         }
 
         val lineH = AndroidText.lineHeight(FONT)

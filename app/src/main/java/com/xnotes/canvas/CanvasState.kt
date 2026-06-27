@@ -1010,6 +1010,11 @@ class CanvasState(
         return CacheSnapshot(visible, caches.size, bgCaches.size, presCaches.size, presentationActive, bytes)
     }
 
+    /** Last note-open timings (ms), for the debug overlay; -1 until the first open. [lastOpenReadMs]
+     *  is the off-thread file read alone; [lastOpenTotalMs] is the whole open the 160ms spinner sees. */
+    var lastOpenReadMs = -1L
+    var lastOpenTotalMs = -1L
+
     /**
      * The pixel dimensions the current page's cache *would* be built at for the current
      * zoom (i.e. [clampedRes] applied). Tracks live while zooming — unlike the actual

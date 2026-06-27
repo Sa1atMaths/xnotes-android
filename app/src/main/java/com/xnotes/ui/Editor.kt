@@ -1120,10 +1120,14 @@ class Editor(context: Context) {
         if (opening) return
         openCancelled.set(false)
         opening = true
+        val t0 = System.nanoTime()
+        var readMs = -1L
         try {
+            val readStart = System.nanoTime()
             val doc = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir) }
             }
+            readMs = (System.nanoTime() - readStart) / 1_000_000
             if (doc == null) { message = "Could not open that note."; return }
             if (openCancelled.get()) { doc.pdfFile?.delete(); return } // tapped Cancel mid-read; stay put
             doc.path = uri
@@ -1137,6 +1141,10 @@ class Editor(context: Context) {
         } catch (e: Exception) {
             message = "Could not open the note."
         } finally {
+            // Record the timings for the debug overlay, so a genuinely fast open (read < 160ms, no
+            // spinner) can be told apart from a bug where the spinner is wrongly skipped.
+            state.lastOpenReadMs = readMs
+            state.lastOpenTotalMs = (System.nanoTime() - t0) / 1_000_000
             opening = false
         }
     }
