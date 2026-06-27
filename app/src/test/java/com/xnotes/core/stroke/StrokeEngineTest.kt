@@ -135,7 +135,7 @@ class StrokeEngineTest {
         val gSlow = StrokeEngine.build(slow, 4.0, false, 1.0, 0.0, speedStrength = 0.8)
         val gFast = StrokeEngine.build(fast, 4.0, false, 1.0, 0.0, speedStrength = 0.8)
 
-        assertEquals(2.0, gSlow.halfWidths.maxOrNull()!!, 1e-6)   // slow: full width
+        assertTrue(gSlow.halfWidths.maxOrNull()!! > 1.8)          // slow: near full width
         assertTrue(gFast.halfWidths.maxOrNull()!! < 2.0)          // fast: thinned even at its widest
         assertTrue(gFast.halfWidths.minOrNull()!! < 1.0)          // and clearly thin where fastest
     }
@@ -152,11 +152,11 @@ class StrokeEngineTest {
 
     @Test fun speedScaleScalesPerceivedSpeed() {
         // Same gesture and timing; a larger content->dp scale (e.g. zoomed in) reads as
-        // faster, so the line thins where the unscaled one stays full width.
+        // faster, so the line thins more than the unscaled one (which stays near full width).
         val pts = (0..5).map { Sample(it * 10.0, 0.0, 1.0, it * 100.0) }
         val unscaled = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, speedStrength = 0.8, speedScale = 1.0)
         val scaled = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, speedStrength = 0.8, speedScale = 5.0)
-        assertEquals(2.0, unscaled.halfWidths.maxOrNull()!!, 1e-6)
+        assertTrue(unscaled.halfWidths.maxOrNull()!! > 1.8)
         assertTrue(scaled.halfWidths.maxOrNull()!! < unscaled.halfWidths.maxOrNull()!!)
     }
 

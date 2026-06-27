@@ -26,11 +26,11 @@ object StrokeEngine {
     const val DIR_ALPHA = 0.25
 
     /** Speed pen: dp/ms at/below which the line stays full width, and the speed
-     *  at/above which it reaches its thinnest (≈1.25 and ≈5 in/s of hand travel).
+     *  at/above which it reaches its thinnest (0 and ≈3.75 in/s of hand travel).
      *  Measuring in dp — not page pixels — makes the effect independent of both zoom
      *  and screen density; see [speedFactors] and the per-stroke speed scale. */
-    const val SPEED_LO = 0.2
-    const val SPEED_HI = 0.8
+    const val SPEED_LO = 0.0
+    const val SPEED_HI = 0.6
 
     /** Speed pen: half the duration (ms) of the centred window the nib's speed is measured over.
      *  Speed is the arc length covered across `±this` ms divided by that span. A fixed *time*
