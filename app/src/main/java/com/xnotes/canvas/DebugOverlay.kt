@@ -1,5 +1,6 @@
 package com.xnotes.canvas
 
+import android.os.Debug
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.pal.FontSpec
@@ -29,6 +30,14 @@ class DebugOverlay {
     private var fps = 0.0
     private var frameMs = 0.0
 
+    // Process memory in MB (total PSS / native heap / graphics), re-sampled at most once a second in
+    // [draw]: Debug.getMemoryInfo walks /proc/self/smaps and is far too costly to read every frame.
+    private val memInfo = Debug.MemoryInfo()
+    private var lastMemSampleNs = 0L
+    private var pssMb = 0.0
+    private var nativeMb = 0.0
+    private var gfxMb = 0.0
+
     /**
      * Record one painted frame. A gap longer than [IDLE_GAP_NS] means the canvas stopped
      * repainting (the HUD's idle ticker produced this frame), so the rate reads 0 — the EMA
@@ -51,8 +60,25 @@ class DebugOverlay {
         frameMs = if (frameMs == 0.0) instMs else frameMs * (1 - SMOOTH) + instMs * SMOOTH
     }
 
+    /**
+     * Re-read total PSS, native-heap and graphics memory from the OS, throttled to [MEM_SAMPLE_NS]
+     * (~1s). These come from [Debug.getMemoryInfo], which walks /proc/self/smaps and is too heavy to
+     * call per frame; the idle ticker keeps [draw] running so the values still refresh while idle.
+     */
+    private fun sampleMemory(nowNs: Long) {
+        if (lastMemSampleNs != 0L && nowNs - lastMemSampleNs < MEM_SAMPLE_NS) return
+        lastMemSampleNs = nowNs
+        Debug.getMemoryInfo(memInfo)
+        pssMb = memStat("summary.total-pss") / 1024.0 // getMemoryStat reports KB
+        nativeMb = memStat("summary.native-heap") / 1024.0
+        gfxMb = memStat("summary.graphics") / 1024.0
+    }
+
+    private fun memStat(key: String): Long = memInfo.getMemoryStat(key)?.toLongOrNull() ?: 0L
+
     fun draw(r: AndroidRenderer, state: CanvasState) {
         if (!enabled) return
+        sampleMemory(System.nanoTime())
         val snap = state.cacheSnapshot()
         val rt = Runtime.getRuntime()
         val heapUsedMb = (rt.totalMemory() - rt.freeMemory()) / MB
@@ -69,6 +95,9 @@ class DebugOverlay {
             if (snap.presentationActive) add("pr  cache  ${snap.presPages} pg")
             add("cache mem  %.1f MB".format(snap.bytes / MB))
             add("heap  %.0f / %.0f MB".format(heapUsedMb, heapMaxMb))
+            add("pss    %.0f MB".format(pssMb))
+            add("native %.0f MB".format(nativeMb))
+            add("gfx    %.0f MB".format(gfxMb))
             if (state.lastOpenTotalMs >= 0) {
                 add("open      ${state.lastOpenTotalMs} ms")
                 add("open read ${state.lastOpenReadMs} ms")
@@ -95,6 +124,7 @@ class DebugOverlay {
     companion object {
         private const val MB = 1024.0 * 1024.0
         private const val IDLE_GAP_NS = 200_000_000L // deltas longer than 200ms count as idle
+        private const val MEM_SAMPLE_NS = 1_000_000_000L // re-read PSS from smaps at most once a second
         private const val SMOOTH = 0.15 // EMA weight on the newest frame
 
         private const val PANEL_W = 460.0
