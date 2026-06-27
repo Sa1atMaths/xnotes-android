@@ -90,4 +90,30 @@ class ResizeMathTest {
         val ids = handles.map { it.id }.toSet()
         assertEquals(setOf(HandleId.TL, HandleId.T, HandleId.TR, HandleId.R, HandleId.BR, HandleId.B, HandleId.BL, HandleId.L), ids)
     }
+
+    @Test fun boxHandlesAreEightAroundTheBox() {
+        val handles = ResizeMath.boxHandles(Rect(0.0, 0.0, 100.0, 50.0))
+        assertEquals(8, handles.size)
+        assertEquals(setOf(HandleId.TL, HandleId.T, HandleId.TR, HandleId.R, HandleId.BR, HandleId.B, HandleId.BL, HandleId.L), handles.map { it.id }.toSet())
+        assertTrue(handles.any { it.id == HandleId.R && it.content == Pt(100.0, 25.0) })
+    }
+
+    @Test fun cornerScaleIsUniformFromOppositeCorner() {
+        val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 50.0), HandleId.BR, Pt(150.0, 75.0))
+        assertEquals(Pt(0.0, 0.0), sc.anchor) // anchored at the opposite (TL) corner
+        assertEquals(1.5, sc.sx, 1e-9)
+        assertEquals(1.5, sc.sy, 1e-9) // aspect-locked
+    }
+
+    @Test fun edgeScaleIsSingleAxis() {
+        val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 50.0), HandleId.R, Pt(150.0, 999.0))
+        assertEquals(0.0, sc.anchor.x, 1e-9) // anchored at the left edge
+        assertEquals(1.5, sc.sx, 1e-9)
+        assertEquals(1.0, sc.sy, 1e-9) // the other axis is untouched
+    }
+
+    @Test fun scaleClampsAwayFromCollapse() {
+        val sc = ResizeMath.scaleForHandle(Rect(0.0, 0.0, 100.0, 50.0), HandleId.R, Pt(1.0, 0.0))
+        assertEquals(ResizeMath.MIN_SIZE / 100.0, sc.sx, 1e-9) // floored so the span keeps MIN_SIZE
+    }
 }

@@ -4,6 +4,7 @@ import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
 import com.xnotes.core.model.GeoHandle
+import com.xnotes.core.model.GeometrySnapshot
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.Resizable
@@ -91,6 +92,20 @@ class ResizeItem(
 ) : Command {
     override fun redo() = item.setGeometry(newGeom)
     override fun undo() = item.setGeometry(oldGeom)
+}
+
+/**
+ * Scale or rotate a selection: each item swaps between its before/after geometry snapshots. Used by
+ * the unified resize/rotate handles, which can change a shape's kind (a rotated box shape becomes a
+ * polygon), so a plain geometry handle isn't enough — full snapshots restore the exact prior state.
+ */
+class TransformItems(
+    private val items: List<CanvasItem>,
+    private val before: List<GeometrySnapshot>,
+    private val after: List<GeometrySnapshot>,
+) : Command {
+    override fun redo() = items.forEachIndexed { i, it -> it.restoreGeometry(after[i]) }
+    override fun undo() = items.forEachIndexed { i, it -> it.restoreGeometry(before[i]) }
 }
 
 /** Rotate an image a quarter turn: swap its raster and (width/height-swapped) rect. */

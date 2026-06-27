@@ -1,5 +1,6 @@
 package com.xnotes.core.model
 
+import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.pal.Renderer
@@ -39,7 +40,26 @@ interface CanvasItem {
 
     /** Does the eraser circle (page-local) touch the item? */
     fun intersectsCircle(cx: Double, cy: Double, radius: Double): Boolean
+
+    /**
+     * Capture all geometry the transform tools (resize + rotate) can change — positions, size,
+     * line width — so a live drag can restore-then-reapply each frame and undo can revert it.
+     */
+    fun snapshotGeometry(): GeometrySnapshot
+
+    /** Restore a snapshot taken by [snapshotGeometry]. */
+    fun restoreGeometry(snap: GeometrySnapshot)
+
+    /**
+     * Bake an affine (a selection scale or rotation, page-local) into the item's geometry.
+     * Rotating a box-parametric shape converts it to a polygon/polyline; strokes and shapes
+     * scale their line width by the transform's linear factor; images and text never rotate.
+     */
+    fun applyTransform(t: Affine)
 }
+
+/** An opaque per-item geometry snapshot exchanged by the transform tools (resize + rotate). */
+sealed interface GeometrySnapshot
 
 /** An opaque geometry handle exchanged by resize (spec 02, 07). */
 sealed interface GeoHandle

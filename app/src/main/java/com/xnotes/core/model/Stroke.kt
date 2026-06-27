@@ -1,5 +1,6 @@
 package com.xnotes.core.model
 
+import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
@@ -20,7 +21,9 @@ import com.xnotes.core.tools.ToolConfig
  */
 class Stroke(
     val tool: Tool,
-    val config: ToolConfig,
+    /** Scaled in place when the stroke is resized (var so [applyTransform] can swap a width-scaled
+     *  copy); otherwise the immutable style snapshot captured at pen-down. */
+    var config: ToolConfig,
     val samples: MutableList<Sample> = mutableListOf(),
     /** Content-px → dp scale captured at pen-down (zoom ÷ display density), so the speed
      *  pen judges gesture speed in zoom- and device-independent units. 1.0 = unscaled. */
@@ -253,6 +256,37 @@ class Stroke(
         invalidate()
     }
 
+    override fun snapshotGeometry(): GeometrySnapshot = StrokeSnapshot(samples.toList(), config)
+
+    override fun restoreGeometry(snap: GeometrySnapshot) {
+        if (snap !is StrokeSnapshot) return
+        samples.clear()
+        samples.addAll(snap.samples)
+        config = snap.config
+        invalidate()
+    }
+
+    /** Transform every sample and scale the width-bearing style fields (base width, taper, dash
+     *  runs) by the transform's linear factor, so a resized stroke looks zoomed; a pure rotation
+     *  (factor 1) leaves the width untouched. */
+    override fun applyTransform(t: Affine) {
+        for (i in samples.indices) {
+            val s = samples[i]
+            val p = t.apply(Pt(s.x, s.y))
+            samples[i] = s.copy(x = p.x, y = p.y)
+        }
+        val k = t.linearScale
+        if (k != 1.0) {
+            config = config.copy(
+                baseWidth = config.baseWidth * k,
+                taperLength = config.taperLength * k,
+                dashLength = config.dashLength * k,
+                dashGap = config.dashGap * k,
+            )
+        }
+        invalidate()
+    }
+
     /** `p` inside the filled ribbon or any cap disc. */
     override fun contains(p: Pt): Boolean {
         val g = geometry()
@@ -385,3 +419,6 @@ class Stroke(
         private const val NEON_BODY_LIGHTEN = 0.10
     }
 }
+
+/** Snapshot of a stroke's transformable geometry: the sample path and the width-bearing style. */
+private data class StrokeSnapshot(val samples: List<Sample>, val config: ToolConfig) : GeometrySnapshot

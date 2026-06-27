@@ -63,6 +63,63 @@ object ResizeMath {
     fun hitHandle(handles: List<ResizeHandle>, content: Pt, tolerance: Double): HandleId? =
         handles.firstOrNull { it.content.distanceTo(content) <= tolerance }?.id
 
+    /** The eight generic box handles (four corners + four edge midpoints) for [box], in box's
+     *  own coordinate space. Used by the unified resize handles for any multi/mixed selection. */
+    fun boxHandles(box: Rect): List<ResizeHandle> = listOf(
+        ResizeHandle(HandleId.TL, box.topLeft),
+        ResizeHandle(HandleId.T, Pt(box.centerX, box.top)),
+        ResizeHandle(HandleId.TR, Pt(box.right, box.top)),
+        ResizeHandle(HandleId.R, Pt(box.right, box.centerY)),
+        ResizeHandle(HandleId.BR, Pt(box.right, box.bottom)),
+        ResizeHandle(HandleId.B, Pt(box.centerX, box.bottom)),
+        ResizeHandle(HandleId.BL, Pt(box.left, box.bottom)),
+        ResizeHandle(HandleId.L, Pt(box.left, box.centerY)),
+    )
+
+    /** A scale about [anchor] by ([sx], [sy]) — the transform a box-handle drag maps to. */
+    data class ScaleSpec(val anchor: Pt, val sx: Double, val sy: Double)
+
+    /**
+     * The scale a box-handle drag produces: a corner scales both axes by one factor (aspect-locked,
+     * anchored at the opposite corner); an edge scales a single axis (anchored at the opposite
+     * edge). Each axis is floored positive so the box can't shrink past [MIN_SIZE] or flip.
+     */
+    fun scaleForHandle(box: Rect, handle: HandleId, pointer: Pt): ScaleSpec = when (handle) {
+        HandleId.L, HandleId.R -> {
+            val anchorX = if (handle == HandleId.L) box.right else box.left
+            val grabX = if (handle == HandleId.L) box.left else box.right
+            ScaleSpec(Pt(anchorX, box.top), axisScale(pointer.x, anchorX, grabX, box.w), 1.0)
+        }
+        HandleId.T, HandleId.B -> {
+            val anchorY = if (handle == HandleId.T) box.bottom else box.top
+            val grabY = if (handle == HandleId.T) box.top else box.bottom
+            ScaleSpec(Pt(box.left, anchorY), 1.0, axisScale(pointer.y, anchorY, grabY, box.h))
+        }
+        else -> {
+            val anchor = cornerAnchor(box, handle)
+            val grab = grabbedCorner(box, handle)
+            val s = max(
+                axisScale(pointer.x, anchor.x, grab.x, box.w),
+                axisScale(pointer.y, anchor.y, grab.y, box.h),
+            )
+            ScaleSpec(anchor, s, s)
+        }
+    }
+
+    private fun grabbedCorner(box: Rect, handle: HandleId): Pt = when (handle) {
+        HandleId.TL -> box.topLeft
+        HandleId.TR -> Pt(box.right, box.top)
+        HandleId.BL -> Pt(box.left, box.bottom)
+        else -> Pt(box.right, box.bottom) // BR
+    }
+
+    /** Positive scale of one axis from [anchor] toward [grab], floored so the span keeps [MIN_SIZE]. */
+    private fun axisScale(pointer: Double, anchor: Double, grab: Double, dim: Double): Double {
+        val denom = grab - anchor
+        if (abs(denom) < 1e-9) return 1.0
+        return max((pointer - anchor) / denom, MIN_SIZE / dim)
+    }
+
     private fun cornerAnchor(box: Rect, handle: HandleId): Pt = when (handle) {
         HandleId.TL -> Pt(box.right, box.bottom)
         HandleId.TR -> Pt(box.left, box.bottom)

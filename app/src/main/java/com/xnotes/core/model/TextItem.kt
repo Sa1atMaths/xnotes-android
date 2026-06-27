@@ -1,5 +1,6 @@
 package com.xnotes.core.model
 
+import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.pal.FontFace
@@ -62,6 +63,27 @@ class TextItem(
         }
     }
 
+    override fun snapshotGeometry(): GeometrySnapshot = TextSnapshot(pos, width, height, pointSize)
+
+    override fun restoreGeometry(snap: GeometrySnapshot) {
+        if (snap !is TextSnapshot) return
+        pos = snap.pos
+        width = snap.width
+        height = snap.height
+        pointSize = snap.pointSize
+    }
+
+    /** Text never rotates. A uniform (corner) scale grows the wrap width, reserved height, and font
+     *  size together; a single-axis (edge) scale changes only the wrap width or the reserved height
+     *  and leaves the font size alone. The vertical scale reserves at least the current content
+     *  height first, so dragging the bottom edge of an auto-height box actually grows it. */
+    override fun applyTransform(t: Affine) {
+        pos = t.apply(pos)
+        width *= t.scaleX
+        if (t.scaleY != 1.0) height = maxOf(height, contentHeight()) * t.scaleY
+        if (t.isUniformScale) pointSize *= t.scaleX
+    }
+
     companion object {
         const val KIND = "text"
         const val DEFAULT_WIDTH = 300.0
@@ -84,3 +106,11 @@ data class TextStyle(val rgba: Rgba, val pointSize: Double, val face: FontFace) 
         fun of(t: TextItem) = TextStyle(t.rgba, t.pointSize, t.face)
     }
 }
+
+/** Snapshot of a text box's transformable geometry (position, wrap width, reserved height, size). */
+private data class TextSnapshot(
+    val pos: Pt,
+    val width: Double,
+    val height: Double,
+    val pointSize: Double,
+) : GeometrySnapshot

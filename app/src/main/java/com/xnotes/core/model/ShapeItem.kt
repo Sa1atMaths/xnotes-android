@@ -1,5 +1,6 @@
 package com.xnotes.core.model
 
+import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
@@ -255,6 +256,50 @@ class ShapeItem(
         }
     }
 
+    override fun snapshotGeometry(): GeometrySnapshot = ShapeSnapshot(shape, start, end, points, strokeWidth)
+
+    override fun restoreGeometry(snap: GeometrySnapshot) {
+        if (snap !is ShapeSnapshot) return
+        shape = snap.shape
+        start = snap.start
+        end = snap.end
+        points = snap.points
+        strokeWidth = snap.strokeWidth
+    }
+
+    /**
+     * Bake a transform into the shape. A line/arrow keeps its kind (only its two endpoints move).
+     * A pure scale keeps every kind parametric (the box scales; normalized vertices follow). A
+     * rotation can't be held by an axis-aligned box, so a rotated rectangle/ellipse/triangle is
+     * converted to a [ShapeKind.POLYGON] (closed) or [ShapeKind.POLYLINE] (open) of baked
+     * vertices. The outline width scales by the transform's linear factor (1.0 for a rotation).
+     */
+    override fun applyTransform(t: Affine) {
+        strokeWidth *= t.linearScale
+        if (shape.isEndpointShape || t.isAxisAligned) {
+            start = t.apply(start)
+            end = t.apply(end)
+            return
+        }
+        val verts = currentOutline().map { t.apply(it) }
+        val bb = Rect.bounding(verts)
+        shape = if (shape.isClosed) ShapeKind.POLYGON else ShapeKind.POLYLINE
+        start = bb.topLeft
+        end = Pt(bb.right, bb.bottom)
+        points = normalize(verts, bb)
+    }
+
+    /** Content-space vertices of the current outline; used to bake a rotation into a vertex list. */
+    private fun currentOutline(): List<Pt> = when (shape) {
+        ShapeKind.POLYGON, ShapeKind.POLYLINE, ShapeKind.CURVE -> absPoints()
+        ShapeKind.TRIANGLE -> triangleVertices()
+        ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> ellipsePolygon()
+        else -> {
+            val b = box
+            listOf(Pt(b.left, b.top), Pt(b.right, b.top), Pt(b.right, b.bottom), Pt(b.left, b.bottom))
+        }
+    }
+
     companion object {
         const val KIND = "shape"
         const val HIT_TOLERANCE = 6.0
@@ -296,3 +341,12 @@ class ShapeItem(
         private const val CORE_WIDTH_MIN = 1.0
     }
 }
+
+/** Snapshot of a shape's transformable geometry (kind can change when a box shape is rotated). */
+private data class ShapeSnapshot(
+    val shape: ShapeKind,
+    val start: Pt,
+    val end: Pt,
+    val points: List<Pt>?,
+    val strokeWidth: Double,
+) : GeometrySnapshot
