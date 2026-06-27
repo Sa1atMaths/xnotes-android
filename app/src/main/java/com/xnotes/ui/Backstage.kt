@@ -250,7 +250,7 @@ private fun BackstageContent(
     if (compact) {
         Box(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
             BackstageMain(
-                Modifier.fillMaxSize(), editor, view, sidebarOpen, { sidebarOpen = true },
+                Modifier.fillMaxSize(), editor, view, compact, sidebarOpen, { sidebarOpen = true }, { selectView(BackstageView.HOME) },
                 onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
             )
             AnimatedVisibility(visible = sidebarOpen, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
@@ -274,7 +274,7 @@ private fun BackstageContent(
                 BackstageSidebar(Modifier.width(264.dp), view, { sidebarOpen = false }, selectView, newNote, importPdf, openSystem)
             }
             BackstageMain(
-                Modifier.weight(1f).fillMaxHeight(), editor, view, sidebarOpen, { sidebarOpen = true },
+                Modifier.weight(1f).fillMaxHeight(), editor, view, compact, sidebarOpen, { sidebarOpen = true }, { selectView(BackstageView.HOME) },
                 onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
             )
         }
@@ -324,8 +324,10 @@ private fun BackstageMain(
     modifier: Modifier,
     editor: Editor,
     view: BackstageView,
+    compact: Boolean,
     sidebarOpen: Boolean,
     onShowSidebar: () -> Unit,
+    onBackToHome: () -> Unit,
     onOpenFile: (String) -> Unit,
     onPickRoot: () -> Unit,
     onImportPdf: () -> Unit,
@@ -337,14 +339,18 @@ private fun BackstageMain(
 ) {
     val palette = LocalPalette.current
     Column(modifier) {
-        // About keeps a slim top bar for the hamburger, reserved at a constant height so toggling
-        // the sidebar never shifts it. Home and Preferences host the hamburger inline with their headers.
+        // About's slim top bar (constant height so toggling the sidebar never shifts it) holds the
+        // same leading control as Home/Preferences: a Back arrow to Home on compact, else a hamburger.
         if (view == BackstageView.ABOUT) {
             Box(
                 Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 6.dp, end = 12.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                if (!sidebarOpen) {
+                if (compact) {
+                    IconButton(onClick = onBackToHome) {
+                        Icon(XnotesIcons.prev, "Back to home", tint = palette.text.toComposeColor(), modifier = Modifier.size(24.dp))
+                    }
+                } else if (!sidebarOpen) {
                     IconButton(onClick = onShowSidebar) {
                         Icon(XnotesIcons.menu, "Show sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(24.dp))
                     }
@@ -357,7 +363,7 @@ private fun BackstageMain(
                     editor, onOpenFile, onPickRoot, onImportPdf,
                     onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode, sidebarOpen, onShowSidebar,
                 )
-                BackstageView.PREFERENCES -> PreferencesPane(editor, sidebarOpen, onShowSidebar)
+                BackstageView.PREFERENCES -> PreferencesPane(editor, compact, sidebarOpen, onShowSidebar, onBackToHome)
                 BackstageView.ABOUT -> AboutPane()
             }
         }

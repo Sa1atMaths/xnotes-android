@@ -83,7 +83,7 @@ private val tapGestureOptions = listOf(
  * immediately, including in the surrounding backstage.
  */
 @Composable
-fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> Unit) {
+fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onShowSidebar: () -> Unit, onBackToHome: () -> Unit) {
     val palette = LocalPalette.current
     var prefs by remember { mutableStateOf(editor.preferences) }
     fun update(p: Preferences) {
@@ -118,10 +118,15 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
 
     Box(Modifier.fillMaxSize().onGloballyPositioned { paneTopLeft = it.boundsInRoot().topLeft }) {
     Column(Modifier.fillMaxSize()) {
-        // Hamburger sits inline with the title (shown only when the sidebar is hidden); the row keeps
-        // a constant height either way so toggling the sidebar never shifts the settings below.
+        // Leading button inline with the title, at a constant row height so toggling the sidebar never
+        // shifts the settings below: a back arrow to Home on compact, else a hamburger when hidden.
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!sidebarOpen) {
+            if (compact) {
+                IconButton(onClick = onBackToHome) {
+                    Icon(XnotesIcons.prev, "Back to home", tint = palette.text.toComposeColor(), modifier = Modifier.size(24.dp))
+                }
+                Spacer(Modifier.width(4.dp))
+            } else if (!sidebarOpen) {
                 IconButton(onClick = onShowSidebar) {
                     Icon(XnotesIcons.menu, "Show sidebar", tint = palette.text.toComposeColor(), modifier = Modifier.size(24.dp))
                 }
