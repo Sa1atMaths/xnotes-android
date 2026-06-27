@@ -244,7 +244,6 @@ class InteractionController(
 
     // SELECTION
     private val selection = mutableListOf<Selected>()
-    private var lassoPolygon: List<Pt>? = null
     private val lassoPoints = mutableListOf<Pt>()
     private var bandRect: Rect? = null
     private var moveOrigin = Pt.ZERO
@@ -1093,6 +1092,18 @@ class InteractionController(
         return selectionBoundsContent()?.contains(content) == true
     }
 
+    /** If [content] lands on the settled selection, begin the matching gesture (a resize/rotate
+     *  handle, or a move when inside the bounds) and return true; else return false. Shared by the
+     *  select and lasso tools so both grab an existing selection the same way. */
+    private fun tryGrabSelection(content: Pt): Boolean {
+        if (selection.isEmpty()) return false
+        if (selectionBoundsContent()?.contains(content) == true) {
+            beginMove(content)
+            return true
+        }
+        return false
+    }
+
     private fun beginSelect(content: Pt) {
         // 1. Resize handle under the point (single resizable item selected)?
         if (selection.size == 1 && selection[0].item is Resizable) {
@@ -1145,11 +1156,9 @@ class InteractionController(
     // --- LASSO ---
 
     private fun beginLasso(content: Pt) {
-        val poly = lassoPolygon
-        if (poly != null && selection.isNotEmpty() && com.xnotes.core.geometry.Geometry.pointInPolygon(poly, content)) {
-            beginMove(content)
-            return
-        }
+        // A tap that lands on the settled selection grabs it (resize/rotate handle or inside the
+        // bounding box) instead of starting a fresh lasso.
+        if (tryGrabSelection(content)) return
         clearSelection()
         lassoPoints.clear()
         lassoPoints.add(content)
@@ -1168,7 +1177,6 @@ class InteractionController(
                 clearSelection()
             } else {
                 setSelection(members)
-                lassoPolygon = lassoPoints.toList()
             }
         } else {
             clearSelection()
@@ -1248,7 +1256,6 @@ class InteractionController(
         if (moved) {
             val items = selection.map { it.item }
             for (item in items) item.translate(moveOffset.x, moveOffset.y)
-            lassoPolygon = lassoPolygon?.map { Pt(it.x + moveOffset.x, it.y + moveOffset.y) }
             history.push(MoveItems(items, moveOffset.x, moveOffset.y))
             state.document.dirty = true
             // Moved items stay lifted (drawn live in the overlay), so the ink cache — which
@@ -1718,7 +1725,6 @@ class InteractionController(
         val touched = selection + items
         selection.clear()
         selection.addAll(items)
-        lassoPolygon = null
         repairRegions(dirtyRegions(touched))
         onSelectionChanged(selection.isNotEmpty())
         requestRender()
@@ -1732,10 +1738,9 @@ class InteractionController(
             onToolChanged(tool)
         }
         onSelectionMenu(null)
-        if (selection.isEmpty() && lassoPolygon == null) return
+        if (selection.isEmpty()) return
         val regions = dirtyRegions(selection) // where the now-unlifted items sit (before clearing)
         selection.clear()
-        lassoPolygon = null
         repairRegions(regions) // repaint them back into the cache in place — no full rebuild
         onSelectionChanged(false)
         requestRender()
@@ -2219,7 +2224,7 @@ class InteractionController(
         shapePageIndex = null
         bandRect = null
         lassoPoints.clear()
-        // Cancel an in-progress capture drag; a frozen capture (mode IDLE) survives, like lassoPolygon.
+        // Cancel an in-progress capture drag; a frozen capture (mode IDLE) survives.
         if (mode == PointerMode.SHOT) { screenshotRect = null; onScreenshotMenu(null) }
         textDragRect = null
         if (mode == PointerMode.PINCH) {
@@ -2274,8 +2279,6 @@ class InteractionController(
                 mode == PointerMode.TEXT_DRAG -> textDragRect?.let { r.strokeRect(it, accent) }
                 mode == PointerMode.LASSO_DRAW && lassoPoints.size >= 2 ->
                     r.strokePolyline(lassoPoints, Pen(state.palette.accent, 1.3, cosmetic = true))
-                lassoPolygon != null && selection.isNotEmpty() ->
-                    r.strokePolygon(lassoPolygon!!.map { Pt(it.x + moveOffset.x, it.y + moveOffset.y) }, accent)
                 selection.isNotEmpty() ->
                     selectionBoundsContent()?.translate(moveOffset.x, moveOffset.y)?.let { r.strokeRect(it, accent) }
             }
