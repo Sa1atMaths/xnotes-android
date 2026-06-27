@@ -39,6 +39,8 @@ data class Preferences(
     val sideMargin: Double = 16.0,
     /** Long-edge cap (px) for the on-screen page cache; higher holds more of the page ready at deep zoom. */
     val maxCacheResolution: Int = 2048,
+    /** Open in fullscreen; null ⇒ auto (on unless the display has a camera cutout). */
+    val startFullscreen: Boolean? = null,
 ) {
     val isDark: Boolean get() = uiAppearance != "light"
 
@@ -62,6 +64,7 @@ data class Preferences(
         .put("three_finger_tap", threeFingerTap)
         .put("side_margin", sideMargin)
         .put("max_cache_resolution", maxCacheResolution)
+        .apply { startFullscreen?.let { put("start_fullscreen", it) } }
 
     companion object {
         val DEFAULT_ACCENT = Rgba(0, 230, 118, 255)
@@ -93,6 +96,7 @@ data class Preferences(
                 threeFingerTap = tapAction("three_finger_tap"),
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
+                startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
             )
         }
     }

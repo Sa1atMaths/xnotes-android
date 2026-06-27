@@ -1,9 +1,12 @@
 package com.xnotes
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -74,11 +77,21 @@ import kotlinx.coroutines.launch
  *  when the session restores instantly. */
 private const val MIN_LOADER_MS = 600L
 
+/** Whether the display has a camera cutout (notch/hole-punch). False below API 29, which has no
+ *  cutout API; such devices fall back to fullscreen by default. */
+internal fun deviceHasDisplayCutout(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+    val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) context.display
+        else @Suppress("DEPRECATION")
+            (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
+    return display?.cutout != null
+}
+
 class MainActivity : ComponentActivity() {
 
-    // Observable so the editor's content insets can follow it: fullscreen draws edge to edge and
-    // lets the swipe-in transient bars overlay (no resize), non-fullscreen insets under the bars.
-    private var fullscreen by mutableStateOf(true) // open in full screen by default
+    // The editor owns the fullscreen state (persisted preference, default depends on the display
+    // cutout); this activity just applies it to the window. Fullscreen draws edge to edge and lets
+    // the swipe-in transient bars overlay (no resize), non-fullscreen insets under the bars.
     private var editor: Editor? = null
     // A PDF handed to us by another app ("Open with" / Share); consumed once the editor is ready.
     private var pendingPdfImport by mutableStateOf<Uri?>(null)
@@ -86,11 +99,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setTheme(com.xnotes.R.style.Theme_Xnotes) // leave the dark launch/splash theme behind
-        applyFullscreen()
+        applyFullscreen(!deviceHasDisplayCutout(this)) // provisional; reconciled once the editor loads prefs
         pendingPdfImport = pdfImportUri(intent)
         setContent {
             val context = LocalContext.current
             val ed = remember { Editor(context).also { editor = it } }
+            LaunchedEffect(ed.fullscreen) { applyFullscreen(ed.fullscreen) }
             var ready by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) {
                 val start = android.os.SystemClock.uptimeMillis()
@@ -104,8 +118,8 @@ class MainActivity : ComponentActivity() {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (ready) EditorScreen(
                         ed,
-                        fullscreen = fullscreen,
-                        onToggleFullscreen = ::toggleFullscreen,
+                        fullscreen = ed.fullscreen,
+                        onToggleFullscreen = ed::toggleFullscreen,
                         importPdfUri = pendingPdfImport,
                         onImportConsumed = { pendingPdfImport = null },
                     )
@@ -148,7 +162,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && fullscreen) applyFullscreen() // re-hide transient bars after they swipe in
+        if (hasFocus && editor?.fullscreen == true) applyFullscreen(true) // re-hide transient bars after they swipe in
     }
 
     override fun onPause() {
@@ -161,12 +175,7 @@ class MainActivity : ComponentActivity() {
         editor?.stopPresentation()
     }
 
-    private fun toggleFullscreen() {
-        fullscreen = !fullscreen
-        applyFullscreen()
-    }
-
-    private fun applyFullscreen() {
+    private fun applyFullscreen(fullscreen: Boolean) {
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         if (fullscreen) {
             controller.hide(WindowInsetsCompat.Type.systemBars())

@@ -125,4 +125,14 @@ class SettingsTest {
         val o = JSONObject().put("two_finger_tap", "explode")
         assertEquals("none", Preferences.fromJson(o).twoFingerTap)
     }
+
+    @Test fun startFullscreenNullByDefaultAndUnwritten() {
+        assertNull(Preferences.fromJson(JSONObject()).startFullscreen)
+        assertFalse(Preferences().toJson().has("start_fullscreen"))
+    }
+
+    @Test fun startFullscreenRoundTrips() {
+        assertEquals(false, Preferences.fromJson(Preferences(startFullscreen = false).toJson()).startFullscreen)
+        assertEquals(true, Preferences.fromJson(Preferences(startFullscreen = true).toJson()).startFullscreen)
+    }
 }

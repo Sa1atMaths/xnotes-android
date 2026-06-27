@@ -108,6 +108,14 @@ class Editor(context: Context) {
     private var settings = settingsRepo.load()
     private var pdfSource: com.xnotes.platform.PdfSource? = null
 
+    private val deviceHasDisplayCutout = com.xnotes.deviceHasDisplayCutout(context)
+
+    /** Whether the window runs in fullscreen. Persisted via [Preferences.startFullscreen]; when unset
+     *  it defaults to on unless the display has a camera cutout. The activity observes this and drives
+     *  the window. */
+    var fullscreen by mutableStateOf(settings.prefs.startFullscreen ?: !deviceHasDisplayCutout)
+        private set
+
     /** Private dir holding each note's source PDF as a file, so a large PDF is never held whole in
      *  RAM (the renderer memory-maps it). Under filesDir, not the reclaimable cacheDir: the OS could
      *  evict a cacheDir copy mid-session, and the next autosave would then fail to re-embed the PDF.
@@ -748,10 +756,21 @@ class Editor(context: Context) {
         state.relayout()
     }
 
+    /** Set fullscreen and persist it as an explicit choice (used by the toolbar, F11, and the
+     *  Preferences toggle); lightweight, no canvas refresh. */
+    fun setFullscreenPref(v: Boolean) {
+        fullscreen = v
+        settings = settings.copy(prefs = settings.prefs.copy(startFullscreen = v))
+        settingsRepo.save(settings)
+    }
+
+    fun toggleFullscreen() = setFullscreenPref(!fullscreen)
+
     /** Apply edited preferences live and persist (used by the Preferences dialog). */
     fun applyPreferences(p: Preferences) {
         val marginChanged = p.sideMargin != settings.prefs.sideMargin
         settings = settings.copy(prefs = p)
+        fullscreen = p.startFullscreen ?: !deviceHasDisplayCutout // keep in sync (e.g. Reset to defaults)
         applyPagePrefsToState(p)
         state.invalidateAllCaches()
         startPdfRefine() // re-sweep / clear the hint if the dark-mode or keep-images preference toggled

@@ -166,6 +166,7 @@ fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onSh
                     CheckRow("Don't invert images", prefs.pdfKeepImageColors) { update(prefs.copy(pdfKeepImageColors = it)) }
                 }
             }
+            CheckRow("Start in fullscreen", editor.fullscreen) { editor.setFullscreenPref(it) }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Input")
