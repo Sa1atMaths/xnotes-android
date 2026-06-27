@@ -7,6 +7,8 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -82,6 +84,7 @@ private val tapGestureOptions = listOf(
  * pushed straight to the [Editor] (and persisted), so theme/page tweaks are seen
  * immediately, including in the surrounding backstage.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onShowSidebar: () -> Unit, onBackToHome: () -> Unit) {
     val palette = LocalPalette.current
@@ -172,14 +175,20 @@ fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onSh
             SectionTitle("Input")
             CheckRow("Draw with finger (off = finger pans)", prefs.fingerDraws) { update(prefs.copy(fingerDraws = it)) }
             FieldLabel("Panning while zoom is locked")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Chip("Single-finger pan", prefs.zoomLockPan == "single") { update(prefs.copy(zoomLockPan = "single")) }
                 Chip("Two-finger pan", prefs.zoomLockPan == "double") { update(prefs.copy(zoomLockPan = "double")) }
                 Chip("No pan", prefs.zoomLockPan == "none") { update(prefs.copy(zoomLockPan = "none")) }
             }
             CheckRow("Snap held strokes to shapes (hold the pen still)", prefs.detectShapes) { update(prefs.copy(detectShapes = it)) }
             FieldLabel("Stylus/Pen side button (hold)")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 penButtonOptions.forEach { (id, label) ->
                     Chip(label, prefs.penButtonTool == id) { update(prefs.copy(penButtonTool = id)) }
                 }
@@ -387,7 +396,13 @@ private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
-        Text(label, color = if (selected) palette.accent.toComposeColor() else palette.text.toComposeColor(), fontSize = 14.sp)
+        Text(
+            label,
+            color = if (selected) palette.accent.toComposeColor() else palette.text.toComposeColor(),
+            fontSize = 14.sp,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 
