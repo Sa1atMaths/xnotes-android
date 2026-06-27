@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
@@ -115,6 +116,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -519,9 +521,9 @@ private fun ExplorerSection(
             Spacer(Modifier.weight(1f))
             Text("Choose a folder to keep and browse your notes in.", color = palette.textDim.toComposeColor(), fontSize = 14.sp)
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PrimaryButton(XnotesIcons.folder, "Choose folder", onPickRoot)
-                PrimaryButton(XnotesIcons.database, "Use App Storage") { editor.useInternalStorage() }
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PrimaryButton(XnotesIcons.folder, "Choose folder", Modifier.fillMaxHeight(), onPickRoot)
+                PrimaryButton(XnotesIcons.database, "Use App Storage", Modifier.fillMaxHeight()) { editor.useInternalStorage() }
             }
             Spacer(Modifier.weight(1f))
         }
@@ -1460,7 +1462,7 @@ private const val PRESS_FILL_MS = 120L
 
 /** Line glyph above a label in a bordered box; inverts to the accent while pressed. Matches the About pane buttons. */
 @Composable
-private fun PrimaryButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun PrimaryButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val palette = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
     // Keep the accent fill visible for a minimum time so even a millisecond tap registers.
@@ -1490,16 +1492,22 @@ private fun PrimaryButton(icon: ImageVector, label: String, onClick: () -> Unit)
     val accent = palette.accent.toComposeColor()
     val onAccent = palette.bg.toComposeColor()
     Column(
-        Modifier
+        modifier
             .background(if (pressed) accent else Color.Transparent)
             .border(1.dp, if (pressed) accent else palette.border.toComposeColor(), RectangleShape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 14.dp, horizontal = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Icon(icon, null, tint = if (pressed) onAccent else accent, modifier = Modifier.size(22.dp))
         Spacer(Modifier.height(8.dp))
-        Text(label, color = if (pressed) onAccent else palette.text.toComposeColor(), fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            color = if (pressed) onAccent else palette.text.toComposeColor(),
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
