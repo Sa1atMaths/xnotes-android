@@ -165,7 +165,7 @@ fun PreferencesPane(editor: Editor, sidebarOpen: Boolean, onShowSidebar: () -> U
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Input")
             CheckRow("Draw with finger (off = finger pans)", prefs.fingerDraws) { update(prefs.copy(fingerDraws = it)) }
-            FieldLabel("How zoom lock behaves")
+            FieldLabel("Panning while zoom is locked")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("Single-finger pan", prefs.zoomLockPan == "single") { update(prefs.copy(zoomLockPan = "single")) }
                 Chip("Two-finger pan", prefs.zoomLockPan == "double") { update(prefs.copy(zoomLockPan = "double")) }
