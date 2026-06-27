@@ -194,7 +194,7 @@ class DocumentCodecTest {
         val doc = Document(dpi = 150)
         val page = Page(1240.0, 1754.0)
         page.items.add(Stroke(Tool.PEN, ToolConfig(neon = true, neonStrength = 0.85), mutableListOf(Sample(1.0, 2.0, 1.0))))
-        page.items.add(Stroke(Tool.TAPER, ToolConfig(taperLength = 40.0), mutableListOf(Sample(3.0, 4.0, 1.0), Sample(8.0, 9.0, 1.0))))
+        page.items.add(Stroke(Tool.TAPER, ToolConfig(taperLength = 40.0, taperMinFactor = 0.30), mutableListOf(Sample(3.0, 4.0, 1.0), Sample(8.0, 9.0, 1.0))))
         doc.pages.add(page)
 
         val items = roundTrip(doc).pages[0].items
@@ -202,6 +202,7 @@ class DocumentCodecTest {
         assertEquals(0.85, (items[0] as Stroke).config.neonStrength, 1e-9)   // intensity survives
         val taper = items[1] as Stroke
         assertEquals(40.0, taper.config.taperLength, 1e-9)
+        assertEquals(0.30, taper.config.taperMinFactor, 1e-9)   // tip-width floor survives
         assertEquals(0.0, taper.samples[0].t, 1e-9)   // non-speed stroke writes no time
     }
 

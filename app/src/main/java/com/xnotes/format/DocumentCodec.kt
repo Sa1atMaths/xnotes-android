@@ -209,6 +209,7 @@ class DocumentCodec(
         // stroke's config is byte-for-byte what older versions wrote.
         if (s.config.speedStrength != 0.0) config.put("speed_strength", s.config.speedStrength)
         if (s.config.taperLength != 0.0) config.put("taper_length", s.config.taperLength)
+        if (s.config.taperMinFactor != 0.0) config.put("taper_min_factor", s.config.taperMinFactor)
         if (s.config.neon) {
             config.put("neon", true)
             config.put("neon_strength", s.config.neonStrength)
@@ -300,6 +301,7 @@ class DocumentCodec(
             rgba = readRgba(c?.optJSONArray("rgba")) ?: def.rgba,
             speedStrength = c?.optDouble("speed_strength", def.speedStrength) ?: def.speedStrength,
             taperLength = c?.optDouble("taper_length", def.taperLength) ?: def.taperLength,
+            taperMinFactor = c?.optDouble("taper_min_factor", def.taperMinFactor) ?: def.taperMinFactor,
             neon = c?.optBoolean("neon", def.neon) ?: def.neon,
             neonStrength = c?.optDouble("neon_strength", def.neonStrength) ?: def.neonStrength,
             dashLength = c?.optDouble("dash_length", def.dashLength) ?: def.dashLength,

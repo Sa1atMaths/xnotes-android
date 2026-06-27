@@ -60,6 +60,7 @@ class Stroke(
             config.directionStrength,
             config.speedStrength,
             config.taperLength,
+            config.taperMinFactor,
             speedScale,
             smooth = !straight,
             roundCaps = tool == Tool.PEN || tool == Tool.HIGHLIGHTER,

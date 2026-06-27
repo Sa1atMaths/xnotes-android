@@ -2,6 +2,7 @@ package com.xnotes.core.stroke
 
 import com.xnotes.core.geometry.Pt
 import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 
@@ -19,7 +20,7 @@ object StrokeEngine {
     /** Floor on the calligraphic direction term so width stays positive. */
     const val MIN_DIRECTION = 0.1
 
-    /** Steepness of the pressure response S-curve (see [pressureCurve]). Raw stylus
+    /** Steepness of the pressure response S-curve (see [logisticEase]). Raw stylus
      *  pressure is reshaped by a logistic before it sets the width: the light and hard
      *  ends move width gently, the mid-range moves it fast, so the small pressure swings
      *  of normal writing produce more visible width variation. 0 keeps the old linear
@@ -61,11 +62,14 @@ object StrokeEngine {
      *  enough to cover the EMA pressure ramp so the cap meets the line at the body width. */
     const val CAP_HOLD_SAMPLES = 4
 
-    /** Taper pen: the taper at each end is capped at this fraction of the stroke's own length,
-     *  so a large taper value on a short stroke only eats this much per end instead of collapsing
-     *  the whole stroke into a point. With the cap at 0.1 the middle 80% always reaches full
-     *  width; a value that already fits under the cap is used unchanged (a fixed arc length). */
-    const val TAPER_MAX_FRACTION = 0.1
+    /** Taper falloff shape: the tail ease is the [logisticEase] sigmoid clipped to its
+     *  `[TAPER_TAIL, 1 - TAPER_TAIL]` band, since a true sigmoid only reaches 0 and 1 at +/-inf;
+     *  the clipped band is then stretched back to a real point and full width. A smaller tail
+     *  hugs the rails harder: a longer thin hold near the tip, then a quicker opening, than the
+     *  old cubic smoothstep. [TAPER_CURVE_K] is the logistic steepness that spans exactly that
+     *  band (sigma(+-k/2) = 1 - TAPER_TAIL / TAPER_TAIL). */
+    const val TAPER_TAIL = 0.01
+    val TAPER_CURVE_K = 2.0 * ln((1.0 - TAPER_TAIL) / TAPER_TAIL)
 
     /** Holds the round-cap pen's first/last [CAP_HOLD_SAMPLES] samples up to the settled pressure
      *  just inside each end, so a light pen-down/up can't pinch the round cap thinner than the line.
@@ -109,23 +113,24 @@ object StrokeEngine {
         pressure: Double,
         ty: Double,
     ): Double {
-        val pEff = if (pressureEnabled) pressureCurve(pressure) else 1.0
+        val pEff = if (pressureEnabled) logisticEase(pressure, PRESSURE_CURVE_K) else 1.0
         val wBase = baseWidth * (m + (1 - m) * pEff)
         val direction = max(1 + ds * ty, MIN_DIRECTION)
         return wBase * direction / 2.0
     }
 
     /**
-     * Reshapes raw pressure `[0, 1]` through a logistic S-curve centred at 0.5,
-     * normalised so the endpoints are exact (`0 -> 0`, `1 -> 1`); only the mid-range
-     * is bent. [k] is the steepness ([PRESSURE_CURVE_K]); `k <= 0` is the identity,
-     * recovering the linear width response.
+     * Normalized logistic S-curve on `[0, 1]`, centred at 0.5 and rescaled so the endpoints
+     * are exact (`0 -> 0`, `1 -> 1`) while only the middle bends. [k] sets the steepness: the
+     * curve spans the logistic's `[sigma(-k/2), sigma(k/2)]` band, so a larger [k] both steepens
+     * the middle and clips the rails nearer 0 and 1. `k <= 0` is the identity (a linear ramp).
+     * Shared by the pressure response ([PRESSURE_CURVE_K]) and the taper ease ([TAPER_CURVE_K]).
      */
-    fun pressureCurve(p: Double, k: Double = PRESSURE_CURVE_K): Double {
-        if (k <= 0.0) return p
+    fun logisticEase(x: Double, k: Double): Double {
+        if (k <= 0.0) return x
         val lo = 1.0 / (1.0 + exp(k * 0.5))
         val hi = 1.0 / (1.0 + exp(-k * 0.5))
-        val raw = 1.0 / (1.0 + exp(-k * (p - 0.5)))
+        val raw = 1.0 / (1.0 + exp(-k * (x - 0.5)))
         return (raw - lo) / (hi - lo)
     }
 
@@ -181,26 +186,26 @@ object StrokeEngine {
     }
 
     /**
-     * Per-point width multipliers in `[0, 1]` for the **taper pen**: the line eases
-     * out of a point at each end and reaches full width in the middle. [taperLength]
-     * is the arc length (content px) over which each end eases in, but it is capped at
-     * [TAPER_MAX_FRACTION] of the stroke's own length so a large value on a short stroke only
-     * tapers that fraction per end instead of collapsing the whole stroke into a point. Above
-     * that the value is used unchanged (a fixed arc length, so the taper keeps its size as a long
-     * stroke grows). Returns all-`1.0` when off or the stroke is too short.
+     * Per-point width multipliers in `[taperMinFactor, 1]` for the **taper pen**: only the
+     * stroke's **end** eases down (to [taperMinFactor] of full width, or a sharp point when that is
+     * 0); the head (pen-down) stays square at full width. [taperLength] is the arc length (content
+     * px) over which the tail eases in, used as-is with no fraction cap, so a value longer than the
+     * stroke just keeps ramping past the head (which then never reaches full width). Returns
+     * all-`1.0` when off or the stroke is too short ([TAPER_MIN_LEN]).
      */
-    fun taperFactors(centers: List<Pt>, taperLength: Double): List<Double> {
+    fun taperFactors(centers: List<Pt>, taperLength: Double, taperMinFactor: Double): List<Double> {
         val n = centers.size
         if (taperLength <= 0.0 || n < 2) return List(n) { 1.0 }
         val cum = DoubleArray(n)
         for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
         val total = cum[n - 1]
         if (total < TAPER_MIN_LEN) return List(n) { 1.0 }
-        val taper = min(taperLength, TAPER_MAX_FRACTION * total)
         return (0 until n).map { i ->
-            // Arc distance to the nearer end, ramped over the (capped) taper length.
-            val edge = (min(cum[i], total - cum[i]) / taper).coerceIn(0.0, 1.0)
-            edge * edge * (3 - 2 * edge)
+            // Arc distance back from the stroke's end, ramped over the taper length. Only the tail
+            // tapers (the head stays full width), the length is used as-is (no fraction cap), and
+            // the tail bottoms out at taperMinFactor of full instead of a sharp point.
+            val edge = ((total - cum[i]) / taperLength).coerceIn(0.0, 1.0)
+            taperMinFactor + (1.0 - taperMinFactor) * logisticEase(edge, TAPER_CURVE_K)
         }
     }
 
@@ -217,6 +222,7 @@ object StrokeEngine {
         ds: Double,
         speedStrength: Double = 0.0,
         taperLength: Double = 0.0,
+        taperMinFactor: Double = 0.0,
         speedScale: Double = 1.0,
         smooth: Boolean = true,
         roundCaps: Boolean = false,
@@ -261,7 +267,7 @@ object StrokeEngine {
 
         // Optional width multipliers: speed thins fast travel, taper points the ends.
         val sf = speedFactors(samples, speedStrength, speedScale)
-        val tf = taperFactors(centers, taperLength)
+        val tf = taperFactors(centers, taperLength, taperMinFactor)
 
         // Calligraphy: low-pass the direction channel (the tangent's y that sets nib width)
         // so the width glides between thick and thin instead of snapping when the stroke

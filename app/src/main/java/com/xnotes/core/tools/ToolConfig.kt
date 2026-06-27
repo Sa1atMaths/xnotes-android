@@ -63,6 +63,10 @@ data class ToolConfig(
     /** Per-tool colour override: when set, new strokes from this tool use this colour instead of
      *  the toolbar's active ink colour. null = follow the toolbar (the default for every tool). */
     val colorOverride: Rgba? = null,
+    /** Taper pen: width fraction the tapered end keeps, in `[0, 1]` (the floor of the tail ease).
+     *  0 = the tail comes to a sharp point; 0.1 = it bottoms out at a tenth of full width. Only
+     *  used when [taperLength] > 0. */
+    val taperMinFactor: Double = 0.0,
 )
 
 /** Factory defaults per tool (spec 04 §3). */
@@ -73,7 +77,7 @@ object ToolDefaults {
         Tool.DASHED -> ToolConfig(baseWidth = 3.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0, dashLength = 10.0, dashGap = 8.0)
         Tool.CALLIGRAPHY -> ToolConfig(baseWidth = 6.0, pressureEnabled = true, pressureMinFactor = 0.40, directionStrength = 0.60)
         Tool.SPEED -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.35, directionStrength = 0.0, speedStrength = 0.8)
-        Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperLength = 40.0)
+        Tool.TAPER -> ToolConfig(baseWidth = 4.0, pressureEnabled = true, pressureMinFactor = 0.45, directionStrength = 0.0, taperLength = 40.0, taperMinFactor = 0.10)
         Tool.HIGHLIGHTER -> ToolConfig(baseWidth = 16.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0, highlighterAlpha = 0.50)
         Tool.ERASER -> ToolConfig(baseWidth = 24.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)
         Tool.LASSO -> ToolConfig(baseWidth = 2.0, pressureEnabled = false, pressureMinFactor = 1.0, directionStrength = 0.0)

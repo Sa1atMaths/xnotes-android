@@ -82,19 +82,21 @@ class StrokeEngineTest {
     }
 
     // --- Taper pen (§1.1) ---
-    @Test fun taperPointsTheEnds() {
-        // Pressure off, m=1 ⇒ a flat 2.0 half-width everywhere without taper.
-        val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
+    @Test fun taperPointsOnlyTheEnd() {
+        // End-only taper: the tail eases to a point while the head stays square at full width.
+        // Pressure off, m=1 ⇒ a flat 2.0 half-width before the taper multiplier.
+        val pts = (0..10).map { Sample(it * 10.0, 0.0, 1.0) }  // total 100 px
         val plain = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0)
-        val tapered = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 10.0)
+        val tapered = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 40.0, smooth = false)
 
-        assertEquals(2.0, plain.halfWidths.first(), 1e-9)   // plain: full width to the flat end
-        assertEquals(0.0, tapered.halfWidths.first(), 1e-9) // tapered: collapses to a point
-        assertEquals(0.0, tapered.halfWidths.last(), 1e-9)
+        assertEquals(2.0, plain.halfWidths.first(), 1e-9)
+        assertEquals(2.0, tapered.halfWidths.first(), 1e-9)  // head: full width, no taper
+        assertEquals(2.0, tapered.halfWidths[2], 1e-9)       // still full well into the body
+        assertEquals(0.0, tapered.halfWidths.last(), 1e-9)   // tail: a point
 
-        val mid = tapered.halfWidths[2]
-        assertTrue(mid > tapered.halfWidths[0])         // middle fatter than the tip
-        assertTrue(mid > 1.5 && mid <= 2.0)             // and near full width
+        // The tail ramps monotonically down to the point over the last 40 px.
+        for (i in 7..9) assertTrue(tapered.halfWidths[i] > tapered.halfWidths[i + 1])
+        assertEquals(1.0, tapered.halfWidths[8], 1e-9)       // 20 px in: edge 0.5 ⇒ half of full
     }
 
     @Test fun taperIgnoresVeryShortStrokes() {
@@ -104,27 +106,37 @@ class StrokeEngineTest {
         assertEquals(2.0, g.halfWidths.first(), 1e-9)
     }
 
-    @Test fun taperIsCappedSoAHugeValueStillLeavesAFullWidthMiddle() {
-        // A huge taper value on a short stroke must not collapse it into a sliver: the taper is
-        // capped at 10% of the stroke's length, so the ends still come to a point while the
-        // middle 80% reaches full width.
+    @Test fun taperLengthIsUsedAsIsWithNoFractionCap() {
+        // No fraction cap: a taper longer than the stroke is not clamped, so it ramps past the
+        // head and the head no longer reaches full width (the whole stroke tapers to its end).
         val pts = (0..10).map { Sample(it * 10.0, 0.0, 1.0) } // total 100 px
-        val g = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 1000.0)
-        assertEquals(0.0, g.halfWidths.first(), 1e-9)        // still a point at the ends
-        assertEquals(0.0, g.halfWidths.last(), 1e-9)
-        assertEquals(2.0, g.halfWidths.maxOrNull()!!, 1e-9)  // and full width in the middle
+        val g = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 1000.0, smooth = false)
+        assertEquals(0.0, g.halfWidths.last(), 1e-9)         // tail still a point
+        assertTrue(g.halfWidths.first() < 0.1)               // head not held up by any cap
+        for (i in 0 until g.halfWidths.size - 1) assertTrue(g.halfWidths[i] > g.halfWidths[i + 1])
     }
 
-    @Test fun taperUsesTheFixedValueWhenItFitsUnderTheCap() {
-        // When the taper value is under 10% of the stroke it is used as-is (a fixed arc length),
-        // so the same value tapers the same distance regardless of how much longer the stroke
-        // gets. Both strokes here are long enough that 10% exceeds 25, so the entrance ramps match.
-        val a = (0..40).map { Sample(it * 10.0, 0.0, 1.0) }  // total 400, 10% = 40 > 25
-        val b = (0..80).map { Sample(it * 10.0, 0.0, 1.0) }  // total 800, 10% = 80 > 25
-        val ga = StrokeEngine.build(a, 4.0, false, 1.0, 0.0, taperLength = 25.0)
-        val gb = StrokeEngine.build(b, 4.0, false, 1.0, 0.0, taperLength = 25.0)
-        for (i in 1..3) assertEquals(ga.halfWidths[i], gb.halfWidths[i], 1e-9)
-        assertEquals(2.0, ga.halfWidths.maxOrNull()!!, 1e-9)
+    @Test fun taperIsAFixedTailArcLengthRegardlessOfStrokeLength() {
+        // The taper is a fixed arc length measured from the end, so the exit ramp is identical
+        // for a short and a long stroke with the same taper value; only the full-width head differs.
+        val a = (0..40).map { Sample(it * 10.0, 0.0, 1.0) }  // total 400
+        val b = (0..80).map { Sample(it * 10.0, 0.0, 1.0) }  // total 800
+        val ga = StrokeEngine.build(a, 4.0, false, 1.0, 0.0, taperLength = 25.0, smooth = false)
+        val gb = StrokeEngine.build(b, 4.0, false, 1.0, 0.0, taperLength = 25.0, smooth = false)
+        for (k in 0..3) assertEquals(
+            ga.halfWidths[ga.halfWidths.size - 1 - k],
+            gb.halfWidths[gb.halfWidths.size - 1 - k], 1e-9,
+        )
+        assertEquals(2.0, ga.halfWidths.maxOrNull()!!, 1e-9) // head reaches full width (25 < 400)
+    }
+
+    @Test fun taperBottomsOutAtTheTipWidthFloor() {
+        // A non-zero tip width stops the tail at that fraction of full width instead of a point.
+        val pts = (0..10).map { Sample(it * 10.0, 0.0, 1.0) } // total 100 px
+        val g = StrokeEngine.build(pts, 4.0, false, 1.0, 0.0, taperLength = 40.0, taperMinFactor = 0.25, smooth = false)
+        assertEquals(2.0, g.halfWidths.first(), 1e-9)   // head: full width
+        assertEquals(0.5, g.halfWidths.last(), 1e-9)    // tail: 0.25 of the 2.0 full half-width
+        assertEquals(1.25, g.halfWidths[8], 1e-9)       // 20 px in: edge 0.5 ⇒ 0.25 + 0.75·0.5 of full
     }
 
     // --- Speed pen (§1.1) ---
