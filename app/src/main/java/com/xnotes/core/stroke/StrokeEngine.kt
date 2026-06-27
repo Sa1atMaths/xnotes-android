@@ -1,6 +1,7 @@
 package com.xnotes.core.stroke
 
 import com.xnotes.core.geometry.Pt
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 
@@ -17,6 +18,13 @@ object StrokeEngine {
 
     /** Floor on the calligraphic direction term so width stays positive. */
     const val MIN_DIRECTION = 0.1
+
+    /** Steepness of the pressure response S-curve (see [pressureCurve]). Raw stylus
+     *  pressure is reshaped by a logistic before it sets the width: the light and hard
+     *  ends move width gently, the mid-range moves it fast, so the small pressure swings
+     *  of normal writing produce more visible width variation. 0 keeps the old linear
+     *  response; higher = a sharper S. */
+    const val PRESSURE_CURVE_K = 8.0
 
     /** Calligraphy pen: a heavier low-pass on the direction channel (the tangent's y that
      *  drives nib width) than [ALPHA] (position), so the width eases between thick and thin
@@ -101,10 +109,24 @@ object StrokeEngine {
         pressure: Double,
         ty: Double,
     ): Double {
-        val pEff = if (pressureEnabled) pressure else 1.0
+        val pEff = if (pressureEnabled) pressureCurve(pressure) else 1.0
         val wBase = baseWidth * (m + (1 - m) * pEff)
         val direction = max(1 + ds * ty, MIN_DIRECTION)
         return wBase * direction / 2.0
+    }
+
+    /**
+     * Reshapes raw pressure `[0, 1]` through a logistic S-curve centred at 0.5,
+     * normalised so the endpoints are exact (`0 -> 0`, `1 -> 1`); only the mid-range
+     * is bent. [k] is the steepness ([PRESSURE_CURVE_K]); `k <= 0` is the identity,
+     * recovering the linear width response.
+     */
+    fun pressureCurve(p: Double, k: Double = PRESSURE_CURVE_K): Double {
+        if (k <= 0.0) return p
+        val lo = 1.0 / (1.0 + exp(k * 0.5))
+        val hi = 1.0 / (1.0 + exp(-k * 0.5))
+        val raw = 1.0 / (1.0 + exp(-k * (p - 0.5)))
+        return (raw - lo) / (hi - lo)
     }
 
     /** Hermite smoothstep: 0 below [lo], 1 above [hi], an S-curve between. */
