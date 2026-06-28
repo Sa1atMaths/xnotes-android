@@ -1,5 +1,6 @@
 package com.xnotes.core.pal
 
+import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Rgba
@@ -94,6 +95,24 @@ interface Renderer {
 
     fun fillCircleGlow(center: Pt, radius: Double, color: Rgba, blurRadius: Double, inner: Boolean = false) =
         fillCircle(center, radius, color)
+
+    /**
+     * Fill an ink ribbon as a circular brush disc swept along [centers] with per-point [radii]: a
+     * disc at every centre, plus the [Geometry.ribbonQuad] bridging each consecutive pair, all in
+     * [color]. Because the nib is a disc, round caps and joins fall out for free on every pen, and
+     * because every piece is convex and merely filled (never one self-overlapping outline) a sharp
+     * turn can't leave a winding-cancelled gap. The default fills each piece on its own — correct
+     * for an opaque single-colour ribbon since the overlaps just repaint the same colour; an
+     * anti-aliasing backend should override to union them into one path so shared edges don't seam.
+     */
+    fun fillDiskRibbon(centers: List<Pt>, radii: List<Double>, color: Rgba) {
+        val n = minOf(centers.size, radii.size)
+        for (i in 0 until n - 1) {
+            val q = Geometry.ribbonQuad(centers[i], radii[i], centers[i + 1], radii[i + 1])
+            if (q.size >= 3) fillPolygon(q, color, FillRule.NONZERO)
+        }
+        for (i in 0 until n) if (radii[i] > 0.0) fillCircle(centers[i], radii[i], color)
+    }
 
     // --- outlines (cosmetic for chrome, page-space for shapes) ---
     fun strokeRect(rect: Rect, pen: Pen)

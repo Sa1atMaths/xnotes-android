@@ -117,9 +117,11 @@ class Stroke(
         }
     }
 
+    // The ribbon is a circular brush disc swept down the centreline: a disc at every sample plus
+    // the body bridging them. Round caps and joins come for free on every pen, and the union of
+    // convex pieces can't hole the way one self-overlapping outline does at a sharp turn.
     private fun paintFills(r: Renderer, g: StrokeGeometry, color: Rgba) {
-        if (g.outline.size >= 3) r.fillPolygon(g.outline, color, FillRule.NONZERO)
-        for (cap in g.caps) if (cap.radius > 0.0) r.fillCircle(cap.center, cap.radius, color)
+        r.fillDiskRibbon(g.centerline, g.halfWidths, color)
     }
 
     /**
@@ -215,23 +217,24 @@ class Stroke(
     override fun bounds(): Rect {
         cachedBounds?.let { return it }
         val g = geometry()
-        if (g.outline.isEmpty() && g.caps.isEmpty()) {
+        if (g.centerline.isEmpty()) {
             val b = if (samples.isEmpty()) Rect(0.0, 0.0, 0.0, 0.0) else rawBounds()
             return b.also { cachedBounds = it }
         }
+        // Bound the swept-disc ribbon by the discs themselves: each centre +/- its half-width holds
+        // that sample's disc, and the bridging body never reaches past the discs it joins, so this
+        // covers the round caps every pen now grows (the old outline box clipped them flat).
         var minX = Double.POSITIVE_INFINITY
         var minY = Double.POSITIVE_INFINITY
         var maxX = Double.NEGATIVE_INFINITY
         var maxY = Double.NEGATIVE_INFINITY
-        for (p in g.outline) {
-            if (p.x < minX) minX = p.x else if (p.x > maxX) maxX = p.x
-            if (p.y < minY) minY = p.y else if (p.y > maxY) maxY = p.y
-        }
-        for (cap in g.caps) {
-            if (cap.center.x - cap.radius < minX) minX = cap.center.x - cap.radius
-            if (cap.center.x + cap.radius > maxX) maxX = cap.center.x + cap.radius
-            if (cap.center.y - cap.radius < minY) minY = cap.center.y - cap.radius
-            if (cap.center.y + cap.radius > maxY) maxY = cap.center.y + cap.radius
+        for (i in g.centerline.indices) {
+            val c = g.centerline[i]
+            val h = g.halfWidths.getOrElse(i) { 0.0 }
+            if (c.x - h < minX) minX = c.x - h
+            if (c.x + h > maxX) maxX = c.x + h
+            if (c.y - h < minY) minY = c.y - h
+            if (c.y + h > maxY) maxY = c.y + h
         }
         return Rect(minX, minY, maxX - minX, maxY - minY).also { cachedBounds = it }
     }

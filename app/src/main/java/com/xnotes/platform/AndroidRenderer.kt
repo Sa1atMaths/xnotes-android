@@ -8,6 +8,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.os.Build
+import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Rgba
@@ -120,6 +121,29 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
     override fun fillCircle(center: Pt, radius: Double, color: Rgba) {
         fillPaint.color = color.toArgb()
         canvas.drawCircle(center.x.toFloat(), center.y.toFloat(), radius.toFloat(), fillPaint)
+    }
+
+    // The whole swept-disc ribbon as one path: every disc and bridging quad is wound the same way
+    // under WINDING, so overlaps union into solid ink (anti-aliased only along the true outer
+    // silhouette, no interior seams, no winding-cancelled gap at a sharp turn). One draw call keeps
+    // the repainted-every-frame live stroke cheap.
+    override fun fillDiskRibbon(centers: List<Pt>, radii: List<Double>, color: Rgba) {
+        val n = minOf(centers.size, radii.size)
+        if (n == 0) return
+        fillPaint.color = color.toArgb()
+        val path = Path().apply { fillType = Path.FillType.WINDING }
+        for (i in 0 until n - 1) {
+            val q = Geometry.ribbonQuad(centers[i], radii[i], centers[i + 1], radii[i + 1])
+            if (q.size < 3) continue
+            path.moveTo(q[0].x.toFloat(), q[0].y.toFloat())
+            for (k in 1 until q.size) path.lineTo(q[k].x.toFloat(), q[k].y.toFloat())
+            path.close()
+        }
+        for (i in 0 until n) {
+            val r = radii[i]
+            if (r > 0.0) path.addCircle(centers[i].x.toFloat(), centers[i].y.toFloat(), r.toFloat(), Path.Direction.CW)
+        }
+        canvas.drawPath(path, fillPaint)
     }
 
     // The blur radius is a page-space length: the canvas scale grows it with zoom,

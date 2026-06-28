@@ -52,6 +52,29 @@ class ModelItemsTest {
         assertEquals(89, s.renderColor.a)
     }
 
+    @Test fun everyPenStrokeGetsRoundCapsFromTheSweptDisc() {
+        // Calligraphy ended flat (butt) before; the swept-disc brush stamps a disc at every sample,
+        // so even a previously flat-capped pen now paints round caps/joins (fillCircle) plus the
+        // bridging body (fillPolygon).
+        val s = Stroke(Tool.CALLIGRAPHY, ToolDefaults.configFor(Tool.CALLIGRAPHY))
+        s.addSample(Sample(0.0, 0.0, 1.0))
+        s.addSample(Sample(10.0, 0.0, 1.0))
+        s.addSample(Sample(20.0, 0.0, 1.0))
+        val r = FakeRenderer()
+        s.paint(r)
+        assertTrue(r.ops.contains("fillCircle"))
+        assertTrue(r.ops.contains("fillPolygon"))
+    }
+
+    @Test fun singleSampleStrokePaintsJustADisc() {
+        val s = Stroke(Tool.CALLIGRAPHY, ToolDefaults.configFor(Tool.CALLIGRAPHY))
+        s.addSample(Sample(5.0, 5.0, 1.0))
+        val r = FakeRenderer()
+        s.paint(r)
+        assertTrue(r.ops.contains("fillCircle"))
+        assertFalse(r.ops.contains("fillPolygon"))
+    }
+
     @Test fun imageItemGeometryAndHits() {
         val img = ImageItem(FakeRasterSurface(64, 48), Rect(10.0, 10.0, 64.0, 48.0))
         assertTrue(img.contains(Pt(20.0, 20.0)))
