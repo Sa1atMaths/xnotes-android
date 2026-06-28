@@ -204,6 +204,8 @@ fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onSh
             OptionDropdown(tapGestureOptions, prefs.threeFingerTap) { update(prefs.copy(threeFingerTap = it)) }
             FieldLabel("Stylus double-tap")
             OptionDropdown(tapGestureOptions, prefs.stylusDoubleTap) { update(prefs.copy(stylusDoubleTap = it)) }
+            FieldLabel("Stylus side button (tap)")
+            OptionDropdown(tapGestureOptions, prefs.stylusButtonTap) { update(prefs.copy(stylusButtonTap = it)) }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Page")
