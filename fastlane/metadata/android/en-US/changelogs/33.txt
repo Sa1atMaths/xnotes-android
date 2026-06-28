@@ -1,0 +1,2 @@
+- Add support for Honor stylus side button
+- Improve taper pen
