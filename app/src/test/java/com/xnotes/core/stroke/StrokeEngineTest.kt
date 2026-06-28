@@ -197,6 +197,20 @@ class StrokeEngineTest {
             g.halfWidths.last() <= body + 1e-9)
     }
 
+    @Test fun calligraphyStrayPenDownSampleDoesNotSwellTheStart() {
+        // The mirror of the lift-off case: a stray first move in the broad (thick) direction at
+        // pen-down, then the real stroke travels thin. The start is confirmed just like the end, so
+        // the lone thick pen-down move is dropped and the first half-width stays at the thin body
+        // width instead of opening with a fat dot.
+        val ds = 0.6
+        val stray = Sample(0.0, -3.0, 1.0)                     // first move jumps +y: thick
+        val up = (0..20).map { Sample(0.0, -it * 4.0, 1.0) }   // then travel -y: thin (1 - ds)
+        val g = StrokeEngine.build(listOf(stray) + up, 6.0, false, 1.0, ds, smooth = false)
+        val body = g.halfWidths.drop(1).maxOrNull()!!
+        assertTrue("a stray pen-down sample must not swell past the body width",
+            g.halfWidths.first() <= body + 1e-9)
+    }
+
     @Test fun calligraphySustainedThickStrokeReachesFullWidth() {
         // The confirmation only delays the onset of thickening, it does not cap it: a long stroke in
         // the broad direction still reaches full thick width by the end.

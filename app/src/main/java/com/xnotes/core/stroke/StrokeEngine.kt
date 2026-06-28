@@ -36,8 +36,8 @@ object StrokeEngine {
 
     /** Calligraphy pen: the broad/thick face of the nib is only allowed in once the stroke has held
      *  that heading for this many content px of travel (see [confirmThickening] in [build]). Long
-     *  enough to outvote a lift-off jitter or a one/two-pixel wobble, short enough that a real
-     *  downstroke still swells almost at once. */
+     *  enough to outvote a pen-down or lift-off jitter or a one/two-pixel wobble, short enough that a
+     *  real downstroke still swells almost at once. */
     const val DIR_CONFIRM_LEN = 8.0
 
     /** Speed pen: dp/ms at/below which the line stays full width, and the speed
@@ -214,21 +214,24 @@ object StrokeEngine {
 
     /** Confirms a calligraphy nib's thick (high direction-y) runs with a morphological opening over
      *  an arc-length [window]: an erosion (trailing-window minimum) drops any thick run shorter than
-     *  the window — a jitter, or a stray sample as the pen lifts — back to thin, then a dilation
-     *  (leading-window maximum) grows every run that survived back to its full length. So a real
-     *  downstroke is thick along its whole length, including the lead-in the erosion shaved off, not
-     *  only after the window has passed; a brief spike is gone for good. A drop is never delayed, so
-     *  the line still thins the instant the stroke turns toward the nib edge. */
+     *  the window — a jitter, or a stray sample as the pen lands or lifts — back to thin, then a
+     *  dilation (leading-window maximum) grows every run that survived back to its full length. So a
+     *  real downstroke is thick along its whole length, including the lead-in the erosion shaved off,
+     *  not only after the window has passed; a brief spike is gone for good. The path before the
+     *  pen-down counts as the thin extreme, so a stroke that *starts* broad is confirmed exactly like
+     *  one that turns broad mid-way. A drop is never delayed, so the line still thins the instant the
+     *  stroke turns toward the nib edge. */
     private fun confirmThickening(ty: List<Double>, centers: List<Pt>, window: Double): List<Double> {
         val n = ty.size
         if (n < 2) return ty
         val cum = DoubleArray(n)
         for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
         // Erosion: the trailing-window minimum, so a thick value survives only where it has held for
-        // the whole window back.
+        // the whole window back. Before pen-down (the window underruns the start) the path counts as
+        // the thin extreme (-1), so a thick pen-down must also hold for the window before it wins.
         val eroded = DoubleArray(n)
         for (i in 0 until n) {
-            var v = ty[i]
+            var v = if (cum[i] < window) -1.0 else ty[i]
             var j = i
             while (j >= 0 && cum[i] - cum[j] <= window) { if (ty[j] < v) v = ty[j]; j-- }
             eroded[i] = v
@@ -241,6 +244,16 @@ object StrokeEngine {
             var j = i
             while (j < n && cum[j] - cum[i] <= window) { if (eroded[j] > v) v = eroded[j]; j++ }
             out[i] = v
+        }
+        // Start floor: the dilation's forward window can't always reach back over a sparse first
+        // sample to restore the lead, so once a full window has been travelled, floor everything
+        // before it at that first confirmed value (the opening's minimum over the window). A run
+        // that held the broad heading the whole way lifts the floor to thick; a jitter leaves it
+        // thin; a mid/thin start keeps its own width.
+        val confirm = cum.indexOfFirst { it >= window }
+        if (confirm > 0) {
+            val floor = eroded[confirm]
+            for (i in 0 until confirm) if (out[i] < floor) out[i] = floor
         }
         return out.asList()
     }
