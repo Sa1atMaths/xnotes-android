@@ -34,6 +34,12 @@ object StrokeEngine {
      *  magnitude is smoothed, not the ribbon's orientation. */
     const val DIR_ALPHA = 0.25
 
+    /** Calligraphy pen: the broad/thick face of the nib is only allowed in once the stroke has held
+     *  that heading for this many content px of travel (see [trailingMinByLength] in [build]). Long
+     *  enough to outvote a lift-off jitter or a one/two-pixel wobble, short enough that a real
+     *  downstroke still swells almost at once. */
+    const val DIR_CONFIRM_LEN = 8.0
+
     /** Speed pen: dp/ms at/below which the line stays full width, and the speed
      *  at/above which it reaches its thinnest (0 and ≈3.75 in/s of hand travel).
      *  Measuring in dp — not page pixels — makes the effect independent of both zoom
@@ -206,6 +212,32 @@ object StrokeEngine {
         }
     }
 
+    /** The trailing minimum of [values] over the last [window] px of travel along [centers] (a
+     *  sliding arc-length window). The calligraphy nib feeds its direction-y through this so a
+     *  higher (thicker) value only takes effect once it has held for the whole window: a lone spike
+     *  — a jitter, or a stray sample as the pen lifts — is outvoted by the lower values still inside
+     *  the window, while a sustained turn eventually fills it and wins. A drop passes straight
+     *  through (the line thins at once). O(n) via a monotonic deque (front = window minimum). */
+    private fun trailingMinByLength(values: List<Double>, centers: List<Pt>, window: Double): List<Double> {
+        val n = values.size
+        if (n < 2) return values
+        val cum = DoubleArray(n)
+        for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
+        val out = DoubleArray(n)
+        val dq = ArrayDeque<Int>()
+        var lo = 0
+        for (i in 0 until n) {
+            while (dq.isNotEmpty() && values[dq.last()] >= values[i]) dq.removeLast()
+            dq.addLast(i)
+            while (cum[i] - cum[lo] > window) {
+                if (dq.first() == lo) dq.removeFirst()
+                lo++
+            }
+            out[i] = values[dq.first()]
+        }
+        return out.asList()
+    }
+
     /**
      * Builds [StrokeGeometry] from [samples] and the style fields. [speedStrength]
      * and [taperEnabled] default to off, in which case the output is identical to
@@ -266,11 +298,16 @@ object StrokeEngine {
         val sf = speedFactors(samples, speedStrength, speedScale)
         val tf = taperFactors(centers, taperEnabled, taperMinFactor)
 
-        // Calligraphy: low-pass the direction channel (the tangent's y that sets nib width)
-        // so the width glides between thick and thin instead of snapping when the stroke
-        // curves. Only the width magnitude is smoothed — the ribbon's orientation still
-        // follows the true tangent. A no-op when ds = 0 (no calligraphic direction effect).
-        val dirY = if (ds > 0.0) ema(tangents.map { it.y }, DIR_ALPHA) else null
+        // Calligraphy: the tangent-y that sets nib width, with the broad (thick) face held back
+        // until the stroke commits to that heading. First the trailing minimum over DIR_CONFIRM_LEN
+        // px (the line thins the instant the stroke turns toward the nib edge, but thickens only
+        // once the broad heading has held for that whole window, so a jitter, or a stray sample as
+        // the pen lifts, can't swell the line or leave a fat dot at the end), then a low-pass so the
+        // confirmed transition still glides instead of stepping. Orientation still follows the true
+        // tangent; only the width magnitude is held back. A no-op when ds = 0.
+        val dirY = if (ds > 0.0)
+            ema(trailingMinByLength(tangents.map { it.y }, centers, DIR_CONFIRM_LEN), DIR_ALPHA)
+        else null
 
         // 5–7. Half-widths, normals, and the two ribbon edges.
         val left = ArrayList<Pt>(n)

@@ -184,6 +184,28 @@ class StrokeEngineTest {
             g.halfWidths.first() < 1.5)
     }
 
+    @Test fun calligraphyStrayLiftOffSampleDoesNotSwellTheEnd() {
+        // Travel in the thin (nib-edge) direction, then a single stray sample jumps the other way as
+        // the pen lifts. The direction-confirm window still sees the thin ink just before it, so the
+        // last half-width stays at the thin body width instead of ballooning into a fat end dot.
+        val ds = 0.6
+        val up = (0..20).map { Sample(0.0, -it * 4.0, 1.0) }   // travel -y: thin (1 - ds)
+        val stray = Sample(0.0, -20 * 4.0 + 3.0, 1.0)          // one sample back down (+y): thick
+        val g = StrokeEngine.build(up + stray, 6.0, false, 1.0, ds, smooth = false)
+        val body = g.halfWidths.dropLast(1).maxOrNull()!!
+        assertTrue("a stray lift-off sample must not swell past the body width",
+            g.halfWidths.last() <= body + 1e-9)
+    }
+
+    @Test fun calligraphySustainedThickStrokeReachesFullWidth() {
+        // The confirmation only delays the onset of thickening, it does not cap it: a long stroke in
+        // the broad direction still reaches full thick width by the end.
+        val ds = 0.6
+        val pts = (0..40).map { Sample(0.0, it * 4.0, 1.0) }   // travel +y (thick) for 160 px
+        val g = StrokeEngine.build(pts, 6.0, false, 1.0, ds, smooth = false)
+        assertEquals(3.0 * (1.0 + ds), g.halfWidths.last(), 1e-9)   // half = 3 · direction, thick = 1 + ds
+    }
+
     @Test fun highlighterEndsHeldToBodyWidth() {
         // The highlighter holds its ends, so the swept end discs round the line at full body width;
         // with pressure off every half-width is already the full 8.0.
