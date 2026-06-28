@@ -63,7 +63,7 @@ class Stroke(
             config.taperMinFactor,
             speedScale,
             smooth = !straight,
-            roundCaps = tool == Tool.PEN || tool == Tool.HIGHLIGHTER,
+            holdEnds = tool == Tool.PEN || tool == Tool.HIGHLIGHTER,
         ).also { cachedGeometry = it }
     }
 
@@ -143,7 +143,7 @@ class Stroke(
                 ),
             )
         } else {
-            for (cap in g.caps) if (cap.radius > 0.0) r.fillCircle(cap.center, cap.radius, color)
+            r.fillDiskRibbon(g.centerline, g.halfWidths, color)
         }
     }
 
@@ -185,21 +185,20 @@ class Stroke(
         // 3) Tube body, lifted slightly toward white so it reads as lit.
         paintFills(r, g, lighten(body, NEON_BODY_LIGHTEN))
 
-        // 4) Solid white-hot core (no blur, so thin lines still read pure white).
-        val core = g.coreOutline(NEON_CORE_FRAC)
-        val white = Rgba(255, 255, 255, 255)
-        if (core.size >= 3) r.fillPolygon(core, white, FillRule.NONZERO)
-        for (cap in g.caps) {
-            val cr = cap.radius * NEON_CORE_FRAC
-            if (cr > 0.0) r.fillCircle(cap.center, cr, white)
-        }
+        // 4) Solid white-hot core (no blur, so thin lines still read pure white): the same swept
+        //    disc at a fraction of the width, so it rounds with the body on every pen.
+        r.fillDiskRibbon(g.centerline, g.halfWidths.map { it * NEON_CORE_FRAC }, Rgba(255, 255, 255, 255))
     }
 
-    /** One bloom pass: the blurred ribbon + caps composited once at [alpha]. */
+    /** One bloom pass: the blurred ribbon body plus its two rounded ends, composited once at [alpha]. */
     private fun paintBloom(r: Renderer, g: StrokeGeometry, color: Rgba, radius: Double, alpha: Double) {
         r.saveLayerAlpha(paintBounds(), alpha)
         if (g.outline.size >= 3) r.fillPolygonGlow(g.outline, color, FillRule.NONZERO, radius)
-        for (cap in g.caps) if (cap.radius > 0.0) r.fillCircleGlow(cap.center, cap.radius, color, radius)
+        val cl = g.centerline
+        if (cl.isNotEmpty()) {
+            if (g.halfWidths.first() > 0.0) r.fillCircleGlow(cl.first(), g.halfWidths.first(), color, radius)
+            if (cl.size > 1 && g.halfWidths.last() > 0.0) r.fillCircleGlow(cl.last(), g.halfWidths.last(), color, radius)
+        }
         r.restore()
     }
 
@@ -277,10 +276,14 @@ class Stroke(
         invalidate()
     }
 
-    /** `p` inside the filled ribbon or any cap disc. */
+    /** `p` within the swept disc: inside any sample's disc (catching the dot, ends and joins) or
+     *  inside the ribbon body. */
     override fun contains(p: Pt): Boolean {
         val g = geometry()
-        for (cap in g.caps) if (p.distanceTo(cap.center) <= cap.radius) return true
+        for (i in g.centerline.indices) {
+            val h = g.halfWidths.getOrElse(i) { 0.0 }
+            if (h > 0.0 && p.distanceTo(g.centerline[i]) <= h) return true
+        }
         return g.outline.size >= 3 && Geometry.pointInPolygon(g.outline, p)
     }
 

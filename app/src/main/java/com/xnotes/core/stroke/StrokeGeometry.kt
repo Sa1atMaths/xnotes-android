@@ -11,40 +11,18 @@ data class Sample(val x: Double, val y: Double, val pressure: Double, val t: Dou
     val pos: Pt get() = Pt(x, y)
 }
 
-/** A round dot for a single-sample tap, or the pen's and highlighter's round head/tail end-caps;
- *  every other multi-sample ribbon ends flat and emits no caps. */
-data class Cap(val center: Pt, val radius: Double)
-
 /**
- * The geometry derived from a stroke's samples (spec 03). Rendering fills
- * [outline] (nonzero winding) **and** the [caps] discs in the ink colour, with
- * no outline pen.
+ * The geometry derived from a stroke's samples (spec 03). The ink is painted by sweeping a brush
+ * disc down the [centerline] at the per-point [halfWidths] (Renderer.fillDiskRibbon), so caps and
+ * joins round on every pen; [outline] is that same ribbon as one closed polygon, kept for the neon
+ * bloom and hit-testing.
  */
 data class StrokeGeometry(
     val outline: List<Pt>,
-    val caps: List<Cap>,
     val centerline: List<Pt>,
     val halfWidths: List<Double>,
 ) {
-    /**
-     * A concentric inner ribbon scaled to [frac] of this ribbon's half-widths about
-     * the same centerline (1.0 reproduces [outline]). The neon white-hot core fills
-     * this rather than the full outline, so the outer `1 − frac` of the tube keeps
-     * its saturated ink colour. Empty when there's no ribbon (a single-sample dot)
-     * or [frac] ≤ 0. [outline] is `left[0..n-1] ++ right[n-1..0]` about [centerline],
-     * so each edge point is moved a fraction of the way back toward its centre.
-     */
-    fun coreOutline(frac: Double): List<Pt> {
-        val n = centerline.size
-        if (frac <= 0.0 || n < 2 || outline.size != 2 * n) return emptyList()
-        val f = frac.coerceAtMost(1.0)
-        val core = ArrayList<Pt>(2 * n)
-        for (i in 0 until n) core.add(centerline[i] + (outline[i] - centerline[i]) * f)
-        for (i in n - 1 downTo 0) core.add(centerline[i] + (outline[2 * n - 1 - i] - centerline[i]) * f)
-        return core
-    }
-
     companion object {
-        val EMPTY = StrokeGeometry(emptyList(), emptyList(), emptyList(), emptyList())
+        val EMPTY = StrokeGeometry(emptyList(), emptyList(), emptyList())
     }
 }

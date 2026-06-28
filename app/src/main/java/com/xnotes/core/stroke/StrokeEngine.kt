@@ -58,8 +58,8 @@ object StrokeEngine {
      *  un-tapered, so a quick tick doesn't collapse to nothing. */
     const val TAPER_MIN_LEN = 8.0
 
-    /** Round-cap pens hold their width over this many samples at each end (see [holdEndPressure]),
-     *  enough to cover the EMA pressure ramp so the cap meets the line at the body width. */
+    /** Pens that hold their ends ([holdEndPressure]) do so over this many samples at each end,
+     *  enough to cover the EMA pressure ramp so the swept end disc meets the line at the body width. */
     const val CAP_HOLD_SAMPLES = 4
 
     /** Taper falloff shape: the tail ease is the [logisticEase] sigmoid clipped to its
@@ -71,12 +71,12 @@ object StrokeEngine {
     const val TAPER_TAIL = 0.01
     val TAPER_CURVE_K = 2.0 * ln((1.0 - TAPER_TAIL) / TAPER_TAIL)
 
-    /** Holds the round-cap pen's first/last [CAP_HOLD_SAMPLES] samples up to the settled pressure
-     *  just inside each end, so a light pen-down/up can't pinch the round cap thinner than the line.
-     *  Only raises width, never lowers it, so the heavier middle and any deliberate mid-stroke
+    /** Holds the pen/highlighter's first/last [CAP_HOLD_SAMPLES] samples up to the settled pressure
+     *  just inside each end, so a light pen-down/up can't shrink the swept end disc thinner than the
+     *  line. Only raises width, never lowers it, so the heavier middle and any deliberate mid-stroke
      *  pressure dip are untouched. The window halves on very short strokes so head and tail can't
-     *  cross. The terminal taper is intentionally filled: a light lift-off is the same signal as the
-     *  pinch, so the regular pen ends square-full and rounded rather than easing to a thin tip. */
+     *  cross. A light lift-off is the same signal as a pinch, so these pens end full and round
+     *  rather than easing to a thin tip. */
     private fun holdEndPressure(p: List<Double>): List<Double> {
         val n = p.size
         val w = min(CAP_HOLD_SAMPLES, (n - 1) / 2)
@@ -222,7 +222,7 @@ object StrokeEngine {
         taperMinFactor: Double = 0.0,
         speedScale: Double = 1.0,
         smooth: Boolean = true,
-        roundCaps: Boolean = false,
+        holdEnds: Boolean = false,
     ): StrokeGeometry {
         val n = samples.size
         if (n == 0) return StrokeGeometry.EMPTY
@@ -232,20 +232,20 @@ object StrokeEngine {
         //    toward the midpoint, leaving it short of the pointer).
         val sx = if (smooth) ema(samples.map { it.x }) else samples.map { it.x }
         val sy = if (smooth) ema(samples.map { it.y }) else samples.map { it.y }
-        // Round-capped pressure pens land and lift light, so the ribbon would pinch thin exactly
-        // where the round cap sits; hold the body width out to each end so the cap meets the line
-        // at full width. The flat-capped pens (and the constant-width highlighter) skip this.
+        // The pens that hold their ends (pen, highlighter) land and lift light, so the swept end
+        // disc would shrink to a thin tip; hold the body width out to each end so it meets the line
+        // at full width. The other ribbon pens take their ends at the raw pressure.
         val sp = ema(samples.map { it.pressure }).let {
-            if (roundCaps && pressureEnabled) holdEndPressure(it) else it
+            if (holdEnds && pressureEnabled) holdEndPressure(it) else it
         }
         val centers = (0 until n).map { Pt(sx[it], sy[it]) }
 
         fun hw(i: Int, ty: Double) = halfWidth(baseWidth, pressureEnabled, m, ds, sp[i], ty)
 
-        // 3. Single sample -> a filled dot (pure-pressure half-width, no direction).
+        // 3. Single sample -> a filled dot: one swept disc at the pure-pressure half-width.
         if (n == 1) {
             val h = hw(0, 0.0)
-            return StrokeGeometry(emptyList(), listOf(Cap(centers[0], h)), centers, listOf(h))
+            return StrokeGeometry(emptyList(), centers, listOf(h))
         }
 
         // 4. Per-point unit tangent via finite differences.
@@ -290,18 +290,10 @@ object StrokeEngine {
         outline.addAll(left)
         for (i in right.indices.reversed()) outline.add(right[i])
 
-        // 9. End caps only when [roundCaps] is set (the pen and highlighter): two discs sized to
-        //    the ribbon's own half-width round the head and tail off. The speed/calligraphy pens
-        //    leave their ends flat (butt), and the taper pen already came to a point. A lone tap is
-        //    still a round dot (the n == 1 path above).
-        val caps = if (roundCaps) listOf(
-            Cap(centers[0], halfWidths[0]),
-            Cap(centers[n - 1], halfWidths[n - 1]),
-        ) else emptyList()
-
+        // 9. No separate end caps: the swept brush disc at each sample (the head and tail included)
+        //    already rounds every end and join, so [holdEnds] only shapes the end half-widths.
         return StrokeGeometry(
             outline = if (outline.size >= 3) outline else emptyList(),
-            caps = caps,
             centerline = centers,
             halfWidths = halfWidths,
         )

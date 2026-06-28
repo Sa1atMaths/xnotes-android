@@ -56,13 +56,13 @@ class StrokeEngineTest {
     }
 
     // --- Geometry ---
-    @Test fun singleSampleIsOneCapNoOutline() {
+    @Test fun singleSampleIsOneDiscNoOutline() {
         val g = StrokeEngine.build(listOf(Sample(10.0, 20.0, 1.0)), 3.0, true, 0.35, 0.0)
         assertTrue(g.outline.isEmpty())
-        assertEquals(1, g.caps.size)
-        assertEquals(10.0, g.caps[0].center.x, 1e-9)
-        assertEquals(20.0, g.caps[0].center.y, 1e-9)
-        assertEquals(1.5, g.caps[0].radius, 1e-9) // full-pressure half-width
+        assertEquals(1, g.centerline.size)
+        assertEquals(10.0, g.centerline[0].x, 1e-9)
+        assertEquals(20.0, g.centerline[0].y, 1e-9)
+        assertEquals(1.5, g.halfWidths[0], 1e-9) // full-pressure half-width = the swept dot's radius
     }
 
     @Test fun threeCollinearSamples() {
@@ -70,14 +70,14 @@ class StrokeEngineTest {
             listOf(Sample(0.0, 0.0, 1.0), Sample(10.0, 0.0, 1.0), Sample(20.0, 0.0, 1.0)),
             3.0, true, 0.35, 0.0,
         )
-        assertTrue(g.caps.isEmpty())          // flat ends, no head/tail discs
         assertEquals(6, g.outline.size)       // 3 left edge + 3 right edge
+        assertEquals(3, g.centerline.size)
     }
 
     @Test fun emptyInput() {
         val g = StrokeEngine.build(emptyList(), 3.0, true, 0.35, 0.0)
         assertTrue(g.outline.isEmpty())
-        assertTrue(g.caps.isEmpty())
+        assertTrue(g.centerline.isEmpty())
     }
 
     // --- Taper pen (§1.1) ---
@@ -174,58 +174,54 @@ class StrokeEngineTest {
         assertEquals("even width through the corner", maxHw, minHw, 1e-6)
     }
 
-    // --- Flat ends & direction smoothing ---
-    @Test fun calligraphyEndsAreFlatNotRoundCapped() {
-        // A multi-sample calligraphy ribbon ends square: no head/tail cap discs, so it never
-        // sprouts a rounded dot past the thinned nib. The ribbon half-widths are unaffected.
+    // --- Direction smoothing & end-width hold ---
+    @Test fun calligraphyRibbonIsThinnedByDirection() {
+        // An upward calligraphy ribbon is thinned by the direction term; the swept disc rounds its
+        // ends regardless, so only the half-widths are interesting here.
         val pts = (0..6).map { Sample(0.0, -it * 10.0, 1.0) } // straight up
         val g = StrokeEngine.build(pts, 6.0, true, 0.40, 0.60)
-        assertTrue(g.caps.isEmpty())
         assertTrue("upward calligraphy ribbon is thinned by the direction term",
             g.halfWidths.first() < 1.5)
     }
 
-    @Test fun highlighterKeepsRoundEndCaps() {
-        // The highlighter is the one ribbon pen that still rounds its ends: roundCaps = true emits
-        // a head and tail disc sized to the ribbon's half-width.
+    @Test fun highlighterEndsHeldToBodyWidth() {
+        // The highlighter holds its ends, so the swept end discs round the line at full body width;
+        // with pressure off every half-width is already the full 8.0.
         val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
-        val g = StrokeEngine.build(pts, 16.0, false, 1.0, 0.0, roundCaps = true)
-        assertEquals(2, g.caps.size)
-        assertEquals(8.0, g.caps[0].radius, 1e-9) // 16 × 1.0 / 2
-        assertEquals(8.0, g.caps[1].radius, 1e-9)
+        val g = StrokeEngine.build(pts, 16.0, false, 1.0, 0.0, holdEnds = true)
+        assertEquals(8.0, g.halfWidths.first(), 1e-9) // 16 × 1.0 / 2
+        assertEquals(8.0, g.halfWidths.last(), 1e-9)
     }
 
-    @Test fun penKeepsRoundEndCaps() {
-        // The regular pen rounds its ends like the highlighter: roundCaps = true emits a head and
-        // tail disc sized to the ribbon's half-width, which (ds = 0) is the pure-pressure value.
+    @Test fun penEndsHeldToBodyWidth() {
+        // The regular pen holds its ends to the body half-width (ds = 0 ⇒ the pure-pressure value),
+        // so the swept end discs round the line at full width.
         val pts = (0..4).map { Sample(it * 10.0, 0.0, 1.0) }
-        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, roundCaps = true)
-        assertEquals(2, g.caps.size)
-        assertEquals(1.5, g.caps[0].radius, 1e-9) // 3.0 × 1.0 / 2
-        assertEquals(1.5, g.caps[1].radius, 1e-9)
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, holdEnds = true)
+        assertEquals(1.5, g.halfWidths.first(), 1e-9) // 3.0 × 1.0 / 2
+        assertEquals(1.5, g.halfWidths.last(), 1e-9)
     }
 
-    @Test fun penRoundCapsDoNotPinchAtLightPenDownAndUp() {
-        // Pen-down and pen-up samples arrive light; without the end-width hold the cap would shrink
-        // to ~0.62 (the 0.1-pressure tip) against a ~1.5 body. The hold lifts the ends to the
-        // settled body pressure so each cap meets the line at nearly full width (no pinch), and
+    @Test fun penEndsDoNotPinchAtLightPenDownAndUp() {
+        // Pen-down and pen-up samples arrive light; without the end-width hold the end disc would
+        // shrink to ~0.62 (the 0.1-pressure tip) against a ~1.5 body. The hold lifts the ends to the
+        // settled body pressure so each end disc meets the line at nearly full width (no pinch), and
         // never overshoots it (no bulge past the ribbon).
         val pts = (0..11).map { i -> Sample(i * 10.0, 0.0, if (i == 0 || i == 11) 0.1 else 1.0) }
-        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, roundCaps = true)
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, holdEnds = true)
         val body = g.halfWidths.maxOrNull()!!
-        assertEquals(2, g.caps.size)
-        assertTrue("head cap should not pinch to the light tip", g.caps[0].radius > 1.4)
-        assertTrue("tail cap should not pinch to the light tip", g.caps[1].radius > 1.4)
-        assertTrue("caps never exceed the body width", g.caps[0].radius <= body + 1e-9)
-        assertTrue(g.caps[1].radius <= body + 1e-9)
+        assertTrue("head should not pinch to the light tip", g.halfWidths.first() > 1.4)
+        assertTrue("tail should not pinch to the light tip", g.halfWidths.last() > 1.4)
+        assertTrue("ends never exceed the body width", g.halfWidths.first() <= body + 1e-9)
+        assertTrue(g.halfWidths.last() <= body + 1e-9)
     }
 
     @Test fun penHoldOnlyRaisesTheEndsNeverThinsTheMiddle() {
         // The hold only lifts the end samples up to the inner body width; a mid-stroke pressure dip
         // is left alone, so the ribbon still narrows in the middle where the pen was pressed lighter.
         val pts = (0..11).map { i -> Sample(i * 10.0, 0.0, if (i in 5..6) 0.2 else 1.0) }
-        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, roundCaps = true)
-        assertTrue("ends held to the body width", g.caps[0].radius > 1.4 && g.caps[1].radius > 1.4)
+        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0, holdEnds = true)
+        assertTrue("ends held to the body width", g.halfWidths.first() > 1.4 && g.halfWidths.last() > 1.4)
         assertTrue("mid-stroke dip survives", g.halfWidths.minOrNull()!! < 1.2)
     }
 
