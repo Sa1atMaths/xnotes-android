@@ -35,7 +35,7 @@ object StrokeEngine {
     const val DIR_ALPHA = 0.25
 
     /** Calligraphy pen: the broad/thick face of the nib is only allowed in once the stroke has held
-     *  that heading for this many content px of travel (see [trailingMinByLength] in [build]). Long
+     *  that heading for this many content px of travel (see [confirmThickening] in [build]). Long
      *  enough to outvote a lift-off jitter or a one/two-pixel wobble, short enough that a real
      *  downstroke still swells almost at once. */
     const val DIR_CONFIRM_LEN = 8.0
@@ -212,28 +212,35 @@ object StrokeEngine {
         }
     }
 
-    /** The trailing minimum of [values] over the last [window] px of travel along [centers] (a
-     *  sliding arc-length window). The calligraphy nib feeds its direction-y through this so a
-     *  higher (thicker) value only takes effect once it has held for the whole window: a lone spike
-     *  — a jitter, or a stray sample as the pen lifts — is outvoted by the lower values still inside
-     *  the window, while a sustained turn eventually fills it and wins. A drop passes straight
-     *  through (the line thins at once). O(n) via a monotonic deque (front = window minimum). */
-    private fun trailingMinByLength(values: List<Double>, centers: List<Pt>, window: Double): List<Double> {
-        val n = values.size
-        if (n < 2) return values
+    /** Confirms a calligraphy nib's thick (high direction-y) runs with a morphological opening over
+     *  an arc-length [window]: an erosion (trailing-window minimum) drops any thick run shorter than
+     *  the window — a jitter, or a stray sample as the pen lifts — back to thin, then a dilation
+     *  (leading-window maximum) grows every run that survived back to its full length. So a real
+     *  downstroke is thick along its whole length, including the lead-in the erosion shaved off, not
+     *  only after the window has passed; a brief spike is gone for good. A drop is never delayed, so
+     *  the line still thins the instant the stroke turns toward the nib edge. */
+    private fun confirmThickening(ty: List<Double>, centers: List<Pt>, window: Double): List<Double> {
+        val n = ty.size
+        if (n < 2) return ty
         val cum = DoubleArray(n)
         for (i in 1 until n) cum[i] = cum[i - 1] + (centers[i] - centers[i - 1]).length()
-        val out = DoubleArray(n)
-        val dq = ArrayDeque<Int>()
-        var lo = 0
+        // Erosion: the trailing-window minimum, so a thick value survives only where it has held for
+        // the whole window back.
+        val eroded = DoubleArray(n)
         for (i in 0 until n) {
-            while (dq.isNotEmpty() && values[dq.last()] >= values[i]) dq.removeLast()
-            dq.addLast(i)
-            while (cum[i] - cum[lo] > window) {
-                if (dq.first() == lo) dq.removeFirst()
-                lo++
-            }
-            out[i] = values[dq.first()]
+            var v = ty[i]
+            var j = i
+            while (j >= 0 && cum[i] - cum[j] <= window) { if (ty[j] < v) v = ty[j]; j-- }
+            eroded[i] = v
+        }
+        // Dilation: the leading-window maximum, so each surviving run grows forward over the lead-in
+        // the erosion ate, ending up thick along its full original length.
+        val out = DoubleArray(n)
+        for (i in 0 until n) {
+            var v = eroded[i]
+            var j = i
+            while (j < n && cum[j] - cum[i] <= window) { if (eroded[j] > v) v = eroded[j]; j++ }
+            out[i] = v
         }
         return out.asList()
     }
@@ -299,14 +306,14 @@ object StrokeEngine {
         val tf = taperFactors(centers, taperEnabled, taperMinFactor)
 
         // Calligraphy: the tangent-y that sets nib width, with the broad (thick) face held back
-        // until the stroke commits to that heading. First the trailing minimum over DIR_CONFIRM_LEN
-        // px (the line thins the instant the stroke turns toward the nib edge, but thickens only
-        // once the broad heading has held for that whole window, so a jitter, or a stray sample as
-        // the pen lifts, can't swell the line or leave a fat dot at the end), then a low-pass so the
-        // confirmed transition still glides instead of stepping. Orientation still follows the true
-        // tangent; only the width magnitude is held back. A no-op when ds = 0.
+        // until the stroke commits to that heading. confirmThickening opens the signal over
+        // DIR_CONFIRM_LEN px (a jitter or a stray lift-off sample is dropped to thin, while a run
+        // that holds is kept thick along its whole length, lead-in included), then a low-pass keeps
+        // the confirmed transition gliding instead of stepping. The line still thins the instant the
+        // stroke turns toward the nib edge. Orientation still follows the true tangent; only the
+        // width magnitude is held back. A no-op when ds = 0.
         val dirY = if (ds > 0.0)
-            ema(trailingMinByLength(tangents.map { it.y }, centers, DIR_CONFIRM_LEN), DIR_ALPHA)
+            ema(confirmThickening(tangents.map { it.y }, centers, DIR_CONFIRM_LEN), DIR_ALPHA)
         else null
 
         // 5–7. Half-widths, normals, and the two ribbon edges.

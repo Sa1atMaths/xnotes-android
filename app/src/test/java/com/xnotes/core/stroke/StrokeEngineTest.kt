@@ -206,6 +206,19 @@ class StrokeEngineTest {
         assertEquals(3.0 * (1.0 + ds), g.halfWidths.last(), 1e-9)   // half = 3 · direction, thick = 1 + ds
     }
 
+    @Test fun calligraphyConfirmedThickeningFillsTheLeadIn() {
+        // A mid (horizontal) lead-in, then a long sustained turn into the broad (thick, +y) face.
+        // Once the heading is confirmed the opening grows the thick width back over the lead-in, so
+        // the start of the downstroke is already thick rather than thin for the first few px. A few
+        // px into the run the half-width is near full thick (≈4.8 here); without the lead-in fill it
+        // would still sit at the mid width (3.0).
+        val horizontal = (0..8).map { Sample(it.toDouble(), 0.0, 1.0) }   // travel +x: mid
+        val down = (1..40).map { Sample(8.0, it.toDouble(), 1.0) }        // travel +y: thick
+        val g = StrokeEngine.build(horizontal + down, 6.0, false, 1.0, 0.6, smooth = false)
+        assertTrue("the start of a confirmed downstroke must be thick, not a thin lead-in",
+            g.halfWidths[15] > 4.0)   // index 15 is the 7th downstroke sample, ~6 px past the corner
+    }
+
     @Test fun highlighterEndsHeldToBodyWidth() {
         // The highlighter holds its ends, so the swept end discs round the line at full body width;
         // with pressure off every half-width is already the full 8.0.
