@@ -1,6 +1,5 @@
 package com.xnotes.core.stroke
 
-import com.xnotes.core.geometry.Pt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -248,36 +247,5 @@ class StrokeEngineTest {
         assertTrue("and the transition is monotone (no snap-back)",
             g.halfWidths[corner + 1] >= g.halfWidths[corner + 3] - 1e-9)
         assertTrue("ends thinner than it started", settled < g.halfWidths.first())
-    }
-
-    // --- Committed-stroke triangle mesh (hole-free fill) ---
-    private fun signedArea2(a: Pt, b: Pt, c: Pt) =
-        (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-
-    @Test fun meshIsTwoTrianglesPerSegment() {
-        val pts = listOf(Sample(0.0, 0.0, 1.0), Sample(10.0, 0.0, 1.0), Sample(20.0, 0.0, 1.0))
-        val g = StrokeEngine.build(pts, 3.0, true, 0.35, 0.0)
-        assertEquals(12, g.mesh.size) // 2 segments × 2 triangles × 3 points
-    }
-
-    @Test fun everyMeshTriangleWindsTheSameWayThroughAHairpin() {
-        // A hard hairpin is the rotation that holes the single signed outline; the mesh fix is that
-        // no triangle winds the other way, so its nonzero fill can only ever add ink.
-        val pts = listOf(
-            Sample(0.0, 0.0, 1.0), Sample(20.0, 0.0, 1.0), Sample(40.0, 0.0, 1.0),
-            Sample(41.0, 2.0, 1.0), Sample(20.0, 3.0, 1.0), Sample(0.0, 3.0, 1.0),
-        )
-        val mesh = StrokeEngine.build(pts, 8.0, false, 1.0, 0.0).mesh
-        assertTrue(mesh.isNotEmpty())
-        var i = 0
-        while (i + 3 <= mesh.size) {
-            assertTrue("triangle at $i winds the wrong way", signedArea2(mesh[i], mesh[i + 1], mesh[i + 2]) >= -1e-9)
-            i += 3
-        }
-    }
-
-    @Test fun noMeshForADotOrEmptyStroke() {
-        assertTrue(StrokeEngine.build(listOf(Sample(1.0, 1.0, 1.0)), 3.0, true, 0.35, 0.0).mesh.isEmpty())
-        assertTrue(StrokeEngine.build(emptyList(), 3.0, true, 0.35, 0.0).mesh.isEmpty())
     }
 }

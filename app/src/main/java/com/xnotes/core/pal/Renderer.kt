@@ -95,21 +95,6 @@ interface Renderer {
     fun fillCircleGlow(center: Pt, radius: Double, color: Rgba, blurRadius: Double, inner: Boolean = false) =
         fillCircle(center, radius, color)
 
-    /**
-     * Fill a triangle mesh ([points] three at a time, each a triangle), wound consistently by the
-     * caller, so under the nonzero [rule] it fills their UNION: overlapping triangles reinforce
-     * rather than cancel. A committed ink ribbon fills this so a sharp turn can't leave an unfilled
-     * gap the way one self-overlapping outline does. The default fans out to per-triangle
-     * [fillPolygon]; an anti-aliasing backend should override to fill one path (no interior seams).
-     */
-    fun fillMesh(points: List<Pt>, color: Rgba, rule: FillRule = FillRule.NONZERO) {
-        var i = 0
-        while (i + 3 <= points.size) {
-            fillPolygon(points.subList(i, i + 3), color, rule)
-            i += 3
-        }
-    }
-
     // --- outlines (cosmetic for chrome, page-space for shapes) ---
     fun strokeRect(rect: Rect, pen: Pen)
     fun strokePolyline(points: List<Pt>, pen: Pen)

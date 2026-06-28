@@ -27,7 +27,6 @@ class FakeRenderer : Renderer {
     override fun fillBackground(rect: Rect, color: Rgba) { ops += "fillBackground" }
     override fun fillRect(rect: Rect, color: Rgba) { ops += "fillRect" }
     override fun fillPolygon(points: List<Pt>, color: Rgba, rule: FillRule) { ops += "fillPolygon" }
-    override fun fillMesh(points: List<Pt>, color: Rgba, rule: FillRule) { ops += "fillMesh" }
     override fun fillCircle(center: Pt, radius: Double, color: Rgba) { ops += "fillCircle" }
     override fun fillEllipse(center: Pt, rx: Double, ry: Double, color: Rgba) { ops += "fillEllipse" }
     override fun strokeRect(rect: Rect, pen: Pen) { ops += "strokeRect" }
