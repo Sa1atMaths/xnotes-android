@@ -695,6 +695,13 @@ private fun EditorScreen(
             showOpening = false           // dismiss at once; editor.opening clears as the read unwinds
         })
     }
+    // A dirty note is flushed off-thread on close/pause; show the saving overlay only once the write is
+    // slow enough to matter, so closing a small note never flashes a dialog.
+    var showSaving by remember { mutableStateOf(false) }
+    LaunchedEffect(editor.savingNote) {
+        if (editor.savingNote) { delay(160); showSaving = editor.savingNote } else showSaving = false
+    }
+    if (showSaving && editor.savingNote) SavingDialog()
 }
 
 /**
@@ -820,6 +827,40 @@ private fun SpinnerDialog(title: String, onCancel: () -> Unit) {
             androidx.compose.material3.TextButton(onClick = onCancel) {
                 Text("Cancel", color = palette.accent.toComposeColor())
             }
+        }
+    }
+}
+
+/**
+ * Non-cancelable "Saving your notes…" dialog shown while a dirty note is flushed off the main thread
+ * on close or pause, so quitting a large note shows progress instead of a frozen (ANR) screen.
+ */
+@Composable
+private fun SavingDialog() {
+    val palette = LocalPalette.current
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = {},
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(palette.surface.toComposeColor())
+                .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(14.dp))
+                .padding(horizontal = 32.dp, vertical = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.fillMaxSize(),
+                    color = palette.accent.toComposeColor(),
+                    strokeWidth = 4.dp,
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+            Text("Saving your notes…", color = palette.text.toComposeColor(), fontSize = 15.sp)
+            Spacer(Modifier.height(4.dp))
+            Text("This may take a moment.", color = palette.textDim.toComposeColor(), fontSize = 13.sp)
         }
     }
 }

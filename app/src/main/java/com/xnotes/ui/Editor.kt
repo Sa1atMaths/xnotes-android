@@ -239,6 +239,10 @@ class Editor(context: Context) {
     /** True while a tapped note is being read off-thread; drives the "Opening note…" dialog. */
     var opening by mutableStateOf(false)
         private set
+    /** True while a dirty note is being flushed to its folder file off-thread on close; drives the
+     *  "Saving your notes…" dialog so quitting a large note never freezes the UI (ANR). */
+    var savingNote by mutableStateOf(false)
+        private set
     /** Flipped by the open dialog's Cancel so a slow open is discarded instead of swapped in. */
     private val openCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
     var zoomLocked by mutableStateOf(false)
@@ -829,9 +833,12 @@ class Editor(context: Context) {
             sidebarVisible = sidebarVisible,
             renderScale = renderScale,
         )
-        flushAutosave() // write the current note back to its folder file if it autosaves
         if (noteOpen) saveViewState() // remember this folder note's view for next time
         settingsRepo.save(settings)
+        // The note + session writes are heavy for a big note; run them off the main thread so pressing
+        // Home never freezes the UI. The process survives to finish them; the debounced autosave during
+        // editing bounds any loss on an immediate hard kill.
+        flushThen(showOverlay = false) {}
         saveSession()
     }
 
@@ -841,8 +848,19 @@ class Editor(context: Context) {
         if (!sessionLoaded) return // don't overwrite the saved note before restore has applied
         if (!noteOpen) { session.clear(); return } // on backstage: nothing open -> wipe any stale session
         val contentChanged = contentVersion != lastSessionContentVersion
-        session.save(state.document, state.zoom, state.scrollX, state.scrollY, zoomLocked, writeDocument = contentChanged)
         lastSessionContentVersion = contentVersion
+        // Snapshot a changed document on the main thread, then write the session off-thread, so saving a
+        // big note's session never freezes the UI. A view-state-only refresh shares the live doc (cheap).
+        val snapshot = if (contentChanged) state.document.deepCopy(textMeasurer) else state.document
+        val zoom = state.zoom
+        val sx = state.scrollX
+        val sy = state.scrollY
+        val locked = zoomLocked
+        autosaveScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                session.save(snapshot, zoom, sx, sy, locked, writeDocument = contentChanged)
+            }
+        }
     }
 
     /** Reopen the last session (document + view state). The heavy load runs off the
@@ -1797,6 +1815,26 @@ class Editor(context: Context) {
         if (writeNoteSafely(uri, state.document)) { state.document.dirty = false; dirty = false; invalidateThumb(uri) }
     }
 
+    /**
+     * Flush the open note to its folder file off the main thread, then run [onDone] on the main thread.
+     * Shows the "Saving your notes…" overlay while it runs when [showOverlay]. Runs [onDone] at once
+     * (no save) when the note isn't a folder note or isn't dirty, so the common case stays instant.
+     * Off-threading the write is what stops a large note from freezing the UI (ANR) on close/pause.
+     */
+    private fun flushThen(showOverlay: Boolean, onDone: () -> Unit) {
+        autosaveJob?.cancel()
+        val uri = autosaveUri
+        if (uri == null || !state.document.dirty) { onDone(); return }
+        val snapshot = state.document.deepCopy(textMeasurer) // main thread: immune to edits during the write
+        if (showOverlay) savingNote = true
+        autosaveScope.launch {
+            val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { writeNoteSafely(uri, snapshot) }
+            if (ok) { state.document.dirty = false; dirty = false; invalidateThumb(uri) }
+            savingNote = false
+            onDone()
+        }
+    }
+
     // --- per-document view state (folder notes remember their own zoom + scroll) ---
 
     /**
@@ -2586,11 +2624,12 @@ class Editor(context: Context) {
     fun goHome() {
         if (!noteOpen) return
         saveViewState() // remember this folder note's view before leaving
-        flushAutosave() // write the note back to its folder file if it autosaves
-        // Regenerate this folder note's grid tile now that editing is done (off-thread, low priority) —
-        // a non-folder note (no autosave binding) isn't shown in the explorer, so there's nothing to do.
-        autosaveUri?.let { uri -> autosaveScope.launch { regenerateClosedNoteThumb(uri) } }
-        autosaveUri = null
-        noteOpen = false
+        flushThen(showOverlay = true) {
+            // Regenerate this folder note's grid tile now that editing is done (off-thread, low priority);
+            // a non-folder note (no autosave binding) isn't in the explorer, so there's nothing to do.
+            autosaveUri?.let { uri -> autosaveScope.launch { regenerateClosedNoteThumb(uri) } }
+            autosaveUri = null
+            noteOpen = false
+        }
     }
 }
