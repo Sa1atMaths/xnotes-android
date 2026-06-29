@@ -98,6 +98,7 @@ class DebugOverlay {
             add("pss    %.0f MB".format(pssMb))
             add("native %.0f MB".format(nativeMb))
             add("gfx    %.0f MB".format(gfxMb))
+            add("autosave   ${state.autosaveStatus}")
             if (state.lastOpenTotalMs >= 0) {
                 add("open      ${state.lastOpenTotalMs} ms")
                 add("open read ${state.lastOpenReadMs} ms")

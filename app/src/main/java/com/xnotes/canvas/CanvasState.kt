@@ -1081,6 +1081,10 @@ class CanvasState(
     var lastOpenReadMs = -1L
     var lastOpenTotalMs = -1L
 
+    /** Autosave status for the debug overlay, set by the editor: "idle", "pending", "in progress",
+     *  "done" or "failed". */
+    var autosaveStatus = "idle"
+
     /**
      * The pixel dimensions the current page's cache *would* be built at for the current
      * zoom (i.e. [clampedRes] applied). Tracks live while zooming — unlike the actual

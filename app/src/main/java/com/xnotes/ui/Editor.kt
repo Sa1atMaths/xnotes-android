@@ -1793,10 +1793,12 @@ class Editor(context: Context) {
     private fun scheduleAutosave() {
         val uri = autosaveUri ?: return
         autosaveJob?.cancel()
+        state.autosaveStatus = "pending" // debounce running; drives the debug overlay
         autosaveJob = autosaveScope.launch {
             kotlinx.coroutines.delay(1200L) // debounce: write after a short idle
             // Snapshot on the main thread so the off-thread write never iterates the live (mutating) model.
             val snapshot = state.document.deepCopy(textMeasurer)
+            state.autosaveStatus = "in progress"
             val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 writeNoteSafely(uri, snapshot)
             }
@@ -1804,6 +1806,7 @@ class Editor(context: Context) {
                 state.document.dirty = false; dirty = false
                 invalidateThumb(uri) // file changed on disk; drop the stale tile so the grid re-renders it
             }
+            state.autosaveStatus = if (ok) "done" else "failed"
         }
     }
 
@@ -1827,9 +1830,11 @@ class Editor(context: Context) {
         if (uri == null || !state.document.dirty) { onDone(); return }
         val snapshot = state.document.deepCopy(textMeasurer) // main thread: immune to edits during the write
         if (showOverlay) savingNote = true
+        state.autosaveStatus = "in progress"
         autosaveScope.launch {
             val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { writeNoteSafely(uri, snapshot) }
             if (ok) { state.document.dirty = false; dirty = false; invalidateThumb(uri) }
+            state.autosaveStatus = if (ok) "done" else "failed"
             savingNote = false
             onDone()
         }
