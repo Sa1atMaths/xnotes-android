@@ -363,11 +363,17 @@ class CanvasView @JvmOverloads constructor(
                 val pr = st.pageRects.getOrNull(i) ?: continue
                 if (!pr.intersects(visible)) continue
                 val page = st.document.pages[i]
+                // Page-local visible rect, so off-band highlighters on a tall page skip the composite.
+                val visLocal = visible.translate(-pr.left, -pr.top)
                 r.withSave {
                     r.clipRect(pr)
                     r.translate(pr.left, pr.top)
                     for (item in page.items) {
-                        if (item.isHighlighterInk() && !st.isLiftedItem(item)) item.paint(r)
+                        if (item.isHighlighterInk() && !st.isLiftedItem(item) &&
+                            item.bounds().intersects(visLocal)
+                        ) {
+                            item.paint(r)
+                        }
                     }
                 }
             }
