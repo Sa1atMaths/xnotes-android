@@ -12,10 +12,10 @@ import com.xnotes.platform.AndroidText
  * toggled by a four-finger tap (detected in [CanvasView]). It reports the live frame
  * rate, page-cache occupancy and Java heap use.
  *
- * Frame timing is sampled in [CanvasView.onDraw], so the rate reflects real repaints
- * and reads stale while the canvas sits idle (the canvas only repaints on interaction).
- * The HUD is drawn as plain pixels on top of the frame and never reads input, so it
- * cannot interfere with stylus/finger drawing underneath it.
+ * Frame timing is sampled in [CanvasView.onDraw]; while the HUD is up a low-rate idle ticker keeps
+ * repainting it (independent of interaction), so the rate falls to 0 when idle instead of freezing and
+ * the memory/autosave readouts stay live. The HUD is drawn as plain pixels on top of the frame and
+ * never reads input, so it cannot interfere with stylus/finger drawing underneath it.
  */
 class DebugOverlay {
     var enabled = false

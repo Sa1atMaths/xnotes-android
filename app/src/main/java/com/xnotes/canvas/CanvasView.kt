@@ -91,9 +91,16 @@ class CanvasView @JvmOverloads constructor(
     private val debugTick = object : Runnable {
         override fun run() {
             if (!debugOverlay.enabled) return
-            invalidate()
+            requestRender() // vsync-aligned repaint, like scroll/cache-ready; a plain invalidate() does
+                            // not reliably repaint this Compose-hosted view while idle, which froze the HUD
             mainHandler.postDelayed(this, DEBUG_TICK_MS)
         }
+    }
+
+    /** (Re)start the HUD's idle repaint loop when it's showing; safe to call repeatedly. */
+    private fun startDebugTick() {
+        mainHandler.removeCallbacks(debugTick)
+        if (debugOverlay.enabled) mainHandler.postDelayed(debugTick, DEBUG_TICK_MS)
     }
 
     // --- four-finger-tap recognition (toggles the debug HUD) ---
@@ -165,8 +172,7 @@ class CanvasView @JvmOverloads constructor(
                     val quick = e.eventTime - gestureDownMs <= TAP_TIMEOUT_MS
                     if (quick && !fourMoved && gestureMaxPointers == 4) {
                         debugOverlay.toggle()
-                        mainHandler.removeCallbacks(debugTick)
-                        if (debugOverlay.enabled) mainHandler.postDelayed(debugTick, DEBUG_TICK_MS)
+                        startDebugTick()
                         requestRender()
                     }
                     return true
@@ -260,6 +266,7 @@ class CanvasView @JvmOverloads constructor(
                 Thread(r, "xnotes-cache").apply { isDaemon = true }
             }
         }
+        startDebugTick() // resume the HUD ticker if it was left enabled across a detach/reattach
     }
 
     override fun onDetachedFromWindow() {
