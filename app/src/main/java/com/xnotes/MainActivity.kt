@@ -236,7 +236,7 @@ private fun EditorScreen(
         uri?.let {
             runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
             val name = displayNameOf(resolver, it)
-            runCatching { resolver.openOutputStream(it)?.use { o -> editor.save(o, it.toString(), name) } }
+            runCatching { resolver.openOutputStream(it, "wt")?.use { o -> editor.save(o, it.toString(), name) } }
                 .onSuccess { val p = pendingAfterSave; pendingAfterSave = null; p?.invoke() }
                 .onFailure { editor.message = "Could not save the note."; pendingAfterSave = null }
         }

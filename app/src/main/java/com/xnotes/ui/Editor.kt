@@ -181,6 +181,10 @@ class Editor(context: Context) {
     private val autosaveScope = kotlinx.coroutines.MainScope()
     private var autosaveJob: kotlinx.coroutines.Job? = null
 
+    /** Serializes every write to a note file so an autosave and a flush/Save-As can't truncate and
+     *  copy the same destination at once (which would corrupt it). */
+    private val saveLock = Any()
+
     var tool by mutableStateOf(Tool.DEFAULT)
         private set
     var palette by mutableStateOf(state.palette)
@@ -1155,14 +1159,15 @@ class Editor(context: Context) {
 
     fun save(output: OutputStream, uri: String, name: String? = null) {
         try {
-            codec.write(state.document, output)
+            synchronized(saveLock) { codec.write(state.document, output) }
             state.document.path = uri
             if (name != null) state.document.displayName = name
             state.document.dirty = false
             maybeBindAutosave(uri) // saving into the folder makes it autosave thereafter
             refreshContent()
             invalidateThumb(uri) // content changed; re-render its tile next time it's shown
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: an OutOfMemoryError mid-encode must surface a message, not crash.
             message = "Could not save the note."
         }
     }
@@ -1734,26 +1739,30 @@ class Editor(context: Context) {
      * The old path opened the destination in "wt" (truncate) and encoded straight into it, so a
      * throw mid-encode left the note as 0 bytes. Returns true only when [uri] now holds the note.
      */
-    private fun writeNoteSafely(uri: String, doc: Document): Boolean = runCatching {
-        val tmp = java.io.File.createTempFile("save", ".xnote", saveTmpDir)
-        try {
-            java.io.FileOutputStream(tmp).use { codec.write(doc, it) }
-            val out = appContext.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")
-                ?: return@runCatching false
-            out.use { java.io.FileInputStream(tmp).use { input -> input.copyTo(it) } }
-            true
-        } finally {
-            tmp.delete()
-        }
-    }.getOrDefault(false)
+    private fun writeNoteSafely(uri: String, doc: Document): Boolean = synchronized(saveLock) {
+        runCatching {
+            val tmp = java.io.File.createTempFile("save", ".xnote", saveTmpDir)
+            try {
+                java.io.FileOutputStream(tmp).use { codec.write(doc, it) }
+                val out = appContext.contentResolver.openOutputStream(android.net.Uri.parse(uri), "wt")
+                    ?: return@runCatching false
+                out.use { java.io.FileInputStream(tmp).use { input -> input.copyTo(it) } }
+                true
+            } finally {
+                tmp.delete()
+            }
+        }.getOrDefault(false)
+    }
 
     private fun scheduleAutosave() {
         val uri = autosaveUri ?: return
         autosaveJob?.cancel()
         autosaveJob = autosaveScope.launch {
             kotlinx.coroutines.delay(1200L) // debounce: write after a short idle
+            // Snapshot on the main thread so the off-thread write never iterates the live (mutating) model.
+            val snapshot = state.document.deepCopy(textMeasurer)
             val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                writeNoteSafely(uri, state.document)
+                writeNoteSafely(uri, snapshot)
             }
             if (ok) {
                 state.document.dirty = false; dirty = false
