@@ -2489,7 +2489,7 @@ class Editor(context: Context) {
      *  Returns true when consumed, so the host swallows the key. */
     fun onStylusButtonKey(e: android.view.KeyEvent): Boolean {
         if (e.keyCode == penDoubleTapKeycode) return onPenDoubleTapKey(e)
-        if (e.keyCode == penButtonTapKeycode) return onPenButtonTapKey(e)
+        if (e.keyCode in penButtonTapKeycodes) return onPenButtonTapKey(e)
         val down = when (e.action) {
             android.view.KeyEvent.ACTION_DOWN -> true
             android.view.KeyEvent.ACTION_UP -> false
@@ -2518,10 +2518,10 @@ class Editor(context: Context) {
         return true
     }
 
-    // Some pens (e.g. HONOR Magic-Pencil 4s) report the side button as a momentary vendor key click
-    // (keycode 333, KEYCODE_FINGERPRINT_FINGER_IDENTIFY) instead of a held state, so it can't drive
-    // the hold latch; one press is a single down/up. Fire the mapped gesture on key-down, ignore up.
-    private val penButtonTapKeycode = 333
+    // Some pens report the side button as a momentary vendor key click, not a held state, so it can't
+    // drive the hold latch; fire the mapped gesture on key-down, ignore up. HONOR Magic-Pencil 4s ->
+    // 333; Lenovo Tab Pen Plus -> 601 (its one code with a clean down; it also emits 600/603/604 ups).
+    private val penButtonTapKeycodes = setOf(333, 601)
     private fun onPenButtonTapKey(e: android.view.KeyEvent): Boolean {
         if (preferences.stylusButtonTap == "none") return false
         if (e.action == android.view.KeyEvent.ACTION_DOWN) dispatchTapGesture(preferences.stylusButtonTap)
