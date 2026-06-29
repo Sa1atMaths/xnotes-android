@@ -14,6 +14,8 @@ import java.util.concurrent.Executors
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.Stroke
+import com.xnotes.core.pal.BlendMode
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
 import com.xnotes.platform.AndroidRenderer
@@ -369,10 +371,13 @@ class CanvasView @JvmOverloads constructor(
                     r.clipRect(pr)
                     r.translate(pr.left, pr.top)
                     for (item in page.items) {
-                        if (item.isHighlighterInk() && !st.isLiftedItem(item) &&
+                        if (item is Stroke && item.isHighlighterInk() && !st.isLiftedItem(item) &&
                             item.bounds().intersects(visLocal)
                         ) {
-                            item.paint(r)
+                            // Blit the pre-rendered opaque ribbon at the ink's alpha + MULTIPLY,
+                            // instead of re-tessellating the ribbon every frame.
+                            val hc = st.highlighterCacheFor(item, page)
+                            r.drawRasterBlended(hc.surface, hc.cover, item.renderColor.a / 255.0, BlendMode.MULTIPLY)
                         }
                     }
                 }

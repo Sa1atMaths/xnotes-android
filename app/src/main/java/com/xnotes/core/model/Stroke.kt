@@ -125,6 +125,15 @@ class Stroke(
     }
 
     /**
+     * Paint just the opaque highlighter ribbon (full alpha, no blend) into [r]. The canvas
+     * pre-renders this once into a bitmap and composites it live at [renderColor]'s alpha with
+     * MULTIPLY, so a self-overlapping highlight isn't re-tessellated every frame.
+     */
+    fun paintHighlighterRibbon(r: Renderer) {
+        paintFills(r, geometry(), renderColor.withAlpha(255))
+    }
+
+    /**
      * The dashed pen: a constant-width, round-capped dashed line traced down the smoothed
      * centreline (so its rounded dashes match the tool's icon). Dash/gap runs are in content
      * px so they scale with zoom like the ink. A single tap (no line) is drawn as a dot.

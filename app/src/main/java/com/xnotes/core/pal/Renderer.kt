@@ -124,6 +124,15 @@ interface Renderer {
     /** Draw [raster] scaled into [dest] (optionally only [src] sub-rect), smooth sampling. */
     fun drawRaster(raster: RasterSurface, dest: Rect, src: Rect? = null)
 
+    /**
+     * Like [drawRaster] but composites the bitmap at [alpha] with [blend]. Lets a pre-rendered
+     * (opaque) highlighter ribbon be blitted so it MULTIPLY-darkens against the live page each
+     * frame without re-tessellating the stroke. Default ignores [alpha]/[blend] and draws opaque,
+     * so backends without a real blend (export/tests) stay correct for the paths that use them.
+     */
+    fun drawRasterBlended(raster: RasterSurface, dest: Rect, alpha: Double, blend: BlendMode, src: Rect? = null) =
+        drawRaster(raster, dest, src)
+
     fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags = TextFlags())
 
     /** Run [block] between matching [save]/[restore] calls. */

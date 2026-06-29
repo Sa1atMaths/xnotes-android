@@ -17,6 +17,7 @@ import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.pal.SurfaceFactory
+import com.xnotes.core.stroke.StrokeGeometry
 import com.xnotes.core.tools.Tool
 import com.xnotes.ui.theme.Palette
 import kotlin.math.abs
@@ -34,6 +35,19 @@ internal fun CanvasItem.isHighlighterInk(): Boolean = this is Stroke && this.too
 
 /** A rasterized page cache plus the resolution it was built at. */
 class CacheEntry(val surface: RasterSurface, val res: Double)
+
+/**
+ * A cached highlighter ribbon: its opaque bitmap, the resolution + geometry + opaque colour it
+ * was built from (any of which changing rebuilds it), and the page-local content rect it covers
+ * (where the frame blits it). See [CanvasState.highlighterCacheFor].
+ */
+class HighlighterCacheEntry(
+    val surface: RasterSurface,
+    val res: Double,
+    val geom: StrokeGeometry,
+    val opaque: Rgba,
+    val cover: Rect,
+)
 
 /** How a freshly opened document's initial view is chosen (see [CanvasState.establishInitialView]). */
 sealed class InitialView {
@@ -130,6 +144,18 @@ class CanvasState(
      */
     private val caches = HashMap<Page, CacheEntry>()
     private val bgCaches = HashMap<Page, CacheEntry>()
+
+    /**
+     * Per-highlighter opaque-ribbon bitmaps. Highlighters can't be baked into [caches] (they
+     * MULTIPLY against the live page, not the transparent ink layer above it), so the draw loop
+     * composites them every frame — but re-tessellating a self-overlapping ribbon each frame stalls
+     * scrolling. Each entry holds the stroke's ribbon rendered once at full opacity; the frame just
+     * blits it with the stroke's alpha + MULTIPLY (see [highlighterCacheFor] and [CanvasView]). Keyed
+     * by stroke identity (model items compare by identity); rebuilt when the stroke's geometry
+     * instance changes (any edit nulls it), its colour changes, or the resolution moves. Touched on
+     * the main thread only and pruned to the visible pages' highlighters each frame.
+     */
+    private val hlCaches = HashMap<Stroke, HighlighterCacheEntry>()
 
     /**
      * Presentation's own page caches, kept separate from the on-screen [caches]/[bgCaches]
@@ -523,6 +549,39 @@ class CanvasState(
     }
 
     /**
+     * The cached opaque-ribbon bitmap for highlighter [stroke] on [page], built lazily and reused
+     * until the stroke is edited (its [Stroke.geometry] instance changes), its colour changes, or the
+     * resolution moves — rebuilt on zoom-settle, while mid-pinch the stale-resolution bitmap is
+     * blitted scaled (like the page caches). The caller composites it with the stroke's alpha and
+     * MULTIPLY so it darkens against the live page; see [CanvasView].
+     */
+    fun highlighterCacheFor(stroke: Stroke, page: Page): HighlighterCacheEntry {
+        val res = clampedRes(page)
+        val g = stroke.geometry()
+        val opaque = stroke.renderColor.withAlpha(255)
+        val existing = hlCaches[stroke]
+        if (existing != null && existing.geom === g && existing.opaque == opaque &&
+            (zoomingInProgress || abs(existing.res - res) < 1e-6)
+        ) {
+            return existing
+        }
+        return buildHighlighter(stroke, res, g, opaque).also { hlCaches[stroke] = it }
+    }
+
+    private fun buildHighlighter(stroke: Stroke, res: Double, g: StrokeGeometry, opaque: Rgba): HighlighterCacheEntry {
+        val cover = stroke.bounds().outset(HL_PAD)
+        val w = ceil(cover.w * res).toInt().coerceAtLeast(1)
+        val h = ceil(cover.h * res).toInt().coerceAtLeast(1)
+        val surface = surfaceFactory.create(w, h, 1.0)
+        surface.fill(TRANSPARENT)
+        val r = surface.renderer()
+        r.scale(res, res)
+        r.translate(-cover.left, -cover.top)
+        stroke.paintHighlighterRibbon(r)
+        return HighlighterCacheEntry(surface, res, g, opaque, cover)
+    }
+
+    /**
      * Whether [page] has anything in its background layer — a PDF page or a resolved ruling.
      * Plain colour pages return false so no (large, transparent) background surface is allocated,
      * even though [paintPageBackground] is always installed for the pattern path.
@@ -721,6 +780,7 @@ class CanvasState(
         bgCaches.clear()
         presCaches.clear()
         presBgCaches.clear()
+        hlCaches.clear()
         cacheGen++
         sharpGen++
     }
@@ -787,6 +847,11 @@ class CanvasState(
     fun dropCachesExcept(visible: Set<Page>) {
         caches.keys.retainAll(visible)
         bgCaches.keys.retainAll(visible)
+        if (hlCaches.isNotEmpty()) {
+            val keep = HashSet<Stroke>()
+            for (p in visible) for (it in p.items) if (it is Stroke && it.tool == Tool.HIGHLIGHTER) keep.add(it)
+            hlCaches.keys.retainAll(keep)
+        }
     }
 
     /**
@@ -1006,6 +1071,7 @@ class CanvasState(
         for (e in bgCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
         for (e in presCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
         for (e in presBgCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
+        for (e in hlCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
         val visible = visiblePageRange()?.let { it.last - it.first + 1 } ?: 0
         return CacheSnapshot(visible, caches.size, bgCaches.size, presCaches.size, presentationActive, bytes)
     }
@@ -1048,6 +1114,9 @@ class CanvasState(
          * on-screen cache is configured.
          */
         const val PRES_CACHE_PX = 2048.0
+
+        /** Padding (content px) around a highlighter's bounds in its cached bitmap, for AA edges. */
+        const val HL_PAD = 2.0
 
         /** The page label sits ~26px above the page top (content space). */
         const val PAGE_LABEL_OFFSET = 26.0

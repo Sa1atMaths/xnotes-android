@@ -37,6 +37,7 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         strokeCap = Paint.Cap.ROUND
     }
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { isDither = true }
+    private val rasterBlendPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { isDither = true }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val layerPaint = Paint()
 
@@ -213,6 +214,26 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         }
         val destRect = RectF(dest.left.toFloat(), dest.top.toFloat(), dest.right.toFloat(), dest.bottom.toFloat())
         canvas.drawBitmap(bmp, srcRect, destRect, bitmapPaint)
+    }
+
+    // MULTIPLY uses the W3C separable blend (API 29+); below that (and for SRC_OVER) it falls back
+    // to plain alpha compositing, matching saveLayerBlended. Composites a pre-rendered highlighter
+    // ribbon onto the live page each frame in one blit, no per-frame ribbon tessellation.
+    override fun drawRasterBlended(raster: RasterSurface, dest: Rect, alpha: Double, blend: BlendMode, src: Rect?) {
+        val bmp = (raster as? AndroidRasterSurface)?.bitmap ?: return
+        if (bmp.isRecycled) return
+        rasterBlendPaint.reset()
+        rasterBlendPaint.isFilterBitmap = true
+        rasterBlendPaint.isDither = true
+        rasterBlendPaint.alpha = (alpha.coerceIn(0.0, 1.0) * 255).toInt()
+        if (blend == BlendMode.MULTIPLY && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            rasterBlendPaint.blendMode = android.graphics.BlendMode.MULTIPLY
+        }
+        val srcRect = src?.let {
+            android.graphics.Rect(it.left.toInt(), it.top.toInt(), it.right.toInt(), it.bottom.toInt())
+        }
+        val destRect = RectF(dest.left.toFloat(), dest.top.toFloat(), dest.right.toFloat(), dest.bottom.toFloat())
+        canvas.drawBitmap(bmp, srcRect, destRect, rasterBlendPaint)
     }
 
     override fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags) {
