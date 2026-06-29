@@ -127,6 +127,8 @@ private fun PagesTab(
     onSavePagesAsImages: (List<Int>) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    // Open the panel on the current page, not page 1 (re-runs each open: a hidden panel leaves composition).
+    LaunchedEffect(Unit) { listState.scrollToItem(editor.pageIndex) }
     // Keyed by the page's stable id so insert/delete animate and keep each page's cached thumbnail;
     // contentVersion drives a fresh read of the order whenever the page list changes.
     val pages = remember(editor.contentVersion) { editor.pagesSnapshot() }
