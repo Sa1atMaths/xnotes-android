@@ -16,6 +16,7 @@ class SessionStoreTest {
     private fun codec() = DocumentCodec(FakeImageCodec(), FakeTextMeasurer())
     private fun tempDir(): File = Files.createTempDirectory("xnotes-session").toFile()
     private fun pdfDir(): File = Files.createTempDirectory("xnotes-pdfsrc").toFile()
+    private fun imageDir(): File = Files.createTempDirectory("xnotes-img").toFile()
 
     @Test fun roundTripsDocumentIdentityAndViewState() {
         val dir = tempDir()
@@ -24,9 +25,9 @@ class SessionStoreTest {
             displayName = "Notes.xnote"
             dirty = true
         }
-        SessionStore(dir, codec(), pdfDir()).save(doc, zoom = 2.04, scrollX = 120.0, scrollY = 340.0, zoomLocked = true, writeDocument = true)
+        SessionStore(dir, codec(), pdfDir(), imageDir()).save(doc, zoom = 2.04, scrollX = 120.0, scrollY = 340.0, zoomLocked = true, writeDocument = true)
 
-        val snap = SessionStore(dir, codec(), pdfDir()).load()!!
+        val snap = SessionStore(dir, codec(), pdfDir(), imageDir()).load()!!
         assertEquals(2, snap.document.pages.size)
         assertEquals(doc.path, snap.document.path)
         assertEquals("Notes.xnote", snap.document.displayName)
@@ -38,16 +39,16 @@ class SessionStoreTest {
     }
 
     @Test fun loadReturnsNullWhenNoSession() {
-        assertNull(SessionStore(tempDir(), codec(), pdfDir()).load())
+        assertNull(SessionStore(tempDir(), codec(), pdfDir(), imageDir()).load())
     }
 
     @Test fun viewStateRefreshKeepsExistingDocument() {
         val dir = tempDir()
-        SessionStore(dir, codec(), pdfDir()).save(Document.blank(3), zoom = 1.0, scrollX = 0.0, scrollY = 0.0, zoomLocked = false, writeDocument = true)
+        SessionStore(dir, codec(), pdfDir(), imageDir()).save(Document.blank(3), zoom = 1.0, scrollX = 0.0, scrollY = 0.0, zoomLocked = false, writeDocument = true)
         // A metadata-only update (writeDocument = false) must not lose the document.
-        SessionStore(dir, codec(), pdfDir()).save(Document.blank(9), zoom = 1.5, scrollX = 10.0, scrollY = 20.0, zoomLocked = false, writeDocument = false)
+        SessionStore(dir, codec(), pdfDir(), imageDir()).save(Document.blank(9), zoom = 1.5, scrollX = 10.0, scrollY = 20.0, zoomLocked = false, writeDocument = false)
 
-        val snap = SessionStore(dir, codec(), pdfDir()).load()!!
+        val snap = SessionStore(dir, codec(), pdfDir(), imageDir()).load()!!
         assertEquals(3, snap.document.pages.size) // the original document, not the 9-page one
         assertEquals(1.5, snap.zoom, 1e-9) // but the refreshed view state
     }

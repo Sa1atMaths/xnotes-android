@@ -67,13 +67,8 @@ class FakeTextMeasurer(private val perPointLineHeight: Double = 1.3) : TextMeasu
 
 /** A codec that produces fixed-size surfaces and tiny byte stand-ins. */
 class FakeImageCodec : ImageCodec {
-    var decodeWidth = 64
-    var decodeHeight = 48
-    override fun decode(bytes: ByteArray): RasterSurface = FakeRasterSurface(decodeWidth, decodeHeight)
-    override fun decodePath(path: String): RasterSurface = FakeRasterSurface(decodeWidth, decodeHeight)
-    override fun probe(bytes: ByteArray): ImageSize = ImageSize(decodeWidth, decodeHeight)
-    override fun decodeSampled(bytes: ByteArray, maxWidth: Int, maxHeight: Int): RasterSurface =
-        FakeRasterSurface(minOf(decodeWidth, maxWidth), minOf(decodeHeight, maxHeight))
-    override fun encodePng(surface: RasterSurface): ByteArray = byteArrayOf(0x89.toByte(), 'P'.code.toByte())
+    var probeWidth = 64
+    var probeHeight = 48
+    override fun probeFile(path: String): ImageSize = ImageSize(probeWidth, probeHeight)
     override fun encodeJpeg(surface: RasterSurface, quality: Double): ByteArray = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
 }

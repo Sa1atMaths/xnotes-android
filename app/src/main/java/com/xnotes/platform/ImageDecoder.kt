@@ -5,25 +5,26 @@ import android.graphics.BitmapFactory
 import com.xnotes.core.pal.ImageSize
 
 /**
- * Decodes encoded image bytes downsampled to a target box, so a large photo is never fully decoded
- * into memory. Shared by [AndroidImageCodec], the on-screen [AndroidRenderer] and PDF export: each
- * asks only for the pixels its destination needs. Stateless; safe to call from any thread.
+ * Decodes an encoded image file downsampled to a target box, so a large photo is never fully decoded
+ * into memory and its bytes are never slurped into the heap. Shared by [AndroidImageCodec], the
+ * on-screen [AndroidRenderer] and PDF export: each asks only for the pixels its destination needs.
+ * Stateless; safe to call from any thread.
  */
 object ImageDecoder {
 
-    /** Native pixel size of [bytes] (bounds-only decode), or null if unreadable. */
-    fun probe(bytes: ByteArray): ImageSize? {
+    /** Native pixel size of the image at [path] (bounds-only decode), or null if unreadable. */
+    fun probeFile(path: String): ImageSize? {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        BitmapFactory.decodeFile(path, o)
         return if (o.outWidth > 0 && o.outHeight > 0) ImageSize(o.outWidth, o.outHeight) else null
     }
 
-    /** Decode [bytes] no larger than [maxWidth]×[maxHeight] (aspect kept), or null on failure. */
-    fun decodeSampled(bytes: ByteArray, maxWidth: Int, maxHeight: Int): Bitmap? {
+    /** Decode the image at [path] no larger than [maxWidth]×[maxHeight] (aspect kept), or null. */
+    fun decodeSampledFile(path: String, maxWidth: Int, maxHeight: Int): Bitmap? {
         val mw = maxWidth.coerceAtLeast(1)
         val mh = maxHeight.coerceAtLeast(1)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        BitmapFactory.decodeFile(path, bounds)
         val sw = bounds.outWidth
         val sh = bounds.outHeight
         if (sw <= 0 || sh <= 0) return null
@@ -31,7 +32,7 @@ object ImageDecoder {
             inSampleSize = sampleSize(sw, sh, mw, mh)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+        val bmp = BitmapFactory.decodeFile(path, opts) ?: return null
         if (bmp.width <= mw && bmp.height <= mh) return bmp
         // inSampleSize only halves, so a result can still exceed the box: scale the rest of the way.
         val scale = minOf(mw.toDouble() / bmp.width, mh.toDouble() / bmp.height)

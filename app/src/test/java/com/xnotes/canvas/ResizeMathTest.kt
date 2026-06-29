@@ -77,7 +77,7 @@ class ResizeMathTest {
     }
 
     @Test fun imageHandlesAreFourCorners() {
-        val img = ImageItem(ImageData(ByteArray(0), 10, 10), Rect(0.0, 0.0, 100.0, 50.0))
+        val img = ImageItem(ImageData(java.io.File("test-image"),10, 10), Rect(0.0, 0.0, 100.0, 50.0))
         val handles = ResizeMath.handles(img, Pt(48.0, 48.0))
         assertEquals(4, handles.size)
         assertTrue(handles.any { it.id == HandleId.TL && it.content == Pt(48.0, 48.0) })

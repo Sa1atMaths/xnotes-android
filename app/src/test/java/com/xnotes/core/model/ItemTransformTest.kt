@@ -98,7 +98,7 @@ class ItemTransformTest {
     // --- images ---
 
     @Test fun scaleImageRect() {
-        val img = ImageItem(ImageData(ByteArray(0), 10, 10), Rect(10.0, 10.0, 100.0, 50.0))
+        val img = ImageItem(ImageData(java.io.File("test-image"),10, 10), Rect(10.0, 10.0, 100.0, 50.0))
         img.applyTransform(Affine.scaleAbout(Pt(10.0, 10.0), 2.0, 2.0))
         assertEquals(Rect(10.0, 10.0, 200.0, 100.0), img.rect)
     }

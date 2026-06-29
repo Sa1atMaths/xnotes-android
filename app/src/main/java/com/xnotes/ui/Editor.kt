@@ -124,6 +124,11 @@ class Editor(context: Context) {
      *  yet at construction. */
     private val pdfDir = java.io.File(appContext.filesDir, "pdfsrc").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
 
+    /** Encoded inserted images, streamed to disk so a note full of large images never loads all their
+     *  bytes into the heap; the renderer decodes from these files on demand. Under filesDir (not the
+     *  reclaimable cacheDir) and purged on launch to drop temps orphaned by a crash. */
+    private val imageDir = java.io.File(appContext.filesDir, "noteimg").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+
     /** Scratch dir for [writeNoteSafely]: a note is encoded here in full before any SAF file is
      *  touched, so a failed encode can never truncate a good note. Lives under filesDir (not the
      *  reclaimable cacheDir) and is purged on launch to drop temps orphaned by a crash. */
@@ -143,7 +148,7 @@ class Editor(context: Context) {
     private val textMeasurer = AndroidTextMeasurer()
     private val imageCodec = AndroidImageCodec()
     private val codec = DocumentCodec(imageCodec, textMeasurer)
-    private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec, pdfDir)
+    private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec, pdfDir, imageDir)
     private val viewStates = com.xnotes.platform.ViewStateStore(com.xnotes.platform.JsonStore.viewStates(appContext))
     private var lastSessionContentVersion = -1
     private var sessionLoaded = false
@@ -648,8 +653,12 @@ class Editor(context: Context) {
 
     /** Insert an image, centred on [atContent] (or on the current page when null). */
     fun insertImageAt(bytes: ByteArray, atContent: com.xnotes.core.geometry.Pt?) {
-        val size = imageCodec.probe(bytes)
-        if (size == null || size.width <= 0 || size.height <= 0) {
+        val file = runCatching {
+            java.io.File.createTempFile("img", null, imageDir).apply { writeBytes(bytes) }
+        }.getOrNull()
+        val size = file?.let { imageCodec.probeFile(it.path) }
+        if (file == null || size == null || size.width <= 0 || size.height <= 0) {
+            file?.delete()
             message = "Could not read the image."
             return
         }
@@ -667,7 +676,7 @@ class Editor(context: Context) {
         } else {
             Rect((page.width - w) / 2.0, (page.height - h) / 2.0, w, h)
         }
-        val item = ImageItem(ImageData(bytes, size.width, size.height), rect)
+        val item = ImageItem(ImageData(file, size.width, size.height), rect)
         page.items.add(item)
         state.appendToCache(page, item)
         history.push(AddItem(page, item))
@@ -1130,11 +1139,11 @@ class Editor(context: Context) {
         try {
             val readStart = System.nanoTime()
             val doc = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir) }
+                appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir, imageDir) }
             }
             readMs = (System.nanoTime() - readStart) / 1_000_000
             if (doc == null) { message = "Could not open that note."; return }
-            if (openCancelled.get()) { doc.pdfFile?.delete(); return } // tapped Cancel mid-read; stay put
+            if (openCancelled.get()) { doc.pdfFile?.delete(); deleteImageTemps(doc); return } // tapped Cancel mid-read; stay put
             doc.path = uri
             doc.displayName = name
             doc.dirty = false
@@ -1263,17 +1272,26 @@ class Editor(context: Context) {
             synchronized(noteThumbs) { noteThumbs.get(uri)?.let { return@withContext it } }
             val bmp = thumbCache.load(uri) ?: run {
                 val doc = runCatching {
-                    appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir) }
+                    appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir, imageDir) }
                 }.getOrNull() ?: return@withContext null
                 try {
                     renderDocThumbnailSquare(doc, tilePx)?.also { thumbCache.store(uri, it) } ?: return@withContext null
                 } finally {
-                    doc.pdfFile?.delete() // transient doc loaded just for a thumbnail — drop its extracted PDF
+                    doc.pdfFile?.delete() // transient doc loaded just for a thumbnail; drop its extracts
+                    deleteImageTemps(doc)
                 }
             }
             val img = bmp.asImageBitmap()
             synchronized(noteThumbs) { noteThumbs.put(uri, img) }
             img
+        }
+    }
+
+    /** Delete the temp image files backing a transient document (thumbnail/export/cancelled open), so
+     *  they don't pile up in [imageDir] until the next launch purge. Never called on the open note. */
+    private fun deleteImageTemps(doc: Document) {
+        for (page in doc.pages) for (item in page.items) {
+            if (item is ImageItem) runCatching { item.image.file.delete() }
         }
     }
 
@@ -2016,7 +2034,7 @@ class Editor(context: Context) {
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         isCancelled: () -> Boolean = { false },
     ) {
-        val doc = appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { codec.read(it, pdfDir) } ?: return
+        val doc = appContext.contentResolver.openInputStream(android.net.Uri.parse(srcUri))?.use { codec.read(it, pdfDir, imageDir) } ?: return
         val src = doc.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         try {
             com.xnotes.platform.PdfExporter.export(
@@ -2027,7 +2045,8 @@ class Editor(context: Context) {
             )
         } finally {
             src?.close()
-            doc.pdfFile?.delete() // transient doc loaded just for export — drop its extracted PDF
+            doc.pdfFile?.delete() // transient doc loaded just for export; drop its extracts
+            deleteImageTemps(doc)
         }
     }
 

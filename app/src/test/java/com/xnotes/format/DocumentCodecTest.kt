@@ -29,16 +29,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.nio.file.Files
 import java.util.zip.ZipInputStream
 
 class DocumentCodecTest {
 
     private val codec = DocumentCodec(FakeImageCodec(), FakeTextMeasurer())
 
+    private fun imageFile(bytes: ByteArray = byteArrayOf(1, 2, 3, 4)): File =
+        File.createTempFile("img", null).apply { writeBytes(bytes); deleteOnExit() }
+
     private fun roundTrip(doc: Document): Document {
         val out = ByteArrayOutputStream()
         codec.write(doc, out)
-        return codec.read(ByteArrayInputStream(out.toByteArray()))
+        val imageDir = Files.createTempDirectory("xnotes-img").toFile()
+        return codec.read(ByteArrayInputStream(out.toByteArray()), imageDir = imageDir)
     }
 
     @Test fun fullRoundTrip() {
@@ -51,7 +57,7 @@ class DocumentCodecTest {
                 mutableListOf(Sample(10.0, 20.0, 0.5), Sample(30.0, 40.0, 0.9)),
             ),
         )
-        page.items.add(ImageItem(ImageData(byteArrayOf(1, 2, 3, 4), 64, 48), Rect(5.0, 6.0, 64.0, 48.0)))
+        page.items.add(ImageItem(ImageData(imageFile(),64, 48), Rect(5.0, 6.0, 64.0, 48.0)))
         page.items.add(TextItem(Pt(100.0, 110.0), width = 250.0, text = "hello\nworld", rgba = Rgba(236, 236, 236, 255), pointSize = 13.0, measurer = FakeTextMeasurer()))
         page.items.add(ShapeItem(ShapeKind.RECTANGLE, Pt(0.0, 0.0), Pt(50.0, 30.0), Rgba(255, 92, 92, 255), 3.0, Rgba(255, 92, 92, 64)))
         doc.pages.add(page)
@@ -89,7 +95,7 @@ class DocumentCodecTest {
 
     @Test fun manifestIsStoredAndDeflatedCorrectly() {
         val doc = Document.blank(count = 1)
-        doc.pages[0].items.add(ImageItem(ImageData(byteArrayOf(1, 2, 3, 4), 10, 10), Rect(0.0, 0.0, 10.0, 10.0)))
+        doc.pages[0].items.add(ImageItem(ImageData(imageFile(),10, 10), Rect(0.0, 0.0, 10.0, 10.0)))
         val out = ByteArrayOutputStream()
         codec.write(doc, out)
 

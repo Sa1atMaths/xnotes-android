@@ -157,7 +157,7 @@ class PdfBoxRenderer(
     // stored quarter turn to the pixels, then place it like any other bitmap.
     override fun drawImage(image: ImageData, dest: Rect, orientation: Int) {
         if (dest.w <= 0.0 || dest.h <= 0.0) return
-        var bmp = ImageDecoder.decodeSampled(image.bytes, EXPORT_CAP_PX, EXPORT_CAP_PX) ?: return
+        var bmp = ImageDecoder.decodeSampledFile(image.file.path, EXPORT_CAP_PX, EXPORT_CAP_PX) ?: return
         val o = ((orientation % 360) + 360) % 360
         if (o != 0) {
             val m = android.graphics.Matrix().apply { postRotate(o.toFloat()) }

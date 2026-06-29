@@ -56,7 +56,7 @@ class DocumentCodec(
     class WriteCancelled : Exception()
 
     fun write(doc: Document, out: OutputStream, isCancelled: () -> Boolean = { false }) {
-        val assets = ArrayList<Pair<String, ByteArray>>()
+        val assets = ArrayList<Pair<String, File>>()
         var imageIndex = 0
 
         val pagesArr = JSONArray()
@@ -67,7 +67,7 @@ class DocumentCodec(
                     is Stroke -> strokeToJson(item)
                     is ImageItem -> {
                         val name = "assets/image-%03d.png".format(imageIndex++)
-                        assets.add(name to item.image.bytes)
+                        assets.add(name to item.image.file)
                         imageToJson(item, name)
                     }
                     is TextItem -> textToJson(item)
@@ -101,7 +101,9 @@ class DocumentCodec(
 
         ZipOutputStream(out).use { zos ->
             zos.putDeflated("manifest.json", manifest.toString().toByteArray(Charsets.UTF_8))
-            for ((name, bytes) in assets) zos.putStored(name, bytes)
+            // Stream each image straight from its temp file into the bundle, never as a byte[], so a
+            // note full of large images doesn't materialize them all in the heap on every save.
+            for ((name, file) in assets) zos.putStored(name, file, isCancelled)
             // Stream the source PDF straight from disk into the bundle so a big PDF is never
             // materialized as a byte[]. [isCancelled] lets a long copy abort (e.g. import cancel).
             doc.pdfFile?.let { zos.putStored("assets/source.pdf", it, isCancelled) }
@@ -109,27 +111,37 @@ class DocumentCodec(
     }
 
     /**
-     * Read a `.xnote` from [input]. When [pdfDir] is non-null, an embedded source PDF is streamed
-     * out to a fresh temp file in it (set as [Document.pdfFile]) instead of being held in RAM —
-     * the caller owns that file's lifetime. When [pdfDir] is null the PDF is skipped entirely
-     * (so [Document.pdfFile] stays null), which is what validation-only reads want.
+     * Read a `.xnote` from [input]. When [pdfDir] is non-null an embedded source PDF, and when
+     * [imageDir] is non-null the inserted images, are streamed out to fresh temp files in those dirs
+     * (so neither is ever held in RAM) and the caller owns those files' lifetime. When a dir is null
+     * that asset is skipped, which is what validation-only reads want.
      */
-    fun read(input: InputStream, pdfDir: File? = null): Document {
+    fun read(input: InputStream, pdfDir: File? = null, imageDir: File? = null): Document {
         val entries = HashMap<String, ByteArray>()
+        val imageFiles = HashMap<String, File>()
         var pdfFile: File? = null
         ZipInputStream(input).use { zis ->
             var entry: ZipEntry? = zis.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory) {
-                    if (entry.name == "assets/source.pdf") {
+                    val name = entry.name
+                    if (name == "assets/source.pdf") {
                         // Never slurp the PDF into memory: stream it to disk (or skip it).
                         if (pdfDir != null) {
                             val f = File.createTempFile("src", ".pdf", pdfDir)
                             FileOutputStream(f).use { zis.copyTo(it) }
                             pdfFile = f
                         }
+                    } else if (name.startsWith("assets/image-")) {
+                        // Stream images to disk too (or skip): a note full of large images must never
+                        // load all their encoded bytes into the heap at once.
+                        if (imageDir != null) {
+                            val f = File.createTempFile("img", null, imageDir)
+                            FileOutputStream(f).use { zis.copyTo(it) }
+                            imageFiles[name] = f
+                        }
                     } else {
-                        entries[entry.name] = zis.readBytes()
+                        entries[name] = zis.readBytes()
                     }
                 }
                 zis.closeEntry()
@@ -180,7 +192,7 @@ class DocumentCodec(
             po.optJSONArray("items")?.let { items ->
                 for (j in 0 until items.length()) {
                     val io = items.optJSONObject(j) ?: continue
-                    parseItem(io, entries)?.let { page.items.add(it) }
+                    parseItem(io, entries, imageFiles)?.let { page.items.add(it) }
                 }
             }
             doc.pages.add(page)
@@ -290,10 +302,10 @@ class DocumentCodec(
 
     // --- json -> item ---
 
-    private fun parseItem(o: JSONObject, entries: Map<String, ByteArray>): CanvasItem? =
+    private fun parseItem(o: JSONObject, entries: Map<String, ByteArray>, imageFiles: Map<String, File>): CanvasItem? =
         when (o.optString("kind")) {
             Stroke.KIND -> parseStroke(o)
-            ImageItem.KIND -> parseImage(o, entries)
+            ImageItem.KIND -> parseImage(o, imageFiles)
             TextItem.KIND -> parseText(o)
             ShapeItem.KIND -> parseShape(o)
             else -> null
@@ -332,19 +344,19 @@ class DocumentCodec(
         return Stroke(tool, config, samples, o.optDouble("speed_scale", 1.0), o.optBoolean("straight", false))
     }
 
-    private fun parseImage(o: JSONObject, entries: Map<String, ByteArray>): ImageItem? {
+    private fun parseImage(o: JSONObject, imageFiles: Map<String, File>): ImageItem? {
         val asset = o.optString("asset").ifEmpty { return null }
-        val bytes = entries[asset] ?: return null
+        val file = imageFiles[asset] ?: return null
         var w = o.optInt("src_w", 0)
         var h = o.optInt("src_h", 0)
         if (w <= 0 || h <= 0) {
             // Legacy notes (and any without stored dims): read the native size without decoding pixels.
-            val probed = imageCodec.probe(bytes) ?: return null
+            val probed = imageCodec.probeFile(file.path) ?: return null
             w = probed.width
             h = probed.height
         }
         val rect = readRect(o.optJSONArray("rect")) ?: Rect(0.0, 0.0, w.toDouble(), h.toDouble())
-        return ImageItem(ImageData(bytes, w, h), rect, o.optInt("orientation", 0))
+        return ImageItem(ImageData(file, w, h), rect, o.optInt("orientation", 0))
     }
 
     private fun parseText(o: JSONObject): TextItem {
@@ -440,19 +452,6 @@ class DocumentCodec(
 
 private fun ZipOutputStream.putDeflated(name: String, data: ByteArray) {
     val entry = ZipEntry(name).apply { method = ZipEntry.DEFLATED }
-    putNextEntry(entry)
-    write(data)
-    closeEntry()
-}
-
-private fun ZipOutputStream.putStored(name: String, data: ByteArray) {
-    val crc = CRC32().apply { update(data) }
-    val entry = ZipEntry(name).apply {
-        method = ZipEntry.STORED
-        size = data.size.toLong()
-        compressedSize = data.size.toLong()
-        this.crc = crc.value
-    }
     putNextEntry(entry)
     write(data)
     closeEntry()

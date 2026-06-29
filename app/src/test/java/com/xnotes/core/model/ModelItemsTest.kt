@@ -75,7 +75,7 @@ class ModelItemsTest {
     }
 
     @Test fun imageItemGeometryAndHits() {
-        val img = ImageItem(ImageData(ByteArray(0), 64, 48), Rect(10.0, 10.0, 64.0, 48.0))
+        val img = ImageItem(ImageData(java.io.File("test-image"),64, 48), Rect(10.0, 10.0, 64.0, 48.0))
         assertTrue(img.contains(Pt(20.0, 20.0)))
         assertFalse(img.contains(Pt(200.0, 200.0)))
         assertTrue(img.intersectsCircle(8.0, 12.0, 5.0)) // just left of the rect

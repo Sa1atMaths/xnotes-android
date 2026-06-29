@@ -1,22 +1,16 @@
 package com.xnotes.core.model
 
-import java.util.concurrent.atomic.AtomicLong
+import java.io.File
 
 /**
- * The immutable source of an [ImageItem]: the original encoded image [bytes] plus its native pixel
- * size. Pixels are decoded on demand by the renderer at the resolution each draw needs (small for
- * the page cache, sharp for a deep zoom, full for export) so a large photo never sits fully decoded
- * in memory. Shared freely between copies because the bytes never change; [id] is a stable per-source
- * key for any decode cache.
+ * The immutable source of an [ImageItem]: the encoded image [file] on disk plus its native pixel
+ * size. The renderer decodes from the file on demand at the resolution each draw needs, so a large
+ * photo never sits decoded in memory and the encoded bytes never all sit in the heap either (a note
+ * with many big images stays flat). Shared freely between copies because the file is read-only; the
+ * file lives in a temp dir owned by the platform layer (purged on launch).
  */
 class ImageData(
-    val bytes: ByteArray,
+    val file: File,
     val width: Int,
     val height: Int,
-) {
-    val id: Long = nextId.incrementAndGet()
-
-    companion object {
-        private val nextId = AtomicLong(0L)
-    }
-}
+)
