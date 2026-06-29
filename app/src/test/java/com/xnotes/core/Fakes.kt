@@ -2,10 +2,12 @@ package com.xnotes.core
 
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.pal.FillRule
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.ImageCodec
+import com.xnotes.core.pal.ImageSize
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
@@ -34,6 +36,7 @@ class FakeRenderer : Renderer {
     override fun strokePolygon(points: List<Pt>, pen: Pen) { ops += "strokePolygon" }
     override fun strokeEllipse(center: Pt, rx: Double, ry: Double, pen: Pen) { ops += "strokeEllipse" }
     override fun drawRaster(raster: RasterSurface, dest: Rect, src: Rect?) { ops += "drawRaster" }
+    override fun drawImage(image: ImageData, dest: Rect, orientation: Int) { ops += "drawImage" }
     override fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags) { ops += "drawText" }
 }
 
@@ -68,8 +71,9 @@ class FakeImageCodec : ImageCodec {
     var decodeHeight = 48
     override fun decode(bytes: ByteArray): RasterSurface = FakeRasterSurface(decodeWidth, decodeHeight)
     override fun decodePath(path: String): RasterSurface = FakeRasterSurface(decodeWidth, decodeHeight)
+    override fun probe(bytes: ByteArray): ImageSize = ImageSize(decodeWidth, decodeHeight)
+    override fun decodeSampled(bytes: ByteArray, maxWidth: Int, maxHeight: Int): RasterSurface =
+        FakeRasterSurface(minOf(decodeWidth, maxWidth), minOf(decodeHeight, maxHeight))
     override fun encodePng(surface: RasterSurface): ByteArray = byteArrayOf(0x89.toByte(), 'P'.code.toByte())
     override fun encodeJpeg(surface: RasterSurface, quality: Double): ByteArray = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
-    override fun rotate90(surface: RasterSurface, clockwise: Boolean): RasterSurface =
-        FakeRasterSurface(surface.height, surface.width, surface.devicePixelRatio)
 }

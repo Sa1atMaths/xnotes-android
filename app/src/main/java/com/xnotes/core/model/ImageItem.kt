@@ -3,19 +3,20 @@ package com.xnotes.core.model
 import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
-import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
 
-/** A pasted or inserted bitmap (spec 02 §5.2). Resize is aspect-locked. */
+/** A pasted or inserted bitmap (spec 02 §5.2). Holds the encoded [image] source (decoded on demand
+ *  by the renderer) and a quarter-turn [orientation]; resize is aspect-locked. */
 class ImageItem(
-    var raster: RasterSurface,
+    var image: ImageData,
     var rect: Rect,
+    var orientation: Int = 0,
 ) : CanvasItem, Resizable {
 
     override val kind = KIND
     override val resizable = true
 
-    override fun paint(r: Renderer) = r.drawRaster(raster, rect)
+    override fun paint(r: Renderer) = r.drawImage(image, rect, orientation)
 
     override fun bounds(): Rect = rect
 

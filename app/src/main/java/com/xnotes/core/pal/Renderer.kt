@@ -3,6 +3,7 @@ package com.xnotes.core.pal
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.Rgba
 
 /** Polygon fill rule (spec 01 §1). Both are required. */
@@ -132,6 +133,13 @@ interface Renderer {
      */
     fun drawRasterBlended(raster: RasterSurface, dest: Rect, alpha: Double, blend: BlendMode, src: Rect? = null) =
         drawRaster(raster, dest, src)
+
+    /**
+     * Draw [image] (its encoded source) scaled into [dest] and turned [orientation] degrees clockwise
+     * (0/90/180/270). The backend decodes only as large as [dest] needs, so a big photo is never
+     * fully decoded into memory. Default is a no-op for backends that don't place images.
+     */
+    fun drawImage(image: ImageData, dest: Rect, orientation: Int = 0) {}
 
     fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags = TextFlags())
 

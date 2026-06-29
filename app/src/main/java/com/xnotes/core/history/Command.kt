@@ -10,7 +10,6 @@ import com.xnotes.core.model.Page
 import com.xnotes.core.model.Resizable
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.model.TextStyle
-import com.xnotes.core.pal.RasterSurface
 
 /**
  * A reversible edit (spec 07). A command is pushed onto the history **after**
@@ -108,22 +107,22 @@ class TransformItems(
     override fun undo() = items.forEachIndexed { i, it -> it.restoreGeometry(before[i]) }
 }
 
-/** Rotate an image a quarter turn: swap its raster and (width/height-swapped) rect. */
+/** Rotate an image a quarter turn: swap its (width/height-swapped) rect and orientation. */
 class RotateImage(
     private val item: ImageItem,
-    private val oldRaster: RasterSurface,
     private val oldRect: Rect,
-    private val newRaster: RasterSurface,
+    private val oldOrientation: Int,
     private val newRect: Rect,
+    private val newOrientation: Int,
 ) : Command {
     override fun redo() {
-        item.raster = newRaster
         item.rect = newRect
+        item.orientation = newOrientation
     }
 
     override fun undo() {
-        item.raster = oldRaster
         item.rect = oldRect
+        item.orientation = oldOrientation
     }
 }
 

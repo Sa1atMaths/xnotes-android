@@ -11,6 +11,7 @@ import android.os.Build
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.pal.BlendMode
 import com.xnotes.core.pal.FillRule
@@ -236,6 +237,27 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         canvas.drawBitmap(bmp, srcRect, destRect, rasterBlendPaint)
     }
 
+    // Decode the source only to the destination's device-pixel size (capped, never upscaled past the
+    // source) so a huge photo never fully decodes; the quarter turn is applied as a canvas rotation
+    // about the destination centre, the rect already carrying the rotated (w/h-swapped) box.
+    override fun drawImage(image: ImageData, dest: Rect, orientation: Int) {
+        if (dest.w <= 0.0 || dest.h <= 0.0) return
+        val devW = (dest.w * scaleX).toInt()
+        val devH = (dest.h * scaleY).toInt()
+        val o = ((orientation % 360) + 360) % 360
+        val turned = o == 90 || o == 270
+        val reqW = (if (turned) devH else devW).coerceIn(1, DECODE_CAP_PX)
+        val reqH = (if (turned) devW else devH).coerceIn(1, DECODE_CAP_PX)
+        val bmp = ImageDecoder.decodeSampled(image.bytes, reqW, reqH) ?: return
+        val uw = (if (turned) dest.h else dest.w).toFloat()
+        val uh = (if (turned) dest.w else dest.h).toFloat()
+        canvas.save()
+        canvas.translate(((dest.left + dest.right) / 2.0).toFloat(), ((dest.top + dest.bottom) / 2.0).toFloat())
+        if (o != 0) canvas.rotate(o.toFloat())
+        canvas.drawBitmap(bmp, null, RectF(-uw / 2f, -uh / 2f, uw / 2f, uh / 2f), bitmapPaint)
+        canvas.restore()
+    }
+
     override fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags) {
         if (text.isEmpty()) return
         val paint = AndroidText.textPaint(font, color.toArgb())
@@ -275,5 +297,10 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         for (i in 1 until points.size) path.lineTo(points[i].x.toFloat(), points[i].y.toFloat())
         if (close) path.close()
         return path
+    }
+
+    companion object {
+        /** Long-edge cap (device px) for an on-screen image decode, so extreme zoom can't OOM. */
+        private const val DECODE_CAP_PX = 4096
     }
 }

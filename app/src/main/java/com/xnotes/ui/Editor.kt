@@ -26,6 +26,7 @@ import com.xnotes.core.history.History
 import com.xnotes.core.model.Bookmark
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.Page
@@ -403,7 +404,7 @@ class Editor(context: Context) {
     fun copySelection() = controller.copySelection()
     fun cutSelection() = controller.cutSelection()
     fun duplicateSelection() = controller.duplicateSelection()
-    fun rotateSelectedImage() = controller.rotateSelectedImage { imageCodec.rotate90(it) }
+    fun rotateSelectedImage() = controller.rotateSelectedImage()
     fun dismissSelectionMenu() { selectionMenu = null }
     fun dismissContextMenu() { contextMenu = null }
     fun dismissScreenshot() = controller.clearScreenshot()
@@ -643,8 +644,8 @@ class Editor(context: Context) {
 
     /** Insert an image, centred on [atContent] (or on the current page when null). */
     fun insertImageAt(bytes: ByteArray, atContent: com.xnotes.core.geometry.Pt?) {
-        val raster = imageCodec.decode(bytes)
-        if (raster == null) {
+        val size = imageCodec.probe(bytes)
+        if (size == null || size.width <= 0 || size.height <= 0) {
             message = "Could not read the image."
             return
         }
@@ -654,15 +655,15 @@ class Editor(context: Context) {
         val pr = state.pageRects.getOrNull(index)
         val maxW = page.width * 0.6
         val maxH = page.height * 0.6
-        val scale = minOf(1.0, maxW / raster.width, maxH / raster.height)
-        val w = raster.width * scale
-        val h = raster.height * scale
+        val scale = minOf(1.0, maxW / size.width, maxH / size.height)
+        val w = size.width * scale
+        val h = size.height * scale
         val rect = if (atContent != null && pr != null) {
             Rect((atContent.x - pr.left - w / 2).coerceIn(0.0, page.width - w), (atContent.y - pr.top - h / 2).coerceIn(0.0, page.height - h), w, h)
         } else {
             Rect((page.width - w) / 2.0, (page.height - h) / 2.0, w, h)
         }
-        val item = ImageItem(raster, rect)
+        val item = ImageItem(ImageData(bytes, size.width, size.height), rect)
         page.items.add(item)
         state.appendToCache(page, item)
         history.push(AddItem(page, item))

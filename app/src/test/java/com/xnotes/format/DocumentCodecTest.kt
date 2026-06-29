@@ -1,7 +1,7 @@
 package com.xnotes.format
 
 import com.xnotes.core.FakeImageCodec
-import com.xnotes.core.FakeRasterSurface
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.FakeTextMeasurer
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
@@ -51,7 +51,7 @@ class DocumentCodecTest {
                 mutableListOf(Sample(10.0, 20.0, 0.5), Sample(30.0, 40.0, 0.9)),
             ),
         )
-        page.items.add(ImageItem(FakeRasterSurface(64, 48), Rect(5.0, 6.0, 64.0, 48.0)))
+        page.items.add(ImageItem(ImageData(byteArrayOf(1, 2, 3, 4), 64, 48), Rect(5.0, 6.0, 64.0, 48.0)))
         page.items.add(TextItem(Pt(100.0, 110.0), width = 250.0, text = "hello\nworld", rgba = Rgba(236, 236, 236, 255), pointSize = 13.0, measurer = FakeTextMeasurer()))
         page.items.add(ShapeItem(ShapeKind.RECTANGLE, Pt(0.0, 0.0), Pt(50.0, 30.0), Rgba(255, 92, 92, 255), 3.0, Rgba(255, 92, 92, 64)))
         doc.pages.add(page)
@@ -89,7 +89,7 @@ class DocumentCodecTest {
 
     @Test fun manifestIsStoredAndDeflatedCorrectly() {
         val doc = Document.blank(count = 1)
-        doc.pages[0].items.add(ImageItem(FakeRasterSurface(10, 10), Rect(0.0, 0.0, 10.0, 10.0)))
+        doc.pages[0].items.add(ImageItem(ImageData(byteArrayOf(1, 2, 3, 4), 10, 10), Rect(0.0, 0.0, 10.0, 10.0)))
         val out = ByteArrayOutputStream()
         codec.write(doc, out)
 

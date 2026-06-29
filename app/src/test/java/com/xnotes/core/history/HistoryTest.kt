@@ -1,6 +1,6 @@
 package com.xnotes.core.history
 
-import com.xnotes.core.FakeRasterSurface
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Document
@@ -49,7 +49,7 @@ class HistoryTest {
     }
 
     @Test fun moveItemsRoundTrip() {
-        val img = ImageItem(FakeRasterSurface(10, 10), Rect(0.0, 0.0, 10.0, 10.0))
+        val img = ImageItem(ImageData(ByteArray(0), 10, 10), Rect(0.0, 0.0, 10.0, 10.0))
         val cmd = MoveItems(listOf(img), 5.0, 7.0)
         // simulate: the gesture already moved the item, then we push the command
         img.translate(5.0, 7.0)
@@ -60,7 +60,7 @@ class HistoryTest {
     }
 
     @Test fun resizeItemRoundTrip() {
-        val img = ImageItem(FakeRasterSurface(10, 10), Rect(20.0, 20.0, 40.0, 40.0))
+        val img = ImageItem(ImageData(ByteArray(0), 10, 10), Rect(20.0, 20.0, 40.0, 40.0))
         val cmd = ResizeItem(img, RectHandle(Rect(0.0, 0.0, 10.0, 10.0)), RectHandle(Rect(20.0, 20.0, 40.0, 40.0)))
         cmd.undo()
         assertEquals(Rect(0.0, 0.0, 10.0, 10.0), img.rect)

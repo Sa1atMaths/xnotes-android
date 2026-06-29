@@ -5,6 +5,7 @@ import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Bookmark
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Document
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.Page
@@ -66,7 +67,7 @@ class DocumentCodec(
                     is Stroke -> strokeToJson(item)
                     is ImageItem -> {
                         val name = "assets/image-%03d.png".format(imageIndex++)
-                        assets.add(name to imageCodec.encodePng(item.raster))
+                        assets.add(name to item.image.bytes)
                         imageToJson(item, name)
                     }
                     is TextItem -> textToJson(item)
@@ -237,11 +238,17 @@ class DocumentCodec(
         return obj
     }
 
-    private fun imageToJson(item: ImageItem, assetName: String): JSONObject =
-        JSONObject()
+    private fun imageToJson(item: ImageItem, assetName: String): JSONObject {
+        val o = JSONObject()
             .put("kind", ImageItem.KIND)
             .put("asset", assetName)
             .put("rect", JSONArray().put(item.rect.x).put(item.rect.y).put(item.rect.w).put(item.rect.h))
+            .put("src_w", item.image.width)
+            .put("src_h", item.image.height)
+        // Additive field: written only when rotated, so older readers stay compatible.
+        if (item.orientation != 0) o.put("orientation", item.orientation)
+        return o
+    }
 
     private fun textToJson(t: TextItem): JSONObject {
         val o = JSONObject()
@@ -328,9 +335,16 @@ class DocumentCodec(
     private fun parseImage(o: JSONObject, entries: Map<String, ByteArray>): ImageItem? {
         val asset = o.optString("asset").ifEmpty { return null }
         val bytes = entries[asset] ?: return null
-        val raster = imageCodec.decode(bytes) ?: return null
-        val rect = readRect(o.optJSONArray("rect")) ?: Rect(0.0, 0.0, raster.width.toDouble(), raster.height.toDouble())
-        return ImageItem(raster, rect)
+        var w = o.optInt("src_w", 0)
+        var h = o.optInt("src_h", 0)
+        if (w <= 0 || h <= 0) {
+            // Legacy notes (and any without stored dims): read the native size without decoding pixels.
+            val probed = imageCodec.probe(bytes) ?: return null
+            w = probed.width
+            h = probed.height
+        }
+        val rect = readRect(o.optJSONArray("rect")) ?: Rect(0.0, 0.0, w.toDouble(), h.toDouble())
+        return ImageItem(ImageData(bytes, w, h), rect, o.optInt("orientation", 0))
     }
 
     private fun parseText(o: JSONObject): TextItem {

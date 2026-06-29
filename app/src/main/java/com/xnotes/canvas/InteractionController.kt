@@ -43,7 +43,6 @@ import com.xnotes.core.pal.BlendMode
 import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
-import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.pal.TextMeasurer
 import com.xnotes.core.stroke.RecognizedShape
@@ -1921,21 +1920,21 @@ class InteractionController(
     }
 
     /**
-     * Rotate the single selected image a quarter turn clockwise. [rotate90] supplies the
-     * platform pixel rotation; the rect's width/height swap about its centre. The image is
-     * lifted (drawn live), so a render shows it at once and it re-bakes into the cache on
-     * deselect — no manual cache repair here.
+     * Rotate the single selected image a quarter turn clockwise: the stored orientation advances and
+     * the rect's width/height swap about its centre. The source bytes are untouched, so rotation is
+     * lossless. The image is lifted (drawn live), so a render shows it at once and it re-bakes into the
+     * cache on deselect, no manual cache repair here.
      */
-    fun rotateSelectedImage(rotate90: (RasterSurface) -> RasterSurface) {
+    fun rotateSelectedImage() {
         val item = selection.singleOrNull()?.item as? ImageItem ?: return
-        val oldRaster = item.raster
         val oldRect = item.rect
-        val newRaster = rotate90(oldRaster)
+        val oldOrientation = item.orientation
         val c = oldRect.center
         val newRect = Rect(c.x - oldRect.h / 2.0, c.y - oldRect.w / 2.0, oldRect.h, oldRect.w)
-        item.raster = newRaster
+        val newOrientation = (item.orientation + 90) % 360
         item.rect = newRect
-        history.push(RotateImage(item, oldRaster, oldRect, newRaster, newRect))
+        item.orientation = newOrientation
+        history.push(RotateImage(item, oldRect, oldOrientation, newRect, newOrientation))
         state.document.dirty = true
         refreshSelectionMenu()
         onContentChanged()

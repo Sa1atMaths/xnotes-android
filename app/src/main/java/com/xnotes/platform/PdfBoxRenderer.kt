@@ -8,6 +8,7 @@ import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
+import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.pal.FillRule
 import com.xnotes.core.pal.FontSpec
@@ -152,6 +153,19 @@ class PdfBoxRenderer(
         placeBitmap(bmp, dest, multiply = false)
     }
 
+    // Inserted images embed as XObjects: decode the source (capped for file size/memory), apply the
+    // stored quarter turn to the pixels, then place it like any other bitmap.
+    override fun drawImage(image: ImageData, dest: Rect, orientation: Int) {
+        if (dest.w <= 0.0 || dest.h <= 0.0) return
+        var bmp = ImageDecoder.decodeSampled(image.bytes, EXPORT_CAP_PX, EXPORT_CAP_PX) ?: return
+        val o = ((orientation % 360) + 360) % 360
+        if (o != 0) {
+            val m = android.graphics.Matrix().apply { postRotate(o.toFloat()) }
+            bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        }
+        placeBitmap(bmp, dest, multiply = false)
+    }
+
     /**
      * Place a pre-rendered item bitmap (an effect/text item the exporter rasterized) at its content
      * rect. [multiply] composites it with the page beneath via the Multiply blend mode — used for the
@@ -235,5 +249,10 @@ class PdfBoxRenderer(
             strokingAlphaConstant = a
             if (blend != null) blendMode = blend
         }
+    }
+
+    companion object {
+        /** Long-edge cap (px) for an exported image XObject: keeps detail without ballooning the PDF. */
+        private const val EXPORT_CAP_PX = 4096
     }
 }
