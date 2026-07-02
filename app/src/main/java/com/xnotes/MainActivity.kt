@@ -21,6 +21,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -534,9 +537,12 @@ private fun EditorScreen(
     // In fullscreen the window runs edge to edge and the swipe-in system bars are transient, so
     // zero the content insets: otherwise their inset animates 0 -> N -> 0 and resizes the canvas,
     // forcing a re-render every time the bars hide. Non-fullscreen keeps the normal bar insets.
-    val contentInsets = if (fullscreen) WindowInsets(0, 0, 0, 0) else WindowInsets.systemBars
+    // The IME inset joins both cases so a DOCKED keyboard lifts the content (the bottom format
+    // bar rides right above it); a floating keyboard reports no inset and the bar stays at the
+    // bottom. Insets are consumed below so inner imePadding fields don't pad a second time.
+    val contentInsets = if (fullscreen) WindowInsets.ime else WindowInsets.systemBars.union(WindowInsets.ime)
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }, contentWindowInsets = contentInsets) { inner ->
-        Box(modifier = Modifier.fillMaxSize().padding(inner)) {
+        Box(modifier = Modifier.fillMaxSize().padding(inner).consumeWindowInsets(contentInsets)) {
             // BASE LAYER: backstage is the root of the stack — always present underneath.
             com.xnotes.ui.Backstage(
                 editor = editor,
