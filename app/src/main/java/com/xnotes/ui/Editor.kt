@@ -410,15 +410,88 @@ class Editor(context: Context) {
     var flowEditingActive by mutableStateOf(false)
         private set
 
-    /** Paste the clipboard's text at the flow caret (plain text; markdown parsing lands later). */
+    /** The clipboard's text content, or null. */
+    private fun clipboardText(): String? {
+        val cm = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager ?: return null
+        val clip = cm.primaryClip?.takeIf { it.itemCount > 0 } ?: return null
+        return clip.getItemAt(0).coerceToText(appContext)?.toString()?.takeIf { it.isNotEmpty() }
+    }
+
+    fun clipboardHasText(): Boolean = clipboardText() != null
+
+    /**
+     * Paste the clipboard's text at the flow caret. Text that reads as markdown is
+     * parsed to rich paragraphs (fences become code lines); anything else lands as
+     * plain text, so literal stars and hashes in prose survive.
+     */
     fun pasteTextAtCaret() {
         if (!flowText.active) return
-        val cm = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-            as? android.content.ClipboardManager ?: return
-        val clip = cm.primaryClip?.takeIf { it.itemCount > 0 } ?: return
-        val text = clip.getItemAt(0).coerceToText(appContext)?.toString().orEmpty()
-        if (text.isEmpty()) return
-        flowText.replaceExternal(flowText.selection, text)
+        val text = clipboardText() ?: return
+        if (com.xnotes.core.text.MarkdownParser.looksLikeMarkdown(text)) {
+            insertFlowParagraphs(com.xnotes.core.text.MarkdownParser.parse(text, flowDefaultSizePt()))
+        } else {
+            flowText.replaceExternal(flowText.selection, text)
+        }
+    }
+
+    /** Paste the clipboard's text as a code block (one code paragraph per line). */
+    fun pasteAsCodeAtCaret() {
+        if (!flowText.active) return
+        val text = clipboardText() ?: return
+        insertFlowParagraphs(
+            text.split('\n').map { line ->
+                Paragraph(
+                    if (line.isEmpty()) mutableListOf() else mutableListOf(com.xnotes.core.text.Run(line)),
+                    codeLang = "",
+                )
+            },
+        )
+    }
+
+    /** Long-press menu paste: arm the text tool, place the caret at [content], then paste. */
+    fun pasteTextAt(content: com.xnotes.core.geometry.Pt, asCode: Boolean) {
+        selectTool(Tool.TEXT)
+        flowText.tapAt(content)
+        if (asCode) pasteAsCodeAtCaret() else pasteTextAtCaret()
+    }
+
+    /** Splice ready-made paragraphs at the caret as one undo step (rich paste). */
+    private fun insertFlowParagraphs(paras: List<Paragraph>) {
+        if (paras.isEmpty()) return
+        flowText.flushBurst()
+        val flow = state.document.flow
+        val ed = FlowEditor(flow)
+        val cmds = mutableListOf<Command>()
+        val sel = flowText.selection.normalized()
+        var p = sel.start
+        if (!sel.collapsed) {
+            val (c, np) = ed.replaceRange(sel, "")
+            c?.let(cmds::add)
+            p = np
+        }
+        val caretPara = flow.paragraphs.getOrNull(p.para)
+        val lastIndex: Int
+        when {
+            caretPara == null -> {
+                cmds.add(ed.insertParagraphs(0, paras))
+                lastIndex = paras.size - 1
+            }
+            caretPara.length == 0 && caretPara.isDefaultStyle() -> {
+                // Pasting on an empty plain line replaces it, so no stray blank stays above.
+                cmds.add(ed.replaceParagraphs(p.para, 1, paras))
+                lastIndex = p.para + paras.size - 1
+            }
+            else -> {
+                val (c2, _) = ed.replaceRange(FlowRange.caret(p), "\n")
+                c2?.let(cmds::add)
+                cmds.add(ed.insertParagraphs(p.para + 1, paras))
+                lastIndex = p.para + paras.size
+            }
+        }
+        val cmd = if (cmds.size == 1) cmds[0] else CompositeCommand(cmds)
+        val caretTo = FlowPos(lastIndex, flow.paragraphs.getOrNull(lastIndex)?.length ?: 0)
+        flowText.commitEdit(cmd, caretTo)
     }
 
     /**

@@ -214,6 +214,19 @@ class FlowTextController(
         }
     }
 
+    /** Place the caret from a programmatic point (menu paste): tap semantics, no gestures. */
+    fun tapAt(content: Pt) {
+        val (pi, local) = pagePointAt(content) ?: return
+        when (val hit = frame()?.hitTest(pi, local)) {
+            null -> Unit
+            is FlowHit.Caret ->
+                if (active) placeCaret(hit.pos) else startSession(FlowRange.caret(hit.pos))
+            is FlowHit.Checkbox ->
+                if (active) placeCaret(FlowPos(hit.paraIndex, 0)) else startSession(FlowRange.caret(FlowPos(hit.paraIndex, 0)))
+            FlowHit.BeyondEnd -> tapBeyondEnd(content)
+        }
+    }
+
     /** A tap below the flow end: fill the gap with empty lines so the caret lands there. */
     private fun tapBeyondEnd(content: Pt) {
         val (pi, local) = pagePointAt(content) ?: return

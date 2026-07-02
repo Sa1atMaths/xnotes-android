@@ -133,6 +133,14 @@ class FlowEditor(private val flow: TextFlow) {
         FlowSplice(flow, at.coerceIn(0, flow.paragraphs.size), emptyList(), paras.toList())
             .also { it.redo() }
 
+    /** Replace [removeCount] paragraphs at [at] with [paras] (paste over an empty line). */
+    fun replaceParagraphs(at: Int, removeCount: Int, paras: List<Paragraph>): Command {
+        val start = at.coerceIn(0, flow.paragraphs.size)
+        val n = removeCount.coerceIn(0, flow.paragraphs.size - start)
+        val removed = flow.paragraphs.subList(start, start + n).toList()
+        return FlowSplice(flow, start, removed, paras.toList()).also { it.redo() }
+    }
+
     /** Append [count] empty default paragraphs (the tap-below-the-text fill). */
     fun appendEmptyLines(count: Int): Pair<Command, FlowPos> {
         val paras = List(count.coerceAtLeast(1)) { Paragraph() }

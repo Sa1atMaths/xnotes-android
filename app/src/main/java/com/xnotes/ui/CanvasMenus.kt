@@ -141,6 +141,14 @@ fun LongPressMenu(editor: Editor, onInsertImageAt: (com.xnotes.core.geometry.Pt)
                     editor.pasteClipboardImageAt(target.content); editor.dismissContextMenu()
                 })
             }
+            if (editor.clipboardHasText()) {
+                DropdownMenuItem(text = { Text("Paste text") }, onClick = {
+                    editor.pasteTextAt(target.content, asCode = false); editor.dismissContextMenu()
+                })
+                DropdownMenuItem(text = { Text("Paste as code") }, onClick = {
+                    editor.pasteTextAt(target.content, asCode = true); editor.dismissContextMenu()
+                })
+            }
             DropdownMenuItem(text = { Text("Insert image…") }, onClick = {
                 onInsertImageAt(target.content); editor.dismissContextMenu()
             })
