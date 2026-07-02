@@ -14,8 +14,20 @@ class Seg(val text: String, val x: Double, val font: FontSpec, val style: CharSt
 /** A decorated span of one line (underline/strike/highlight/inline-code chip), page-local x0..x1. */
 class Deco(val x0: Double, val x1: Double, val font: FontSpec, val style: CharStyle)
 
-/** The bullet/number/checkbox marker of a list paragraph's first line; [rect] is the gutter box. */
-class Marker(val kind: ListKind, val checked: Boolean, val ordinal: Int, val rect: Rect)
+/**
+ * The bullet/number/checkbox marker of a list paragraph's first line; [rect] is
+ * the gutter box. Ordered lists carry their pre-measured label ([text] drawn at
+ * [textX] on the line baseline) so painting needs no measurer.
+ */
+class Marker(
+    val kind: ListKind,
+    val checked: Boolean,
+    val ordinal: Int,
+    val rect: Rect,
+    val text: String? = null,
+    val textX: Double = 0.0,
+    val font: FontSpec = FontSpec(TextFlow.DEFAULT_SIZE_PT),
+)
 
 /**
  * One laid-out line: chars [startChar, endChar) of paragraph [paraIndex], placed

@@ -253,7 +253,7 @@ class FlowLayout(private val measurer: TextMeasurer) {
                     }
                 }
                 val placed = placeLine(
-                    para, paraIndex, shapeOf(flow, para), bl, rect, indentPx, avail, y,
+                    flow, para, paraIndex, shapeOf(flow, para), bl, rect, indentPx, avail, y,
                     lastLineOfPara = li == lines.lastIndex,
                     firstLineOfPara = firstLine && bl.startChar == 0,
                     ordinal = ordinal,
@@ -270,6 +270,7 @@ class FlowLayout(private val measurer: TextMeasurer) {
     }
 
     private fun placeLine(
+        flow: TextFlow,
         para: Paragraph,
         paraIndex: Int,
         shape: ParaShape,
@@ -334,7 +335,15 @@ class FlowLayout(private val measurer: TextMeasurer) {
         }
         val marker = if (firstLineOfPara && para.list != ListKind.NONE) {
             val gutterLeft = contentRect.left + para.indent * INDENT_STEP_PX
-            Marker(para.list, para.checked, ordinal, Rect(gutterLeft, y, MARKER_GUTTER_PX, bl.height))
+            val gutter = Rect(gutterLeft, y, MARKER_GUTTER_PX, bl.height)
+            val font = FontSpec(flow.defaultSizePt, flow.defaultFace)
+            if (para.list == ListKind.ORDERED) {
+                val label = "$ordinal."
+                val labelW = measurer.advances(label, font).sum()
+                Marker(para.list, para.checked, ordinal, gutter, label, gutter.right - MARKER_GAP - labelW, font)
+            } else {
+                Marker(para.list, para.checked, ordinal, gutter, font = font)
+            }
         } else {
             null
         }
@@ -374,6 +383,9 @@ class FlowLayout(private val measurer: TextMeasurer) {
 
         /** Gutter reserved left of list paragraphs for bullet/number/checkbox markers. */
         const val MARKER_GUTTER_PX = 40.0
+
+        /** Gap between a marker's right edge and the paragraph text. */
+        const val MARKER_GAP = 10.0
 
         /** Layout never wraps narrower than this, however extreme the margins. */
         const val MIN_LINE_WIDTH = 20.0
