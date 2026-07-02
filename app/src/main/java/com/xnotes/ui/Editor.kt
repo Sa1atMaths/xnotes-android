@@ -382,9 +382,26 @@ class Editor(context: Context) {
         requestRender = { onRender() },
     ).also { controller.flowText = it }
 
+    private val flowInput = com.xnotes.canvas.FlowInput(view, flowText, { state.document.flow })
+        .also {
+            view.flowInput = it
+            it.onPaste = { pasteTextAtCaret() }
+        }
+
     /** True while the inline text caret session is live (drives the bottom format bar/IME). */
     var flowEditingActive by mutableStateOf(false)
         private set
+
+    /** Paste the clipboard's text at the flow caret (plain text; markdown parsing lands later). */
+    fun pasteTextAtCaret() {
+        if (!flowText.active) return
+        val cm = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager ?: return
+        val clip = cm.primaryClip?.takeIf { it.itemCount > 0 } ?: return
+        val text = clip.getItemAt(0).coerceToText(appContext)?.toString().orEmpty()
+        if (text.isEmpty()) return
+        flowText.replaceExternal(flowText.selection, text)
+    }
 
     /**
      * A flow mutation landed. While the session is live the flow is lifted out of the
@@ -400,7 +417,12 @@ class Editor(context: Context) {
 
     private fun onFlowSessionChanged(active: Boolean) {
         flowEditingActive = active
-        if (!active) refreshContent()
+        if (active) {
+            flowInput.startSession()
+        } else {
+            flowInput.endSession()
+            refreshContent()
+        }
         onRender()
     }
 
@@ -2337,6 +2359,7 @@ class Editor(context: Context) {
         // page to bare paper for a frame (the undo/redo flicker). Only AddPage/DeletePage change the
         // page set, so relayout (which re-renders the sharp viewport) is gated on that.
         state.repairAllInkInPlace()
+        if (flowText.active) flowInput.reconcile() // undone/redone text must reach the IME mirror
         state.document.dirty = true
         state.clampScroll()
         refreshContent()

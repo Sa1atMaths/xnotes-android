@@ -75,6 +75,23 @@ class CanvasView @JvmOverloads constructor(
     /** Stylus side-button presses (generic-motion stream), for pens that don't put it in the touch buttonState. */
     var genericMotion: ((MotionEvent) -> Unit)? = null
 
+    /** The inline flow text input surface (IME mirror), installed by the Editor. */
+    var flowInput: FlowInput? = null
+
+    /** Hardware keys arriving while this view holds focus (flow text sessions), fed to the Editor. */
+    var onKey: ((android.view.KeyEvent) -> Boolean)? = null
+
+    override fun onCheckIsTextEditor(): Boolean = flowInput?.sessionActive == true
+
+    override fun onCreateInputConnection(outAttrs: android.view.inputmethod.EditorInfo): android.view.inputmethod.InputConnection? {
+        val input = flowInput
+        if (input == null || !input.sessionActive) return null
+        return input.createInputConnection(outAttrs)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean =
+        onKey?.invoke(event) == true || super.onKeyDown(keyCode, event)
+
     /** Transparent debug HUD (frame rate / cache / heap), toggled by a four-finger tap. */
     val debugOverlay = DebugOverlay()
 

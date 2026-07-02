@@ -55,6 +55,9 @@ class FlowTextController(
     /** Installed by the input layer to mirror caret/selection moves to the IME. */
     var imeSync: () -> Unit = {}
 
+    /** Installed by the input layer: a committed edit landed (reconcile the IME mirror). */
+    var onEdited: () -> Unit = {}
+
     private val handler = Handler(Looper.getMainLooper())
     private val idleFlush = Runnable { flushBurst() }
 
@@ -236,6 +239,17 @@ class FlowTextController(
         return caret
     }
 
+    /**
+     * Replace [range] from OUTSIDE the IME mirror (menu paste, programmatic edits):
+     * always its own undo step through [commitEdit], so the mirror reconciles.
+     */
+    fun replaceExternal(range: FlowRange, text: String, style: CharStyle? = null): FlowPos {
+        flushBurst()
+        val (cmd, caret) = FlowEditor(flow()).replaceRange(range.normalized(), text, style)
+        commitEdit(cmd, caret)
+        return caret
+    }
+
     /** Apply an already-built (and applied) command from the format bar / menus. */
     fun commitEdit(cmd: Command?, caretTo: FlowPos?) {
         if (cmd == null) {
@@ -245,10 +259,8 @@ class FlowTextController(
         onChanged(active)
         val extras = autoAppendPages()
         history.push(if (extras.isEmpty()) cmd else CompositeCommand(listOf(cmd) + extras))
-        caretTo?.let {
-            selection = FlowRange.caret(it)
-            imeSync()
-        }
+        caretTo?.let { selection = FlowRange.caret(it) }
+        onEdited()
         onFlushed()
         ensureCaretVisible()
         requestRender()
