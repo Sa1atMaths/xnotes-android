@@ -380,7 +380,7 @@ class Editor(context: Context) {
         frame = { publishedFlow?.frame },
         slotHeight = { flowLayout.defaultSlotHeight(state.document.flow) },
         onChanged = { live -> onFlowChanged(live) },
-        onFlushed = { refreshContent() },
+        onFlushed = { onFlowFlushed() },
         onSessionChanged = { active -> onFlowSessionChanged(active) },
         onViewChanged = { refreshView() },
         requestRender = { onRender() },
@@ -417,6 +417,18 @@ class Editor(context: Context) {
         state.document.dirty = true
         republishFlow(invalidate = !live)
         if (live) onRender() else refreshContent()
+    }
+
+    /** A burst landed: while presenting, repaint the stream's flow pages so it catches up. */
+    private fun onFlowFlushed() {
+        if (state.presentationActive) {
+            publishedFlow?.frame?.pagesWithLines()?.forEach { i ->
+                publishedPageList.getOrNull(i)?.let { p ->
+                    state.repairRegion(p, Rect(0.0, 0.0, p.width, p.height))
+                }
+            }
+        }
+        refreshContent()
     }
 
     private fun onFlowSessionChanged(active: Boolean) {
