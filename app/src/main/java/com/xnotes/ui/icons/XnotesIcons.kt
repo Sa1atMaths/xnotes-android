@@ -60,7 +60,12 @@ object XnotesIcons {
         rect(3.0, 14.0, 7.0, 7.0),
         circle(17.5, 17.5, 3.5),
     )
-    val text = icon("M4 7V4h16v3", "M9 20h6", "M12 4v16")
+    // The inline text tool: a caret (I-beam, Lucide "text-cursor"), not the old text-box "T".
+    val text = icon(
+        "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
+        "M7 22h1a4 4 0 0 0 4-4v-1",
+        "M7 2h1a4 4 0 0 1 4 4v1",
+    )
     val image = icon(rect(3.0, 3.0, 18.0, 18.0), circle(8.5, 8.5, 1.5), "M21 15l-5-5L5 21")
     // The screenshot tool: plain scissors (Feather "scissors"), the same glyph as Cut.
     val scissors = icon(circle(6.0, 6.0, 3.0), circle(6.0, 18.0, 3.0), "M20 4 8.12 15.88", "M14.47 14.48 20 20", "M8.12 8.12 12 12")

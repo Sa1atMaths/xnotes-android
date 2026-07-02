@@ -65,7 +65,7 @@ import kotlin.math.sin
 
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode {
-    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, TRANSFORM, PAN, PINCH, TEXT_DRAG,
+    IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, TRANSFORM, PAN, PINCH, FLOW_TEXT,
     RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE,
 }
 
@@ -123,6 +123,9 @@ class InteractionController(
 ) {
     /** Whether the system clipboard currently holds an image (provided by the host). */
     var clipboardHasImage: () -> Boolean = { false }
+
+    /** The inline-flow caret controller; TEXT-tool gestures route here (installed by the Editor). */
+    var flowText: FlowTextController? = null
 
     /** Host hook for tap-to-open PDF links. A finger tap landed on page [pageIndex] at [pageLocal]
      *  (page-local content px). Returns true if it hit a known link and was handled, so the tap is
@@ -325,9 +328,6 @@ class InteractionController(
         private set
 
     // TEXT DRAG-CREATE (drag a rectangle to size a new box; a tap makes a default one)
-    private var textDragStart = Pt.ZERO // content space
-    private var textDragRect: Rect? = null // content space, for the live preview
-    private var textDragPageIndex = -1
 
     init {
         state.isLiftedItem = { item -> item === editingText || selection.any { it.item === item } }
@@ -358,6 +358,7 @@ class InteractionController(
         if (t == Tool.SCREENSHOT) toolBeforeScreenshot = tool
         if (t == Tool.TEXT) toolBeforeText = tool
         commitTextEdit()
+        if (t != Tool.TEXT) flowText?.endSession()
         abortGesture()
         clearSelection()
         clearScreenshot()
@@ -604,11 +605,10 @@ class InteractionController(
             effectiveTool == Tool.LASSO -> beginLasso(content)
             effectiveTool == Tool.SCREENSHOT -> beginScreenshot(content)
             effectiveTool == Tool.SHAPE -> beginShape(content)
-            effectiveTool == Tool.TEXT -> beginTextGesture(content)
+            effectiveTool == Tool.TEXT -> beginTextGesture(content, Pt(vx, vy))
             else -> Unit
         }
-        // Long-press grab/paste-menu is suppressed mid text-drag so a hold-then-drag still sizes a box.
-        if (mode != PointerMode.TEXT_DRAG) armLongPress(Pt(vx, vy), content, toolType == MotionEvent.TOOL_TYPE_FINGER)
+        armLongPress(Pt(vx, vy), content, toolType == MotionEvent.TOOL_TYPE_FINGER)
     }
 
     private fun handlePointerDown(e: MotionEvent) {
@@ -651,7 +651,7 @@ class InteractionController(
             PointerMode.RESIZE -> extendResize(content)
             PointerMode.TRANSFORM -> extendTransform(content)
             PointerMode.SHAPE -> extendShape(content)
-            PointerMode.TEXT_DRAG -> extendTextDrag(content)
+            PointerMode.FLOW_TEXT -> flowText?.dragTo(content, Pt(vx, vy))
             else -> Unit
         }
     }
@@ -714,7 +714,10 @@ class InteractionController(
             PointerMode.RESIZE -> endResize()
             PointerMode.TRANSFORM -> endTransform()
             PointerMode.SHAPE -> endShape()
-            PointerMode.TEXT_DRAG -> endTextDrag(content)
+            PointerMode.FLOW_TEXT -> {
+                mode = PointerMode.IDLE
+                flowText?.release(content, Pt(e.getX(idx).toDouble(), e.getY(idx).toDouble()), e.eventTime)
+            }
             PointerMode.RULER_MOVE -> { mode = PointerMode.IDLE; requestRender() }
             PointerMode.RULER_TRANSFORM -> { mode = PointerMode.IDLE; requestRender() }
             PointerMode.RULER_ROTATE -> { mode = PointerMode.IDLE; requestRender() }
@@ -1519,61 +1522,28 @@ class InteractionController(
     // --- TEXT ---
 
     /**
-     * A press with the Text tool (and no edit already open). Tapping an existing box edits it;
-     * otherwise this begins a tap-or-drag to create a new one ([endTextDrag] decides which).
+     * A press with the Text tool (and no edit already open). Tapping an existing legacy
+     * box still edits it in place; anywhere else routes to the inline-flow caret
+     * (tap = place caret / toggle checkbox / fill empty lines, drag = select a range).
      */
-    private fun beginTextGesture(content: Pt) {
-        val pi = state.pageIndexAtContent(content) ?: return
-        val pr = state.pageRects[pi]
-        val local = Pt(content.x - pr.left, content.y - pr.top)
-        val page = state.document.pages[pi]
-        val existing = page.items.lastOrNull { it is TextItem && it.contains(local) } as? TextItem
-        if (existing != null) {
-            startEditing(existing, pi, isNew = false)
-            return
+    private fun beginTextGesture(content: Pt, viewport: Pt) {
+        val pi = state.pageIndexAtContent(content)
+        if (pi != null) {
+            val pr = state.pageRects[pi]
+            val local = Pt(content.x - pr.left, content.y - pr.top)
+            val page = state.document.pages[pi]
+            val existing = page.items.lastOrNull { it is TextItem && it.contains(local) } as? TextItem
+            if (existing != null) {
+                flowText?.endSession()
+                startEditing(existing, pi, isNew = false)
+                return
+            }
         }
         clearSelection()
-        mode = PointerMode.TEXT_DRAG
-        textDragPageIndex = pi
-        textDragStart = content
-        textDragRect = null
+        mode = PointerMode.FLOW_TEXT
+        flowText?.pressAt(content, viewport)
         requestRender()
     }
-
-    private fun extendTextDrag(content: Pt) {
-        textDragRect = Rect.fromPoints(textDragStart, content)
-        requestRender()
-    }
-
-    /** Finish a tap-or-drag: a real drag (either axis) sizes the box; a tap makes a default one. */
-    private fun endTextDrag(content: Pt) {
-        val pi = textDragPageIndex
-        textDragRect = null
-        mode = PointerMode.IDLE
-        val pr = state.pageRects.getOrNull(pi) ?: return
-        val page = state.document.pages[pi]
-        val startLocal = Pt(textDragStart.x - pr.left, textDragStart.y - pr.top)
-        val rect = Rect.fromPoints(startLocal, Pt(content.x - pr.left, content.y - pr.top))
-        val draggedX = rect.w * state.zoom >= TEXT_DRAG_SLOP
-        val draggedY = rect.h * state.zoom >= TEXT_DRAG_SLOP
-        val item = if (draggedX || draggedY) {
-            // Use the drawn rectangle for whichever axis was actually dragged.
-            val left = if (draggedX) rect.left else startLocal.x
-            val maxW = (page.width - left - 8.0).coerceAtLeast(40.0)
-            val w = if (draggedX) rect.w.coerceIn(40.0, maxW) else defaultTextWidth(page.width, left)
-            val h = if (draggedY) rect.h else 0.0
-            newTextItem(Pt(left, rect.top), w, h)
-        } else {
-            newTextItem(startLocal, defaultTextWidth(page.width, startLocal.x), 0.0)
-        }
-        startEditing(item, pi, isNew = true)
-    }
-
-    private fun defaultTextWidth(pageWidth: Double, left: Double): Double =
-        (pageWidth - left - 14.0).coerceIn(80.0, 300.0)
-
-    private fun newTextItem(pos: Pt, width: Double, height: Double): TextItem =
-        TextItem(pos, width, height, "", inkColor, textPointSize, textFace, textMeasurer)
 
     /** Open the in-place editor on [item] (a new draft, or an existing box being re-edited). */
     private fun startEditing(item: TextItem, pi: Int, isNew: Boolean) {
@@ -1972,6 +1942,12 @@ class InteractionController(
     }
 
     fun escape() {
+        val flow = flowText
+        if (flow != null && flow.active) {
+            flow.endSession()
+            requestRender()
+            return
+        }
         commitTextEdit(restoreTool = true)
         clearSelection()
         requestRender()
@@ -2351,7 +2327,6 @@ class InteractionController(
         lassoPoints.clear()
         // Cancel an in-progress capture drag; a frozen capture (mode IDLE) survives.
         if (mode == PointerMode.SHOT) { screenshotRect = null; onScreenshotMenu(null) }
-        textDragRect = null
         if (mode == PointerMode.PINCH) {
             state.zoomingInProgress = false
             state.invalidateCachesForZoom()
@@ -2399,9 +2374,11 @@ class InteractionController(
 
             // Selection chrome.
             val accent = Pen(state.palette.accent, 1.3, cosmetic = true, dashed = true)
+            // Flow caret + selection highlight, under the selection chrome.
+            flowText?.drawOverlay(r)
+
             when {
                 mode == PointerMode.BAND -> bandRect?.let { r.strokeRect(it, accent) }
-                mode == PointerMode.TEXT_DRAG -> textDragRect?.let { r.strokeRect(it, accent) }
                 mode == PointerMode.LASSO_DRAW && lassoPoints.size >= 2 ->
                     r.strokePolyline(lassoPoints, Pen(state.palette.accent, 1.3, cosmetic = true))
                 selection.isNotEmpty() ->
@@ -2733,7 +2710,6 @@ class InteractionController(
         const val SHOT_MIN = 6.0
 
         /** Min drag (viewport px, either axis) for a Text-tool gesture to size a box rather than tap-create. */
-        const val TEXT_DRAG_SLOP = 14.0
 
         /** Breathing room (dp) kept around the editor caret when scrolling the page to keep it visible. */
         const val TEXT_CARET_MARGIN = 24.0

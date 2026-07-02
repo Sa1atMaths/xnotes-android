@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import com.xnotes.canvas.CanvasState
 import com.xnotes.canvas.CanvasView
 import com.xnotes.canvas.EditingField
+import com.xnotes.canvas.FlowTextController
 import com.xnotes.canvas.InitialView
 import com.xnotes.canvas.InteractionController
 import com.xnotes.canvas.TextBar
@@ -367,6 +368,41 @@ class Editor(context: Context) {
         onAddPageAtEnd = { addPageAtEnd() },
         onHaptic = { runCatching { view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } },
     )
+
+    val flowText: FlowTextController = FlowTextController(
+        state,
+        history,
+        flow = { state.document.flow },
+        frame = { publishedFlow?.frame },
+        slotHeight = { flowLayout.defaultSlotHeight(state.document.flow) },
+        onChanged = { live -> onFlowChanged(live) },
+        onFlushed = { refreshContent() },
+        onSessionChanged = { active -> onFlowSessionChanged(active) },
+        onViewChanged = { refreshView() },
+        requestRender = { onRender() },
+    ).also { controller.flowText = it }
+
+    /** True while the inline text caret session is live (drives the bottom format bar/IME). */
+    var flowEditingActive by mutableStateOf(false)
+        private set
+
+    /**
+     * A flow mutation landed. While the session is live the flow is lifted out of the
+     * caches, so keystrokes only republish the layout snapshot and repaint; everything
+     * else (checkbox taps, menu pastes, session-less edits) takes the full invalidate +
+     * refresh path so the baked layer and chrome follow.
+     */
+    private fun onFlowChanged(live: Boolean) {
+        state.document.dirty = true
+        republishFlow(invalidate = !live)
+        if (live) onRender() else refreshContent()
+    }
+
+    private fun onFlowSessionChanged(active: Boolean) {
+        flowEditingActive = active
+        if (!active) refreshContent()
+        onRender()
+    }
 
     val presentation = com.xnotes.presentation.PresentationController(
         state,
@@ -2189,6 +2225,7 @@ class Editor(context: Context) {
 
     private fun replaceDocument(doc: Document) {
         saveViewState() // remember the outgoing folder note's view before switching away
+        flowText.endSession() // flushes the typing burst so the autosave below carries it
         flushAutosave() // save the outgoing note if it was autosaving to the folder
         autosaveUri = null
         controller.commitTextEdit()
@@ -2277,12 +2314,14 @@ class Editor(context: Context) {
     // --- history ---
 
     fun undo() {
+        flowText.flushBurst() // the open typing burst is the first thing Ctrl+Z takes back
         val pagesBefore = state.document.pages.size
         history.undo()
         afterHistory(structural = state.document.pages.size != pagesBefore)
     }
 
     fun redo() {
+        flowText.flushBurst()
         val pagesBefore = state.document.pages.size
         history.redo()
         afterHistory(structural = state.document.pages.size != pagesBefore)
@@ -2291,6 +2330,9 @@ class Editor(context: Context) {
     private fun afterHistory(structural: Boolean) {
         controller.clearSelection()
         if (structural) state.relayout() // page add/remove shifts layout; page-keyed caches survive
+        // The in-place repaint below reads the published flow snapshot: republish it first
+        // so an undone/redone flow edit repaints at its post-history layout.
+        republishFlowIfStale()
         // Repair the ink caches in place rather than dropping them — dropping blanked every visible
         // page to bare paper for a frame (the undo/redo flicker). Only AddPage/DeletePage change the
         // page set, so relayout (which re-renders the sharp viewport) is gated on that.
