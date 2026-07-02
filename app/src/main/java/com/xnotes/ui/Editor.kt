@@ -770,6 +770,23 @@ class Editor(context: Context) {
     }
 
     /**
+     * Flow painters for a PDF export of [doc]: a private layout pass over its own pages
+     * (exports run off-thread and may target transient/subset documents, so the published
+     * on-screen snapshot is never reused). Pages foreign to [doc] paint nothing.
+     */
+    private fun flowExportHooks(doc: Document): com.xnotes.platform.PdfExporter.FlowExport {
+        if (doc.flow.isEmpty) return com.xnotes.platform.PdfExporter.FlowExport.NONE
+        val frame = FlowLayout(textMeasurer)
+            .layout(doc.flow, doc.pages.map { PageBox(it.width, it.height) }, doc.dpi)
+        val index = HashMap<Page, Int>(doc.pages.size * 2)
+        doc.pages.forEachIndexed { i, p -> index[p] = i }
+        return com.xnotes.platform.PdfExporter.FlowExport(
+            paint = { page, r, region -> index[page]?.let { FlowPainter.paintPage(r, frame, it, region) } },
+            bounds = { page -> index[page]?.let { frame.pageFlowBounds(it) } },
+        )
+    }
+
+    /**
      * Flatten the open note to a PDF written to [out], reporting per-page progress and
      * polling [isCancelled] so a long export can show a dialog and be aborted. The caller
      * runs this off the main thread; it throws on failure (no message side-effects) so the
@@ -791,6 +808,7 @@ class Editor(context: Context) {
                 { exportPaper(state.document, it) },
                 { page, r -> paintExportRuling(state.document, page, r) },
                 onProgress, isCancelled,
+                flow = flowExportHooks(state.document),
             )
         } finally {
             src?.close()
@@ -2160,6 +2178,7 @@ class Editor(context: Context) {
                 { exportPaper(doc, it) },
                 { page, r -> paintExportRuling(doc, page, r) },
                 onProgress, isCancelled,
+                flow = flowExportHooks(doc),
             )
         } finally {
             src?.close()
@@ -2509,6 +2528,8 @@ class Editor(context: Context) {
                 { exportPaper(sub, it) },
                 { page, r -> paintExportRuling(sub, page, r) },
                 onProgress, isCancelled,
+                // The subset shares the open note's page objects, so its flow lines map through.
+                flow = flowExportHooks(state.document),
             )
         } finally {
             src?.close()

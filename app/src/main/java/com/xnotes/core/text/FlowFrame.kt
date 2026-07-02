@@ -106,6 +106,15 @@ class FlowFrame(
 
     fun pagesWithLines(): Set<Int> = pages.indices.filterTo(mutableSetOf()) { pages[it].lines.isNotEmpty() }
 
+    /** The page-local extent of the flow on [pageIndex] (padded for chips/markers), or null. */
+    fun pageFlowBounds(pageIndex: Int): Rect? {
+        val page = pages.getOrNull(pageIndex) ?: return null
+        val first = page.lines.firstOrNull() ?: return null
+        val last = page.lines.last()
+        val pad = FlowPainter.CODE_PAD
+        return Rect(page.contentRect.left - pad, first.top, page.contentRect.w + 2 * pad, last.bottom - first.top)
+    }
+
     /** (page index, bottom y) of the last placed line, or null when nothing is placed. */
     fun lastLineEnd(): Pair<Int, Double>? {
         for (pi in pages.indices.reversed()) {
