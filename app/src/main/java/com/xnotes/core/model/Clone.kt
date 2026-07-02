@@ -35,4 +35,6 @@ fun Document.deepCopy(measurer: TextMeasurer): Document = Document(
     pdfFile = pdfFile,
     bookmarks = bookmarks.mapTo(mutableListOf()) { Bookmark(it.page, it.label) },
     style = style,
+    // The flow must be cloned too or the autosave snapshot would race live edits.
+    flow = flow.deepCopy(),
 )

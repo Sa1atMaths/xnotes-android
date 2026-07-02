@@ -1,5 +1,6 @@
 package com.xnotes.core.model
 
+import com.xnotes.core.text.TextFlow
 import com.xnotes.core.util.Paths
 
 /** A user bookmark into a document (spec 02 §3). */
@@ -26,6 +27,8 @@ class Document(
     val bookmarks: MutableList<Bookmark> = mutableListOf(),
     /** Document-wide ("all pages") style override; per-page [Page.style] layers on top. */
     var style: PageStyle = PageStyle(),
+    /** The document-wide flowing rich text (empty until typed into; persisted only when non-empty). */
+    val flow: TextFlow = TextFlow(),
 ) {
     /** Derived: the storage display name (or path) base name without extension, or "Untitled". */
     val title: String
