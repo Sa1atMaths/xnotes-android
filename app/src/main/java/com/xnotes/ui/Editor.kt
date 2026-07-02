@@ -384,7 +384,12 @@ class Editor(context: Context) {
         onSessionChanged = { active -> onFlowSessionChanged(active) },
         onViewChanged = { refreshView() },
         requestRender = { onRender() },
-    ).also { controller.flowText = it }
+    ).also {
+        controller.flowText = it
+        it.onHaptic = {
+            runCatching { view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) }
+        }
+    }
 
     private val flowInput = com.xnotes.canvas.FlowInput(view, flowText, { state.document.flow })
         .also {

@@ -74,22 +74,35 @@ class FlowInput(
     init {
         session.imeSync = { onCaretMovedExternally() }
         session.onEdited = { reconcile() }
+        session.requestIme = { showIme(restart = false) }
     }
 
     // --- session lifecycle (driven by the Editor's session callback) ---
 
     fun startSession() {
         rebuildMirror()
-        view.isFocusable = true
-        view.isFocusableInTouchMode = true
-        view.requestFocus()
-        imm()?.restartInput(view)
-        imm()?.showSoftInput(view, 0)
+        showIme(restart = true)
     }
 
     fun endSession() {
         imm()?.restartInput(view)
         imm()?.hideSoftInputFromWindow(view.windowToken, 0)
+    }
+
+    /**
+     * Show the soft keyboard, posted so focus lands before the request (calling both in
+     * one breath races and the show is dropped). Also re-shows a keyboard the user
+     * dismissed: every caret tap routes here.
+     */
+    private fun showIme(restart: Boolean) {
+        view.isFocusable = true
+        view.isFocusableInTouchMode = true
+        view.post {
+            if (!session.active) return@post
+            view.requestFocus()
+            if (restart) imm()?.restartInput(view)
+            imm()?.showSoftInput(view, 0)
+        }
     }
 
     /**

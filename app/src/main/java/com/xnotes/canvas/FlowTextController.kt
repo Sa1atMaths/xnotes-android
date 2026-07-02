@@ -58,6 +58,12 @@ class FlowTextController(
     /** Installed by the input layer: a committed edit landed (reconcile the IME mirror). */
     var onEdited: () -> Unit = {}
 
+    /** Installed by the input layer: re-show the soft keyboard (a caret tap wants it back). */
+    var requestIme: () -> Unit = {}
+
+    /** Long-press armed a selection: a short haptic tick. */
+    var onHaptic: () -> Unit = {}
+
     private val handler = Handler(Looper.getMainLooper())
     private val idleFlush = Runnable { flushBurst() }
 
@@ -66,13 +72,16 @@ class FlowTextController(
     private var burstBefore: ParaSnapshot? = null
     private val burstExtras = mutableListOf<Command>()
 
-    // press/drag gesture state
+    // press/drag gesture state: a short drag pans the document (handed back to the
+    // interaction controller); selection arms only after a LONG PRESS, then extends by drag
     private var pressAnchor: FlowPos? = null
     private var pressHit: FlowHit? = null
     private var pressViewport = Pt(0.0, 0.0)
-    private var dragging = false
+    private var selectionArmed = false
+    private var armedAnchor: FlowRange? = null
     private var lastTapAtMs = 0L
     private var lastTapViewport = Pt(0.0, 0.0)
+    private val longPressRun = Runnable { onLongPressFired() }
 
     // --- session ---
 
@@ -92,6 +101,7 @@ class FlowTextController(
     }
 
     fun endSession() {
+        handler.removeCallbacks(longPressRun)
         if (!active) return
         flushBurst()
         active = false
@@ -111,7 +121,8 @@ class FlowTextController(
 
     fun pressAt(content: Pt, viewport: Pt) {
         pressViewport = viewport
-        dragging = false
+        selectionArmed = false
+        armedAnchor = null
         val (pi, local) = pagePointAt(content) ?: return
         val hit = frame()?.hitTest(pi, local) ?: return
         pressHit = hit
@@ -120,25 +131,51 @@ class FlowTextController(
             is FlowHit.Checkbox -> FlowPos(hit.paraIndex, 0)
             FlowHit.BeyondEnd -> flow().endPos()
         }
+        handler.removeCallbacks(longPressRun)
+        handler.postDelayed(longPressRun, LONG_PRESS_MS)
     }
 
-    fun dragTo(content: Pt, viewport: Pt) {
+    /** Long press while still: arm selection on the word under the finger. */
+    private fun onLongPressFired() {
         val anchor = pressAnchor ?: return
-        if (!dragging && viewport.distanceTo(pressViewport) <= DRAG_SLOP) return
-        if (!dragging) {
-            dragging = true
-            if (!active) startSession(FlowRange.caret(anchor))
-        }
-        selection = FlowRange(anchor, caretPosAt(content) ?: return)
+        if (!active) startSession(FlowRange.caret(anchor))
+        val word = wordRangeAt(flow(), anchor).normalized()
+        selectionArmed = true
+        armedAnchor = word
+        selection = if (word.collapsed) FlowRange.caret(anchor) else word
+        onHaptic()
+        imeSync()
         requestRender()
     }
 
+    /**
+     * Drag while pressed. An armed (long-pressed) drag extends the selection from
+     * the anchored word; a plain drag past the slop is a document pan: returns true
+     * so the interaction controller hands the rest of the gesture to its pan mode.
+     */
+    fun dragTo(content: Pt, viewport: Pt): Boolean {
+        if (selectionArmed) {
+            val pos = caretPosAt(content) ?: return false
+            val a = armedAnchor ?: FlowRange.caret(pressAnchor ?: return false)
+            selection = if (pos < a.start) FlowRange(a.end, pos) else FlowRange(a.start, pos)
+            requestRender()
+            return false
+        }
+        if (viewport.distanceTo(pressViewport) <= DRAG_SLOP) return false
+        handler.removeCallbacks(longPressRun)
+        pressAnchor = null
+        pressHit = null
+        return true
+    }
+
     fun release(content: Pt, viewport: Pt, timeMs: Long) {
+        handler.removeCallbacks(longPressRun)
         val hit = pressHit
         pressHit = null
         pressAnchor = null
-        if (dragging) {
-            dragging = false
+        if (selectionArmed) {
+            selectionArmed = false
+            armedAnchor = null
             imeSync()
             requestRender()
             return
@@ -155,6 +192,7 @@ class FlowTextController(
                 lastTapAtMs = timeMs
                 lastTapViewport = viewport
                 if (active) placeCaret(hit.pos) else startSession(FlowRange.caret(hit.pos))
+                requestIme()
                 if (isDouble) {
                     selection = wordRangeAt(flow(), hit.pos)
                     imeSync()
@@ -165,6 +203,7 @@ class FlowTextController(
                 lastTapAtMs = timeMs
                 lastTapViewport = viewport
                 tapBeyondEnd(content)
+                requestIme()
             }
         }
     }
@@ -388,5 +427,6 @@ class FlowTextController(
         const val DOUBLE_TAP_SLOP = 32.0
         const val CARET_MARGIN = 24.0
         const val BURST_IDLE_MS = 2000L
+        val LONG_PRESS_MS = android.view.ViewConfiguration.getLongPressTimeout().toLong()
     }
 }

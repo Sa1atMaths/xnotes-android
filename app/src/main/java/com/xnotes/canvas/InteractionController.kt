@@ -608,7 +608,8 @@ class InteractionController(
             effectiveTool == Tool.TEXT -> beginTextGesture(content, Pt(vx, vy))
             else -> Unit
         }
-        armLongPress(Pt(vx, vy), content, toolType == MotionEvent.TOOL_TYPE_FINGER)
+        // The flow caret owns its own long press (word selection), so no context menu there.
+        if (mode != PointerMode.FLOW_TEXT) armLongPress(Pt(vx, vy), content, toolType == MotionEvent.TOOL_TYPE_FINGER)
     }
 
     private fun handlePointerDown(e: MotionEvent) {
@@ -651,7 +652,10 @@ class InteractionController(
             PointerMode.RESIZE -> extendResize(content)
             PointerMode.TRANSFORM -> extendTransform(content)
             PointerMode.SHAPE -> extendShape(content)
-            PointerMode.FLOW_TEXT -> flowText?.dragTo(content, Pt(vx, vy))
+            PointerMode.FLOW_TEXT ->
+                // A plain drag with the text tool scrolls the document; only a long-pressed
+                // drag extends the selection (dragTo returns true to request the pan handoff).
+                if (flowText?.dragTo(content, Pt(vx, vy)) == true) beginPan(vx, vy)
             else -> Unit
         }
     }
