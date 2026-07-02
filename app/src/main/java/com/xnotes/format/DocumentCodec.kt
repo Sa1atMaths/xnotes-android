@@ -101,6 +101,9 @@ class DocumentCodec(
 
         ZipOutputStream(out).use { zos ->
             zos.putDeflated("manifest.json", manifest.toString().toByteArray(Charsets.UTF_8))
+            // The flow lives in its own ODF entry, written only when non-empty so notes
+            // without typed text stay byte-identical and old readers see nothing new.
+            if (!doc.flow.isEmpty) zos.putDeflated(FlowXml.ENTRY_NAME, FlowXml.write(doc.flow))
             // Stream each image straight from its temp file into the bundle, never as a byte[], so a
             // note full of large images doesn't materialize them all in the heap on every save.
             for ((name, file) in assets) zos.putStored(name, file, isCancelled)
@@ -173,6 +176,8 @@ class DocumentCodec(
                 doc.bookmarks.add(Bookmark(o.optInt("page", 0), o.optString("label", "")))
             }
         }
+
+        entries[FlowXml.ENTRY_NAME]?.let { FlowXml.readInto(doc.flow, it) }
 
         val pagesArr = manifest.optJSONArray("pages")
         if (pagesArr == null || pagesArr.length() == 0) {
