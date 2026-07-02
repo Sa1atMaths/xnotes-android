@@ -32,8 +32,14 @@ object AndroidText {
     fun textPaint(font: FontSpec, argb: Int = 0xFF000000.toInt()): TextPaint =
         TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             val face = base(font.face)
-            // Typeface.create(base, BOLD) is thread-safe and framework-cached.
-            typeface = if (font.bold) Typeface.create(face, Typeface.BOLD) else face
+            val style = when {
+                font.bold && font.italic -> Typeface.BOLD_ITALIC
+                font.bold -> Typeface.BOLD
+                font.italic -> Typeface.ITALIC
+                else -> Typeface.NORMAL
+            }
+            // Typeface.create(base, style) is thread-safe and framework-cached.
+            typeface = if (style == Typeface.NORMAL) face else Typeface.create(face, style)
             textSize = (font.pointSize * POINTS_TO_PX).toFloat()
             color = argb
         }

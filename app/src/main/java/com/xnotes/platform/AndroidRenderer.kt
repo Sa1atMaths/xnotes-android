@@ -268,6 +268,12 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         canvas.restore()
     }
 
+    override fun drawTextRun(text: String, x: Double, baseline: Double, font: FontSpec, color: Rgba) {
+        if (text.isEmpty()) return
+        val paint = AndroidText.textPaint(font, color.toArgb())
+        canvas.drawText(text, x.toFloat(), baseline.toFloat(), paint)
+    }
+
     private fun applyPen(pen: Pen) {
         strokePaint.color = pen.color.toArgb()
         val width = if (pen.cosmetic) (pen.width / avgScale) else pen.width

@@ -8,6 +8,7 @@ import com.xnotes.core.pal.FillRule
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.ImageCodec
 import com.xnotes.core.pal.ImageSize
+import com.xnotes.core.pal.LineMetrics
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
@@ -38,6 +39,9 @@ class FakeRenderer : Renderer {
     override fun drawRaster(raster: RasterSurface, dest: Rect, src: Rect?) { ops += "drawRaster" }
     override fun drawImage(image: ImageData, dest: Rect, orientation: Int) { ops += "drawImage" }
     override fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags) { ops += "drawText" }
+    override fun drawTextRun(text: String, x: Double, baseline: Double, font: FontSpec, color: Rgba) {
+        ops += "drawTextRun:$text@$x,$baseline"
+    }
 }
 
 /** A bitmap-less raster surface for tests. */
@@ -55,7 +59,12 @@ class FakeSurfaceFactory : SurfaceFactory {
         FakeRasterSurface(widthPx, heightPx, devicePixelRatio)
 }
 
-/** A measurer where each newline-separated line is one [lineHeight] tall. */
+/**
+ * A measurer where each newline-separated line is one [lineHeight] tall and every
+ * character advances a fixed 0.6pt, so layout tests are exact: ascent (1.0pt) +
+ * descent (0.3pt) always equals [lineHeight] (1.3pt), matching the Android impl's
+ * invariant.
+ */
 class FakeTextMeasurer(private val perPointLineHeight: Double = 1.3) : TextMeasurer {
     override fun measure(text: String, font: FontSpec, wrapWidth: Double, flags: TextFlags): Rect {
         val lines = maxOf(1, text.split('\n').size)
@@ -63,6 +72,16 @@ class FakeTextMeasurer(private val perPointLineHeight: Double = 1.3) : TextMeasu
     }
 
     override fun lineHeight(font: FontSpec): Double = font.pointSize * perPointLineHeight
+
+    override fun metrics(font: FontSpec): LineMetrics =
+        LineMetrics(ascent = font.pointSize * (perPointLineHeight - 0.3), descent = font.pointSize * 0.3)
+
+    override fun advances(text: String, font: FontSpec): DoubleArray =
+        DoubleArray(text.length) { font.pointSize * ADVANCE_PER_POINT }
+
+    companion object {
+        const val ADVANCE_PER_POINT = 0.6
+    }
 }
 
 /** A codec that produces fixed-size surfaces and tiny byte stand-ins. */

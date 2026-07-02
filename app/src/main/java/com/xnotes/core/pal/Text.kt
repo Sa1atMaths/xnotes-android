@@ -18,10 +18,15 @@ enum class FontFace(val id: String) {
 
 /**
  * A font request: a point size, an abstract [face] (resolved to a concrete family
- * by the host — spec 01 §12), and a weight. Defaults to monospace so existing
+ * by the host — spec 01 §12), and a weight/slant. Defaults to monospace so existing
  * call sites and stored notes render exactly as before.
  */
-data class FontSpec(val pointSize: Double, val face: FontFace = FontFace.MONO, val bold: Boolean = false)
+data class FontSpec(
+    val pointSize: Double,
+    val face: FontFace = FontFace.MONO,
+    val bold: Boolean = false,
+    val italic: Boolean = false,
+)
 
 /** Text layout flags (spec 01 §1 `draw_text`). Text boxes use the defaults. */
 data class TextFlags(

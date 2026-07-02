@@ -143,6 +143,15 @@ interface Renderer {
 
     fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags = TextFlags())
 
+    /**
+     * Draw a single pre-positioned line fragment with its left edge at [x] and its
+     * baseline at [baseline] (content space, no wrapping). The flow-text painter
+     * places these from [TextMeasurer.advances] prefix sums, so the two must share
+     * one paint. Default is a no-op for backends that never see flow text (PDF
+     * vector export receives it pre-rasterized).
+     */
+    fun drawTextRun(text: String, x: Double, baseline: Double, font: FontSpec, color: Rgba) {}
+
     /** Run [block] between matching [save]/[restore] calls. */
     fun withSave(block: () -> Unit) {
         save()
