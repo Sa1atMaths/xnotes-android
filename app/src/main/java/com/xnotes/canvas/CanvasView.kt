@@ -315,6 +315,16 @@ class CanvasView @JvmOverloads constructor(
             r.fillRect(pr, st.paperColor(page))
             r.strokeRect(pr, border)
             st.backgroundForOrSchedule(page)?.let { r.drawRaster(it.surface, pr) }
+            // A live caret session lifts the flow out of the ink cache; paint it
+            // immediate-mode here (under the ink, over the background) so every
+            // keystroke shows without waiting for a cache rebuild.
+            if (st.flowLifted) {
+                r.withSave {
+                    r.clipRect(pr)
+                    r.translate(pr.left, pr.top)
+                    st.paintFlow?.invoke(page, r, visible.translate(-pr.left, -pr.top))
+                }
+            }
             st.cacheForOrSchedule(page)?.let { r.drawRaster(it.surface, pr) }
             drawPageLabel(r, st, i, pr)
         }
@@ -347,6 +357,23 @@ class CanvasView @JvmOverloads constructor(
                 val dw = blit.base.width * blit.scale
                 val dh = blit.base.height * blit.scale
                 r.drawRaster(blit.base, Rect(blit.dx, blit.dy, dw, dh))
+                // A lifted flow is absent from the sharp ink layer too: draw it live
+                // between the sharp base and sharp ink so the stack order holds.
+                if (st.flowLifted) {
+                    r.withSave {
+                        r.translate(origin.x, origin.y)
+                        r.scale(st.zoom, st.zoom)
+                        for (i in st.document.pages.indices) {
+                            val pr = st.pageRects.getOrNull(i) ?: continue
+                            if (!pr.intersects(visible)) continue
+                            r.withSave {
+                                r.clipRect(pr)
+                                r.translate(pr.left, pr.top)
+                                st.paintFlow?.invoke(st.document.pages[i], r, visible.translate(-pr.left, -pr.top))
+                            }
+                        }
+                    }
+                }
                 r.drawRaster(blit.ink, Rect(blit.dx, blit.dy, dw, dh))
                 mainHandler.removeCallbacks(sharpDebounce)
                 // Off the exact rendered view (panned or zoomed): re-render for where we settle.

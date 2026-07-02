@@ -133,6 +133,24 @@ class CanvasState(
     var paintPageBackground: ((page: Page, renderer: Renderer, res: Double, region: Rect) -> Unit)? = null
 
     /**
+     * Optional flow-text painter (the document-wide typed text). It paints onto the
+     * transparent ink layer *before* the page items, so ink annotates over text while
+     * text sits over the page background. [region] is the page-local rect being
+     * painted, like [paintPageBackground]. Runs on cache threads: the installed hook
+     * must read only an immutable published layout snapshot, never the live model.
+     */
+    var paintFlow: ((page: Page, renderer: Renderer, region: Rect) -> Unit)? = null
+
+    /**
+     * True while a flow-text caret session is live: screen ink caches build WITHOUT
+     * the flow and [CanvasView] paints it immediate-mode each frame instead, so a
+     * keystroke never waits for a cache rebuild. Presentation caches keep including
+     * the flow (the stream catches up on burst flushes). Session start/end must
+     * invalidate the flow-bearing pages so the layers swap cleanly.
+     */
+    var flowLifted: Boolean = false
+
+    /**
      * Per-page caches, split into two layers so an ink edit never re-rasterizes the
      * (costly) page background: [caches] holds the transparent **ink** layer (the
      * strokes/shapes/text), [bgCaches] holds the rendered **background** layer
@@ -517,8 +535,9 @@ class CanvasState(
         if (!pendingInk.add(page)) return
         val gen = cacheGen
         val items = cacheItems(page) // snapshot on the UI thread
+        val withFlow = !flowLifted // snapshot too; the generation guard discards stale builds
         runAsync {
-            val entry = renderInk(page, res, items)
+            val entry = renderInk(page, res, items, withFlow)
             postToMain {
                 pendingInk.remove(page)
                 if (gen == cacheGen) {
@@ -535,15 +554,16 @@ class CanvasState(
         page.items.filter { !isLiftedItem(it) && !it.isHighlighterInk() }
 
     private fun buildCache(page: Page, res: Double): CacheEntry =
-        renderInk(page, res, cacheItems(page))
+        renderInk(page, res, cacheItems(page), includeFlow = !flowLifted)
 
-    private fun renderInk(page: Page, res: Double, items: List<CanvasItem>): CacheEntry {
+    private fun renderInk(page: Page, res: Double, items: List<CanvasItem>, includeFlow: Boolean): CacheEntry {
         val w = ceil(page.width * res).toInt().coerceAtLeast(1)
         val h = ceil(page.height * res).toInt().coerceAtLeast(1)
         val surface = surfaceFactory.create(w, h, 1.0)
         surface.fill(TRANSPARENT)
         val r = surface.renderer()
         r.scale(res, res)
+        if (includeFlow) paintFlow?.invoke(page, r, Rect(0.0, 0.0, page.width, page.height))
         for (item in items) item.paint(r)
         return CacheEntry(surface, res)
     }
@@ -653,7 +673,8 @@ class CanvasState(
     fun presCacheFor(page: Page): CacheEntry {
         val res = presRes(page)
         presCaches[page]?.let { if (abs(it.res - res) < 1e-6) return it }
-        return renderInk(page, res, cacheItems(page)).also { presCaches[page] = it }
+        // The stream always includes the flow, lifted or not (it can't draw live passes).
+        return renderInk(page, res, cacheItems(page), includeFlow = true).also { presCaches[page] = it }
     }
 
     /** Presentation background layer for [page] at [presRes], or null when there is no background. */
@@ -692,6 +713,7 @@ class CanvasState(
         r.scale(entry.res, entry.res)
         r.clipRect(dirtyRect)
         r.clear()
+        paintFlow?.invoke(page, r, dirtyRect)
         for (item in page.items) {
             if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
         }
@@ -733,6 +755,7 @@ class CanvasState(
         r.scale(entry.res, entry.res)
         r.clipRect(dirtyRect)
         r.clear()
+        if (!flowLifted) paintFlow?.invoke(page, r, dirtyRect)
         for (item in page.items) {
             if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
         }
@@ -950,10 +973,11 @@ class CanvasState(
         }
         if (draws.isEmpty()) return
         pendingSharp = true
+        val withFlow = !flowLifted // snapshot; a session toggle bumps sharpGen and discards this
         runAsync {
             val base = surfaceFactory.create(vw, vh, 1.0).also { it.fill(bg) }
             val ink = surfaceFactory.create(vw, vh, 1.0).also { it.fill(TRANSPARENT) }
-            renderSharpFrame(base, ink, o, z, res, draws)
+            renderSharpFrame(base, ink, o, z, res, draws, withFlow)
             postToMain {
                 pendingSharp = false
                 if (gen == sharpGen && sx == scrollX && sy == scrollY && z == zoom) {
@@ -964,7 +988,7 @@ class CanvasState(
         }
     }
 
-    /** Paint the [base] (paper/border/background/labels) and [ink] (strokes) sharp layers. */
+    /** Paint the [base] (paper/border/background/labels) and [ink] (flow + strokes) sharp layers. */
     private fun renderSharpFrame(
         base: RasterSurface,
         ink: RasterSurface,
@@ -972,6 +996,7 @@ class CanvasState(
         z: Double,
         res: Double,
         draws: List<SharpPageSnap>,
+        withFlow: Boolean = !flowLifted,
     ) {
         val rb = base.renderer()
         rb.translate(o.x, o.y)
@@ -999,6 +1024,9 @@ class CanvasState(
             ri.save()
             ri.clipRect(d.pr)
             ri.translate(d.pr.left, d.pr.top)
+            if (withFlow && d.region.w > 0.0 && d.region.h > 0.0) {
+                paintFlow?.invoke(d.page, ri, d.region)
+            }
             for (item in d.items) item.paint(ri)
             ri.restore()
         }
@@ -1033,6 +1061,7 @@ class CanvasState(
         r.translate(pr.left, pr.top)
         r.clipRect(dirtyRect)
         r.clear()
+        if (!flowLifted) paintFlow?.invoke(page, r, dirtyRect)
         for (item in page.items) {
             if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
         }

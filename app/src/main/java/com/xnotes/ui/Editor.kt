@@ -42,6 +42,10 @@ import com.xnotes.core.model.resolvedPageColor
 import com.xnotes.core.model.resolvedPattern
 import com.xnotes.core.model.resolvedPatternColor
 import com.xnotes.core.model.resolvedSpacing
+import com.xnotes.core.text.FlowFrame
+import com.xnotes.core.text.FlowLayout
+import com.xnotes.core.text.FlowPainter
+import com.xnotes.core.text.PageBox
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
@@ -148,6 +152,14 @@ class Editor(context: Context) {
     private val textMeasurer = AndroidTextMeasurer()
     private val imageCodec = AndroidImageCodec()
     private val codec = DocumentCodec(imageCodec, textMeasurer)
+
+    /** One flow layout + snapshot: repainted from cache threads, so only the published frame is read. */
+    private class PublishedFlow(val frame: FlowFrame, val indexOf: Map<Page, Int>)
+    private val flowLayout = FlowLayout(textMeasurer)
+
+    @Volatile private var publishedFlow: PublishedFlow? = null
+    private var publishedFlowStamp = -1L
+    private var publishedPageList: List<Page> = emptyList()
     private val session = com.xnotes.platform.SessionStore(java.io.File(appContext.filesDir, "session"), codec, pdfDir, imageDir)
     private val viewStates = com.xnotes.platform.ViewStateStore(com.xnotes.platform.JsonStore.viewStates(appContext))
     private var lastSessionContentVersion = -1
@@ -460,7 +472,10 @@ class Editor(context: Context) {
                     (content.right - pr.left).coerceAtMost(page.width),
                     (content.bottom - pr.top).coerceAtMost(page.height),
                 )
-                if (local.w > 0.0 && local.h > 0.0) state.paintPageBackground?.invoke(page, r, res, local)
+                if (local.w > 0.0 && local.h > 0.0) {
+                    state.paintPageBackground?.invoke(page, r, res, local)
+                    state.paintFlow?.invoke(page, r, local)
+                }
                 for (item in itemsSnapshot(page)) item.paint(r)
             }
         }
@@ -524,6 +539,8 @@ class Editor(context: Context) {
             }
         }
         installPageBackground()
+        installFlowPainter()
+        republishFlow(invalidate = false)
         state.invalidateAllCaches()
         refreshToc()
         startPdfRefine() // kick the up-front sweep over all pages + drive the "Refining k/N" hint
@@ -602,6 +619,56 @@ class Editor(context: Context) {
                 )
             }
         }
+    }
+
+    /**
+     * Installs the flow-text painter: it draws the PUBLISHED layout snapshot for the page
+     * (never the live model — cache threads call this), under the ink and over the page
+     * background via [CanvasState.paintFlow]. A page unknown to the snapshot paints nothing.
+     */
+    private fun installFlowPainter() {
+        state.paintFlow = { page, renderer, region ->
+            val pf = publishedFlow
+            val idx = pf?.indexOf?.get(page)
+            if (pf != null && idx != null) FlowPainter.paintPage(renderer, pf.frame, idx, region)
+        }
+    }
+
+    /** A cheap content fingerprint of the flow (structure + every paragraph revision). */
+    private fun flowStamp(): Long {
+        val flow = state.document.flow
+        var s = flow.rev.toLong()
+        for (p in flow.paragraphs) s = s * 31 + p.rev
+        return s
+    }
+
+    /**
+     * Recompute and publish the flow layout for the current document. With [invalidate]
+     * the pages the flow covered before or after the change drop their ink caches, so
+     * the baked layer follows the text; the undo path instead repaints in place.
+     */
+    private fun republishFlow(invalidate: Boolean) {
+        val doc = state.document
+        val oldFlow = publishedFlow
+        val oldPages = publishedPageList
+        val frame = flowLayout.layout(doc.flow, doc.pages.map { PageBox(it.width, it.height) }, doc.dpi)
+        val index = HashMap<Page, Int>(doc.pages.size * 2)
+        doc.pages.forEachIndexed { i, p -> index[p] = i }
+        publishedFlow = PublishedFlow(frame, index)
+        publishedFlowStamp = flowStamp()
+        publishedPageList = doc.pages.toList()
+        if (invalidate) {
+            val stale = HashSet<Page>()
+            oldFlow?.frame?.pagesWithLines()?.forEach { i -> oldPages.getOrNull(i)?.let(stale::add) }
+            frame.pagesWithLines().forEach { i -> publishedPageList.getOrNull(i)?.let(stale::add) }
+            stale.forEach { if (index.containsKey(it)) state.invalidatePage(it) }
+        }
+    }
+
+    /** Republish the flow when its content or the page list moved (cheap no-op otherwise). */
+    private fun republishFlowIfStale() {
+        if (publishedFlowStamp == flowStamp() && publishedPageList == state.document.pages) return
+        republishFlow(invalidate = true)
     }
 
     /** Act on a tapped PDF link: open a web/mail URL externally, or jump to an internal destination
@@ -1011,6 +1078,7 @@ class Editor(context: Context) {
     }
 
     private fun refreshContent() {
+        republishFlowIfStale()
         canUndo = history.canUndo
         canRedo = history.canRedo
         pageCount = state.document.pages.size
@@ -1064,6 +1132,7 @@ class Editor(context: Context) {
         } else {
             state.paintPageBackground?.invoke(page, r, scale, com.xnotes.core.geometry.Rect(0.0, 0.0, page.width, page.height))
         }
+        state.paintFlow?.invoke(page, r, com.xnotes.core.geometry.Rect(0.0, 0.0, page.width, page.height))
         for (item in itemsSnapshot(page)) {
             if (!active()) return null
             item.paint(r)
@@ -1264,6 +1333,12 @@ class Editor(context: Context) {
                     src.close()
                 }
             }
+        }
+        // A closed note's flow is laid out locally (the published snapshot serves the open note only).
+        if (!doc.flow.isEmpty) {
+            val frame = FlowLayout(textMeasurer)
+                .layout(doc.flow, doc.pages.map { PageBox(it.width, it.height) }, doc.dpi)
+            FlowPainter.paintPage(r, frame, 0, Rect(0.0, 0.0, page.width, page.height))
         }
         for (item in itemsSnapshot(page)) item.paint(r)
         return surface.bitmap
