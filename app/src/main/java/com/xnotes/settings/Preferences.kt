@@ -48,6 +48,8 @@ data class Preferences(
     val maxCacheResolution: Int = 2048,
     /** Open in fullscreen; null ⇒ auto (on unless the display has a camera cutout). */
     val startFullscreen: Boolean? = null,
+    /** Per-language user .scm highlight-query overrides: language id -> imported file path. */
+    val customScm: Map<String, String> = emptyMap(),
 ) {
     val isDark: Boolean get() = uiAppearance != "light"
 
@@ -73,7 +75,10 @@ data class Preferences(
         .put("stylus_button_tap", stylusButtonTap)
         .put("side_margin", sideMargin)
         .put("max_cache_resolution", maxCacheResolution)
-        .apply { startFullscreen?.let { put("start_fullscreen", it) } }
+        .apply {
+            startFullscreen?.let { put("start_fullscreen", it) }
+            if (customScm.isNotEmpty()) put("custom_scm", JSONObject(customScm))
+        }
 
     companion object {
         val DEFAULT_ACCENT = Rgba(0, 230, 118, 255)
@@ -108,6 +113,10 @@ data class Preferences(
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
                 startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
+                customScm = o.optJSONObject("custom_scm")?.let { obj ->
+                    obj.keys().asSequence().associateWith { k -> obj.optString(k) }
+                        .filterValues { it.isNotEmpty() }
+                } ?: emptyMap(),
             )
         }
     }

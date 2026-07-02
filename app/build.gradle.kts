@@ -18,6 +18,8 @@ val keystoreProperties = Properties().apply {
 android {
     namespace = "com.xnotes"
     compileSdk = 36
+    // Pinned toolchain for the vendored tree-sitter build (F-Droid reproducibility).
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.xnotes"
@@ -25,6 +27,16 @@ android {
         targetSdk = 36
         versionCode = 36
         versionName = "0.7.18"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // F-Droid rejects the AGP dependency-metadata block in the APK signing block.

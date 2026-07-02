@@ -40,6 +40,13 @@ class BrokenLine(
  */
 class FlowLayout(private val measurer: TextMeasurer) {
 
+    /**
+     * Derived syntax-highlight colours for a code paragraph (start-sorted char
+     * spans), or null for none. Installed by the host; read at placement time so
+     * highlight results recolour segments on the next republish, never persisting.
+     */
+    var codeSpans: (Paragraph) -> List<CodeSpan>? = { null }
+
     // --- per-paragraph measurement (cached) ---
 
     /** Advances and per-run fonts/metrics for one paragraph at given flow defaults. */
@@ -307,6 +314,7 @@ class FlowLayout(private val measurer: TextMeasurer) {
         }
         val segs = mutableListOf<Seg>()
         val decos = mutableListOf<Deco>()
+        val spans = if (para.codeLang != null) codeSpans(para) else null
         var runStart = 0
         for (r in para.runs.indices) {
             val runEnd = shape.runEnds[r]
@@ -327,7 +335,11 @@ class FlowLayout(private val measurer: TextMeasurer) {
                     }
                     var e = s
                     while (e < to && shape.text[e] != ' ') e++
-                    segs.add(Seg(shape.text.substring(s, e), xs[s - bl.startChar], font, style))
+                    if (spans == null) {
+                        segs.add(Seg(shape.text.substring(s, e), xs[s - bl.startChar], font, style))
+                    } else {
+                        emitHighlighted(shape, spans, s, e, xs, bl.startChar, font, style, segs)
+                    }
                     s = e
                 }
             }
@@ -355,6 +367,32 @@ class FlowLayout(private val measurer: TextMeasurer) {
             codeLeft = contentRect.left + indentPx,
             codeRight = contentRect.right,
         )
+    }
+
+    /** Emit one word's segments, split at highlight-span boundaries with their colours. */
+    private fun emitHighlighted(
+        shape: ParaShape,
+        spans: List<CodeSpan>,
+        from: Int,
+        to: Int,
+        xs: DoubleArray,
+        blStart: Int,
+        font: FontSpec,
+        style: CharStyle,
+        segs: MutableList<Seg>,
+    ) {
+        var i = from
+        while (i < to) {
+            val covering = spans.firstOrNull { it.start <= i && i < it.end }
+            val boundary = if (covering != null) {
+                minOf(to, covering.end)
+            } else {
+                minOf(to, spans.firstOrNull { it.start > i }?.start ?: to)
+            }
+            val st = if (covering != null) style.copy(color = covering.color) else style
+            segs.add(Seg(shape.text.substring(i, boundary), xs[i - blStart], font, st))
+            i = boundary
+        }
     }
 
     private fun contentRectOf(box: PageBox, m: FlowMargins, dpi: Int): Rect {

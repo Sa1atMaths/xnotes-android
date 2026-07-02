@@ -166,6 +166,16 @@ class Editor(context: Context) {
     private class PublishedFlow(val frame: FlowFrame, val indexOf: Map<Page, Int>)
     private val flowLayout = FlowLayout(textMeasurer)
 
+    private val treeSitter = com.xnotes.platform.TreeSitterHighlighter(appContext) { lang ->
+        settings.prefs.customScm[lang]
+    }
+    private val highlighter: com.xnotes.core.text.CodeHighlighter? =
+        treeSitter.takeIf { com.xnotes.platform.TreeSitterNative.loaded }
+
+    /** Derived spans per code paragraph, keyed by its revision (main thread only). */
+    private val highlightCache = HashMap<Paragraph, Pair<Int, List<com.xnotes.core.text.HighlightSpan>>>()
+    private var highlightJob: kotlinx.coroutines.Job? = null
+
     @Volatile private var publishedFlow: PublishedFlow? = null
     private var publishedFlowStamp = -1L
     private var publishedPageList: List<Page> = emptyList()
@@ -702,6 +712,7 @@ class Editor(context: Context) {
         }
         installPageBackground()
         installFlowPainter()
+        installHighlighter()
         republishFlow(invalidate = false)
         state.invalidateAllCaches()
         refreshToc()
@@ -796,6 +807,81 @@ class Editor(context: Context) {
         }
     }
 
+    /** Feed the layout derived highlight colours (published on the main thread only). */
+    private fun installHighlighter() {
+        flowLayout.codeSpans = spans@{ para ->
+            val (rev, spans) = highlightCache[para] ?: return@spans null
+            if (rev != para.rev) return@spans null
+            val theme = if (settings.prefs.isDark) {
+                com.xnotes.core.text.HighlightTheme.DARK
+            } else {
+                com.xnotes.core.text.HighlightTheme.LIGHT
+            }
+            spans.mapNotNull { s ->
+                theme.colorFor(s.capture)?.let { com.xnotes.core.text.CodeSpan(s.start, s.end, it) }
+            }
+        }
+    }
+
+    /**
+     * Debounced async highlighting: snapshot the dirty contiguous same-language code
+     * blocks on the main thread, parse each block as ONE text off-thread (so
+     * multi-line strings/comments highlight right), then publish spans per paragraph
+     * only when its revision still matches, and republish the layout.
+     */
+    private fun scheduleHighlight() {
+        val hl = highlighter ?: return
+        highlightJob?.cancel()
+        highlightJob = autosaveScope.launch {
+            kotlinx.coroutines.delay(150)
+            val flow = state.document.flow
+            highlightCache.keys.retainAll(flow.paragraphs.toHashSet())
+            class Block(val paras: List<Paragraph>, val revs: IntArray, val text: String, val lang: String)
+            val blocks = mutableListOf<Block>()
+            var i = 0
+            while (i < flow.paragraphs.size) {
+                val lang = flow.paragraphs[i].codeLang
+                if (lang.isNullOrEmpty() || !hl.supports(lang)) {
+                    i++
+                    continue
+                }
+                val start = i
+                while (i < flow.paragraphs.size && flow.paragraphs[i].codeLang == lang) i++
+                val paras = flow.paragraphs.subList(start, i).toList()
+                if (paras.any { highlightCache[it]?.first != it.rev }) {
+                    val revs = IntArray(paras.size) { paras[it].rev }
+                    blocks.add(Block(paras, revs, paras.joinToString("\n") { it.plainText() }, lang))
+                }
+            }
+            if (blocks.isEmpty()) return@launch
+            val results = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                blocks.map { it to hl.highlight(it.text, it.lang) }
+            }
+            var changed = false
+            for ((block, spans) in results) {
+                if (spans == null) continue
+                if (block.paras.withIndex().any { (k, p) -> p.rev != block.revs[k] }) continue
+                val sorted = spans.sortedBy { it.start }
+                var offset = 0
+                for (p in block.paras) {
+                    val len = p.length
+                    val mine = sorted.mapNotNull { s ->
+                        val a = (s.start - offset).coerceAtLeast(0)
+                        val b = (s.end - offset).coerceAtMost(len)
+                        if (b > a) com.xnotes.core.text.HighlightSpan(a, b, s.capture) else null
+                    }
+                    highlightCache[p] = p.rev to mine
+                    offset += len + 1
+                    changed = true
+                }
+            }
+            if (changed) {
+                republishFlow(invalidate = !flowText.active)
+                onRender()
+            }
+        }
+    }
+
     /** A cheap content fingerprint of the flow (structure + every paragraph revision). */
     private fun flowStamp(): Long {
         val flow = state.document.flow
@@ -819,6 +905,7 @@ class Editor(context: Context) {
         publishedFlow = PublishedFlow(frame, index)
         publishedFlowStamp = flowStamp()
         publishedPageList = doc.pages.toList()
+        scheduleHighlight()
         if (invalidate) {
             val stale = HashSet<Page>()
             oldFlow?.frame?.pagesWithLines()?.forEach { i -> oldPages.getOrNull(i)?.let(stale::add) }
