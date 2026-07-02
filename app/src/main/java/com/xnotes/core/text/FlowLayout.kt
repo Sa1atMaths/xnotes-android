@@ -1,5 +1,7 @@
 package com.xnotes.core.text
 
+import com.xnotes.core.geometry.Rect
+import com.xnotes.core.model.PageSize
 import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.LineMetrics
@@ -207,6 +209,165 @@ class FlowLayout(private val measurer: TextMeasurer) {
         breaks.keys.retainAll(live)
     }
 
+    // --- pagination ---
+
+    /** The empty-line slot height at the flow's default font (empty-line fill math). */
+    fun defaultSlotHeight(flow: TextFlow): Double =
+        measurer.metrics(FontSpec(flow.defaultSizePt, flow.defaultFace)).height
+
+    /**
+     * Lay the whole flow onto [pageBoxes]: break each paragraph at its page's
+     * content width, fill pages top to bottom, re-break a paragraph remainder
+     * when it continues onto a page of different width, and count how many
+     * virtual pages the tail overflowed past the real ones.
+     */
+    fun layout(flow: TextFlow, pageBoxes: List<PageBox>, dpi: Int): FlowFrame {
+        if (pageBoxes.isEmpty()) return FlowFrame(emptyList(), flow.rev, 0, flow.defaultColor)
+        pruneCaches(flow)
+        val contentRects = pageBoxes.map { contentRectOf(it, flow.margins, dpi) }
+        val pageLines = List(pageBoxes.size) { mutableListOf<PlacedLine>() }
+        var page = 0
+        var y = contentRects[0].top
+        var ordinal = 0
+        for ((paraIndex, para) in flow.paragraphs.withIndex()) {
+            ordinal = if (para.list == ListKind.ORDERED) ordinal + 1 else 0
+            val indentPx = para.indent * INDENT_STEP_PX +
+                if (para.list != ListKind.NONE) MARKER_GUTTER_PX else 0.0
+            var rect = contentRects.getOrElse(page) { contentRects.last() }
+            var avail = (rect.w - indentPx).coerceAtLeast(MIN_LINE_WIDTH)
+            var lines = breakLines(flow, para, avail)
+            var li = 0
+            var firstLine = true
+            while (li < lines.size) {
+                val bl = lines[li]
+                if (y + bl.height > rect.bottom + EPS && y > rect.top + EPS) {
+                    page++
+                    rect = contentRects.getOrElse(page) { contentRects.last() }
+                    y = rect.top
+                    val widthNow = (rect.w - indentPx).coerceAtLeast(MIN_LINE_WIDTH)
+                    if (widthNow != avail) {
+                        avail = widthNow
+                        lines = breakLines(flow, para, avail, fromChar = bl.startChar)
+                        li = 0
+                        continue
+                    }
+                }
+                val placed = placeLine(
+                    para, paraIndex, shapeOf(flow, para), bl, rect, indentPx, avail, y,
+                    lastLineOfPara = li == lines.lastIndex,
+                    firstLineOfPara = firstLine && bl.startChar == 0,
+                    ordinal = ordinal,
+                )
+                pageLines.getOrNull(page)?.add(placed)
+                y += bl.height
+                firstLine = false
+                li++
+            }
+        }
+        val extra = (page - (pageBoxes.size - 1)).coerceAtLeast(0)
+        val pages = pageBoxes.indices.map { PageFlow(contentRects[it], pageLines[it]) }
+        return FlowFrame(pages, flow.rev, extra, flow.defaultColor)
+    }
+
+    private fun placeLine(
+        para: Paragraph,
+        paraIndex: Int,
+        shape: ParaShape,
+        bl: BrokenLine,
+        contentRect: Rect,
+        indentPx: Double,
+        avail: Double,
+        y: Double,
+        lastLineOfPara: Boolean,
+        firstLineOfPara: Boolean,
+        ordinal: Int,
+    ): PlacedLine {
+        val n = bl.endChar - bl.startChar
+        val justify = para.align == ParaAlign.JUSTIFY &&
+            !lastLineOfPara && !bl.hardBroken && bl.spaceCount > 0
+        val extraPerSpace = if (justify) ((avail - bl.width) / bl.spaceCount).coerceAtLeast(0.0) else 0.0
+        val alignOffset = when (para.align) {
+            ParaAlign.CENTER -> ((avail - bl.width) / 2.0).coerceAtLeast(0.0)
+            ParaAlign.RIGHT -> (avail - bl.width).coerceAtLeast(0.0)
+            else -> 0.0
+        }
+        val left = contentRect.left + indentPx + alignOffset
+        val xs = DoubleArray(n + 1)
+        xs[0] = left
+        var stretched = 0
+        for (k in 0 until n) {
+            val ci = bl.startChar + k
+            var a = shape.adv[ci]
+            if (extraPerSpace > 0.0 && shape.text[ci] == ' ' && stretched < bl.spaceCount) {
+                a += extraPerSpace
+                stretched++
+            }
+            xs[k + 1] = xs[k] + a
+        }
+        val segs = mutableListOf<Seg>()
+        val decos = mutableListOf<Deco>()
+        var runStart = 0
+        for (r in para.runs.indices) {
+            val runEnd = shape.runEnds[r]
+            val from = maxOf(bl.startChar, runStart)
+            val to = minOf(bl.endChar, runEnd)
+            if (to > from) {
+                val font = shape.runFonts[r]
+                val style = para.runs[r].style
+                if (style.underline || style.strike || style.highlight != null || style.code) {
+                    decos.add(Deco(xs[from - bl.startChar], xs[to - bl.startChar], font, style))
+                }
+                // Words draw one run-fragment at a time; spaces are gaps the xs already carry.
+                var s = from
+                while (s < to) {
+                    if (shape.text[s] == ' ') {
+                        s++
+                        continue
+                    }
+                    var e = s
+                    while (e < to && shape.text[e] != ' ') e++
+                    segs.add(Seg(shape.text.substring(s, e), xs[s - bl.startChar], font, style))
+                    s = e
+                }
+            }
+            runStart = runEnd
+        }
+        val marker = if (firstLineOfPara && para.list != ListKind.NONE) {
+            val gutterLeft = contentRect.left + para.indent * INDENT_STEP_PX
+            Marker(para.list, para.checked, ordinal, Rect(gutterLeft, y, MARKER_GUTTER_PX, bl.height))
+        } else {
+            null
+        }
+        return PlacedLine(
+            paraIndex, bl.startChar, bl.endChar,
+            top = y, baseline = y + bl.ascent, bottom = y + bl.height,
+            xs = xs, segs = segs, decos = decos, marker = marker,
+            codeLine = para.codeLang != null,
+            codeLeft = contentRect.left + indentPx,
+            codeRight = contentRect.right,
+        )
+    }
+
+    private fun contentRectOf(box: PageBox, m: FlowMargins, dpi: Int): Rect {
+        val l = PageSize.mmToPx(m.leftMm, dpi)
+        val t = PageSize.mmToPx(m.topMm, dpi)
+        val r = PageSize.mmToPx(m.rightMm, dpi)
+        val b = PageSize.mmToPx(m.bottomMm, dpi)
+        var left = l
+        var w = box.width - l - r
+        if (w < MIN_LINE_WIDTH) {
+            w = minOf(MIN_LINE_WIDTH, box.width)
+            left = ((box.width - w) / 2.0).coerceAtLeast(0.0)
+        }
+        var top = t
+        var h = box.height - t - b
+        if (h < MIN_CONTENT_HEIGHT) {
+            h = minOf(MIN_CONTENT_HEIGHT, box.height)
+            top = ((box.height - h) / 2.0).coerceAtLeast(0.0)
+        }
+        return Rect(left, top, w, h)
+    }
+
     companion object {
         /** Indent step per level, content px at 150 dpi (~8 mm). */
         const val INDENT_STEP_PX = 48.0
@@ -216,5 +377,10 @@ class FlowLayout(private val measurer: TextMeasurer) {
 
         /** Layout never wraps narrower than this, however extreme the margins. */
         const val MIN_LINE_WIDTH = 20.0
+
+        /** A content rect is never shorter than this, however extreme the margins. */
+        const val MIN_CONTENT_HEIGHT = 16.0
+
+        private const val EPS = 0.01
     }
 }
