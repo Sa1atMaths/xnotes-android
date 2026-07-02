@@ -47,7 +47,13 @@ class FlowTextController(
         private set
 
     var selection: FlowRange = FlowRange.caret(FlowPos.START)
-        private set
+        private set(value) {
+            field = value
+            onCaretChanged()
+        }
+
+    /** Fired whenever the caret/selection moves (the host's format bar keys on it). */
+    var onCaretChanged: () -> Unit = {}
 
     /** Style for the next typed run (set by the format bar on a collapsed caret). */
     var pendingStyle: CharStyle? = null
@@ -226,6 +232,7 @@ class FlowTextController(
 
     fun placeCaret(pos: FlowPos) {
         flushBurst()
+        pendingStyle = null
         selection = FlowRange.caret(pos)
         imeSync()
         ensureCaretVisible()

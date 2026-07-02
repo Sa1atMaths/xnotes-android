@@ -614,6 +614,8 @@ private fun EditorScreen(
                             RefiningPdfHint(editor)
                         }
                     }
+                    // Last child of the resized column: rides directly above the soft keyboard.
+                    com.xnotes.ui.TextFormatBar(editor)
                 }
             }
         }

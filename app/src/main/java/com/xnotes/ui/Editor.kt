@@ -47,10 +47,14 @@ import com.xnotes.core.text.CharStyle
 import com.xnotes.core.text.FlowEditor
 import com.xnotes.core.text.FlowFrame
 import com.xnotes.core.text.FlowLayout
+import com.xnotes.core.text.FlowMargins
 import com.xnotes.core.text.FlowPainter
 import com.xnotes.core.text.FlowPos
 import com.xnotes.core.text.FlowRange
+import com.xnotes.core.text.ListKind
 import com.xnotes.core.text.PageBox
+import com.xnotes.core.text.ParaAlign
+import com.xnotes.core.text.Paragraph
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
@@ -389,7 +393,12 @@ class Editor(context: Context) {
         it.onHaptic = {
             runCatching { view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) }
         }
+        it.onCaretChanged = { flowSelTick++ }
     }
+
+    /** Bumped whenever the flow caret/selection or pending style moves (the format bar keys on it). */
+    var flowSelTick by mutableStateOf(0)
+        private set
 
     private val flowInput = com.xnotes.canvas.FlowInput(view, flowText, { state.document.flow })
         .also {
@@ -2783,18 +2792,113 @@ class Editor(context: Context) {
         return true
     }
 
-    /** Toggle a character style on the selection, or arm it for the next typed run. */
-    private fun flowToggleStyle(prop: (CharStyle) -> Boolean, apply: (CharStyle, Boolean) -> CharStyle) {
+    // --- flow formatting (the bottom format bar + shortcuts) ---
+
+    /** The style a caret would type with right now (pending style wins over the text's). */
+    fun flowCaretStyle(): CharStyle {
         val sel = flowText.selection.normalized()
-        val editor = FlowEditor(state.document.flow)
-        val base = flowText.pendingStyle ?: editor.charStyleAt(sel.start)
-        val target = !prop(base)
+        return flowText.pendingStyle ?: FlowEditor(state.document.flow).charStyleAt(sel.start)
+    }
+
+    /** The paragraph under the caret / selection start, for the bar's paragraph toggles. */
+    fun flowCaretParagraph(): Paragraph? =
+        state.document.flow.paragraphs.getOrNull(flowText.selection.normalized().start.para)
+
+    fun flowDefaultSizePt(): Double = state.document.flow.defaultSizePt
+    fun flowDefaultColor(): Rgba = state.document.flow.defaultColor
+    fun flowDefaultFace(): FontFace = state.document.flow.defaultFace
+    fun flowMarginsValue(): FlowMargins = state.document.flow.margins
+
+    /** Rewrite character styles over the selection, or arm them for the next typed run. */
+    fun flowSetChar(apply: (CharStyle) -> CharStyle) {
+        if (!flowText.active) return
+        val sel = flowText.selection.normalized()
         if (sel.collapsed) {
-            flowText.pendingStyle = apply(base, target)
+            flowText.pendingStyle = apply(flowCaretStyle())
+            flowSelTick++
             return
         }
         flowText.flushBurst()
-        flowText.commitEdit(editor.setCharStyle(sel) { apply(it, target) }, null)
+        flowText.commitEdit(FlowEditor(state.document.flow).setCharStyle(sel) { apply(it) }, null)
+        flowSelTick++
+    }
+
+    /** Toggle a character style on the selection, or arm it for the next typed run. */
+    private fun flowToggleStyle(prop: (CharStyle) -> Boolean, apply: (CharStyle, Boolean) -> CharStyle) {
+        val target = !prop(flowCaretStyle())
+        flowSetChar { apply(it, target) }
+    }
+
+    fun flowToggleBold() = flowToggleStyle({ it.bold }) { s, v -> s.copy(bold = v) }
+    fun flowToggleItalic() = flowToggleStyle({ it.italic }) { s, v -> s.copy(italic = v) }
+    fun flowToggleUnderline() = flowToggleStyle({ it.underline }) { s, v -> s.copy(underline = v) }
+    fun flowToggleStrike() = flowToggleStyle({ it.strike }) { s, v -> s.copy(strike = v) }
+    fun flowSetCharColor(c: Rgba?) = flowSetChar { it.copy(color = c) }
+    fun flowSetCharHighlight(c: Rgba?) = flowSetChar { it.copy(highlight = c) }
+
+    /** Step every selected run's size by [delta] points from its own current size. */
+    fun flowAdjustSize(delta: Double) {
+        val fallback = flowDefaultSizePt()
+        flowSetChar { it.copy(sizePt = ((it.sizePt ?: fallback) + delta).coerceIn(6.0, 96.0)) }
+    }
+
+    /** Apply a paragraph-property change over the selection as one undo step. */
+    private fun flowParaOp(mutate: (Paragraph) -> Unit) {
+        if (!flowText.active) return
+        flowText.flushBurst()
+        flowText.commitEdit(FlowEditor(state.document.flow).setParaStyle(flowText.selection, mutate), null)
+        flowSelTick++
+    }
+
+    /** Toggle the paragraph(s) into [kind], or back to plain text when already that kind. */
+    fun flowToggleList(kind: ListKind) {
+        val target = if (flowCaretParagraph()?.list == kind) ListKind.NONE else kind
+        flowParaOp {
+            it.list = target
+            if (target != ListKind.CHECK) it.checked = false
+        }
+    }
+
+    fun flowCycleAlign() {
+        val next = when (flowCaretParagraph()?.align ?: ParaAlign.LEFT) {
+            ParaAlign.LEFT -> ParaAlign.CENTER
+            ParaAlign.CENTER -> ParaAlign.RIGHT
+            ParaAlign.RIGHT -> ParaAlign.JUSTIFY
+            ParaAlign.JUSTIFY -> ParaAlign.LEFT
+        }
+        flowParaOp { it.align = next }
+    }
+
+    fun flowIndent(delta: Int) = flowParaOp { it.indent += delta }
+
+    // --- flow document config (the text tool's popup: margins + defaults; not undoable) ---
+
+    fun setFlowMargins(m: FlowMargins) {
+        state.document.flow.margins = FlowMargins(
+            m.leftMm.coerceIn(FlowMargins.MIN_MM, FlowMargins.MAX_MM),
+            m.topMm.coerceIn(FlowMargins.MIN_MM, FlowMargins.MAX_MM),
+            m.rightMm.coerceIn(FlowMargins.MIN_MM, FlowMargins.MAX_MM),
+            m.bottomMm.coerceIn(FlowMargins.MIN_MM, FlowMargins.MAX_MM),
+        )
+        flowConfigChanged()
+    }
+
+    fun setFlowDefaultFace(f: FontFace) {
+        state.document.flow.defaultFace = f
+        flowConfigChanged()
+    }
+
+    fun setFlowDefaultSize(pt: Double) {
+        state.document.flow.defaultSizePt = pt.coerceIn(6.0, 96.0)
+        flowConfigChanged()
+    }
+
+    private fun flowConfigChanged() {
+        if (!state.document.flow.isEmpty) state.document.dirty = true
+        republishFlow(invalidate = true)
+        if (flowText.active) flowText.ensureCaretVisible()
+        refreshContent()
+        onRender()
     }
 
     private fun flowCopySelection(cut: Boolean) {

@@ -66,6 +66,22 @@ object XnotesIcons {
         "M7 22h1a4 4 0 0 0 4-4v-1",
         "M7 2h1a4 4 0 0 1 4 4v1",
     )
+
+    // The flow format bar's glyphs (Lucide: bold/italic/underline/strikethrough, lists,
+    // square-check, aligns, indents).
+    val bold = icon("M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8")
+    val italic = icon("M19 4h-9", "M14 20H5", "M15 4 9 20")
+    val underline = icon("M6 4v6a6 6 0 0 0 12 0V4", "M4 20h16")
+    val strikethrough = icon("M16 4H9a3 3 0 0 0-2.83 4", "M14 12a4 4 0 0 1 0 8H6", "M4 12h16")
+    val listBullet = icon("M3 12h.01", "M3 18h.01", "M3 6h.01", "M8 12h13", "M8 18h13", "M8 6h13")
+    val listOrdered = icon("M10 12h11", "M10 18h11", "M10 6h11", "M4 10h2", "M4 6h1v4", "M6 18H4c0-1 2-2 2-3s-1-1.5-2-1")
+    val checkboxItem = icon(rect(4.0, 4.0, 16.0, 16.0), "m9 12 2 2 4-4")
+    val alignLeft = icon("M15 12H3", "M17 18H3", "M21 6H3")
+    val alignCenter = icon("M17 12H7", "M19 18H5", "M21 6H3")
+    val alignRight = icon("M21 12H9", "M21 18H7", "M21 6H3")
+    val alignJustify = icon("M3 12h18", "M3 18h18", "M3 6h18")
+    val indentIncrease = icon("M21 12H11", "M21 18H11", "M21 6H11", "m3 8 4 4-4 4")
+    val indentDecrease = icon("M21 12H11", "M21 18H11", "M21 6H11", "m7 8-4 4 4 4")
     val image = icon(rect(3.0, 3.0, 18.0, 18.0), circle(8.5, 8.5, 1.5), "M21 15l-5-5L5 21")
     // The screenshot tool: plain scissors (Feather "scissors"), the same glyph as Cut.
     val scissors = icon(circle(6.0, 6.0, 3.0), circle(6.0, 18.0, 3.0), "M20 4 8.12 15.88", "M14.47 14.48 20 20", "M8.12 8.12 12 12")
