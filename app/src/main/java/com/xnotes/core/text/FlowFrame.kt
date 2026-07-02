@@ -94,12 +94,21 @@ class FlowFrame(
 ) {
     private val byPara = HashMap<Int, MutableList<Pair<Int, PlacedLine>>>()
 
+    /** Every placed line in document order, page index attached. */
+    val lines: List<Pair<Int, PlacedLine>>
+
+    private val lineOrder = HashMap<PlacedLine, Int>()
+
     init {
+        val all = mutableListOf<Pair<Int, PlacedLine>>()
         for ((pi, page) in pages.withIndex()) {
             for (line in page.lines) {
                 byPara.getOrPut(line.paraIndex) { mutableListOf() }.add(pi to line)
+                lineOrder[line] = all.size
+                all.add(pi to line)
             }
         }
+        lines = all
     }
 
     val isEmpty: Boolean get() = pages.all { it.lines.isEmpty() }
@@ -123,20 +132,35 @@ class FlowFrame(
         return null
     }
 
-    /** Page index + page-local caret rect for [pos], or null when it is not laid out. */
-    fun caretRect(pos: FlowPos): Pair<Int, Rect>? {
-        val lines = byPara[pos.para] ?: return null
-        for ((pg, line) in lines) {
-            if (pos.offset >= line.startChar && pos.offset < line.endChar) {
-                return pg to caretRectOn(line, pos.offset)
-            }
+    /** The placed line a caret at [pos] sits on (wrap boundaries resolve downward). */
+    fun placedLineFor(pos: FlowPos): Pair<Int, PlacedLine>? {
+        val paraLines = byPara[pos.para] ?: return null
+        for (entry in paraLines) {
+            if (pos.offset >= entry.second.startChar && pos.offset < entry.second.endChar) return entry
         }
-        val (pg, last) = lines.last()
-        return pg to caretRectOn(last, pos.offset.coerceAtMost(last.endChar))
+        return paraLines.last()
     }
 
-    private fun caretRectOn(line: PlacedLine, offset: Int): Rect =
-        Rect(line.caretX(offset), line.top, CARET_WIDTH, line.height)
+    /** Page index + page-local caret rect for [pos], or null when it is not laid out. */
+    fun caretRect(pos: FlowPos): Pair<Int, Rect>? {
+        val (pg, line) = placedLineFor(pos) ?: return null
+        val offset = pos.offset.coerceAtMost(line.endChar)
+        return pg to Rect(line.caretX(offset), line.top, CARET_WIDTH, line.height)
+    }
+
+    /** The position one visual line above/below [pos], keeping the caret x; null at the edges. */
+    fun moveVertical(pos: FlowPos, dir: Int): FlowPos? {
+        val (_, cur) = placedLineFor(pos) ?: return null
+        val idx = lineOrder[cur] ?: return null
+        val (_, target) = lines.getOrNull(idx + dir) ?: return null
+        return FlowPos(target.paraIndex, target.offsetAt(cur.caretX(pos.offset)))
+    }
+
+    /** The start or end of [pos]'s visual line. */
+    fun lineEdge(pos: FlowPos, start: Boolean): FlowPos? {
+        val (_, line) = placedLineFor(pos) ?: return null
+        return FlowPos(line.paraIndex, if (start) line.startChar else line.endChar)
+    }
 
     /** Resolve a text-tool tap at page-local [local] on page [pageIndex]. */
     fun hitTest(pageIndex: Int, local: Pt): FlowHit {

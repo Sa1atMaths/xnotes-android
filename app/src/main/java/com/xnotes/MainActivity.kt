@@ -561,8 +561,12 @@ private fun EditorScreen(
             if (editor.noteOpen) {
                 // While a text box is open, Back commits-or-dismisses it (and hides the keyboard).
                 BackHandler(enabled = editor.editingField != null) { editor.commitText() }
+                // A live flow caret session ends first (flushing its typing burst).
+                BackHandler(enabled = editor.flowEditingActive) { editor.flowText.endSession() }
                 // Otherwise Back closes the note and pops to backstage (guarded for unsaved edits).
-                BackHandler(enabled = editor.editingField == null) { guarded { editor.goHome() } }
+                BackHandler(enabled = editor.editingField == null && !editor.flowEditingActive) {
+                    guarded { editor.goHome() }
+                }
 
                 Column(
                     modifier = Modifier

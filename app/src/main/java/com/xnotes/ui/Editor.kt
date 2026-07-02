@@ -43,9 +43,13 @@ import com.xnotes.core.model.resolvedPageColor
 import com.xnotes.core.model.resolvedPattern
 import com.xnotes.core.model.resolvedPatternColor
 import com.xnotes.core.model.resolvedSpacing
+import com.xnotes.core.text.CharStyle
+import com.xnotes.core.text.FlowEditor
 import com.xnotes.core.text.FlowFrame
 import com.xnotes.core.text.FlowLayout
 import com.xnotes.core.text.FlowPainter
+import com.xnotes.core.text.FlowPos
+import com.xnotes.core.text.FlowRange
 import com.xnotes.core.text.PageBox
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
@@ -453,6 +457,7 @@ class Editor(context: Context) {
         view.genericMotion = { controller.onGenericMotion(it) }
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         view.afterLayout = { refreshView() }
+        view.onKey = { e -> e.action == android.view.KeyEvent.ACTION_DOWN && handleKeyDown(e) }
         controller.clipboardHasImage = { clipboardImageUri() != null }
         controller.onLinkTap = onLinkTap@{ pageIndex, pageLocal ->
             val src = pdfSource ?: return@onLinkTap false
@@ -2675,6 +2680,8 @@ class Editor(context: Context) {
     var keyActions = KeyActions()
 
     fun handleKeyDown(e: android.view.KeyEvent): Boolean {
+        // A live flow caret session owns the keyboard first (Ctrl+B means bold here).
+        if (flowText.active && handleFlowKey(e)) return true
         // While editing a text box, let the field consume keys (only Escape commits).
         if (editingField != null) {
             if (e.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE) { escape(); return true }
@@ -2715,6 +2722,117 @@ class Editor(context: Context) {
             else -> return false
         }
         return true
+    }
+
+    /** Keys while the flow caret is live: editing, navigation and formatting shortcuts. */
+    private fun handleFlowKey(e: android.view.KeyEvent): Boolean {
+        val ctrl = e.isCtrlPressed
+        val shift = e.isShiftPressed
+        when {
+            e.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE -> flowText.endSession()
+            ctrl && shift && e.keyCode == android.view.KeyEvent.KEYCODE_Z -> redo()
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_Z -> undo()
+            ctrl && shift && e.keyCode == android.view.KeyEvent.KEYCODE_X ->
+                flowToggleStyle({ it.strike }) { s, v -> s.copy(strike = v) }
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_B ->
+                flowToggleStyle({ it.bold }) { s, v -> s.copy(bold = v) }
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_I ->
+                flowToggleStyle({ it.italic }) { s, v -> s.copy(italic = v) }
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_U ->
+                flowToggleStyle({ it.underline }) { s, v -> s.copy(underline = v) }
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_A -> flowText.selectAll()
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_C -> flowCopySelection(cut = false)
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_X -> flowCopySelection(cut = true)
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_V -> pasteTextAtCaret()
+            ctrl -> return false // other Ctrl combos (save, zoom...) stay global
+            e.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                e.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                flowText.applyReplace(flowText.selection, "\n")
+            e.keyCode == android.view.KeyEvent.KEYCODE_DEL -> flowDeleteKey(forward = false)
+            e.keyCode == android.view.KeyEvent.KEYCODE_FORWARD_DEL -> flowDeleteKey(forward = true)
+            e.keyCode == android.view.KeyEvent.KEYCODE_TAB -> flowText.applyReplace(flowText.selection, "\t")
+            e.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT -> flowMoveHorizontal(-1, shift)
+            e.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> flowMoveHorizontal(1, shift)
+            e.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP -> flowMoveVertical(-1, shift)
+            e.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN -> flowMoveVertical(1, shift)
+            e.keyCode == android.view.KeyEvent.KEYCODE_MOVE_HOME -> flowLineEdge(start = true, extend = shift)
+            e.keyCode == android.view.KeyEvent.KEYCODE_MOVE_END -> flowLineEdge(start = false, extend = shift)
+            else -> {
+                val ch = e.unicodeChar
+                if (ch == 0 || e.isAltPressed) return false
+                flowText.applyReplace(flowText.selection, String(Character.toChars(ch)))
+            }
+        }
+        return true
+    }
+
+    /** Toggle a character style on the selection, or arm it for the next typed run. */
+    private fun flowToggleStyle(prop: (CharStyle) -> Boolean, apply: (CharStyle, Boolean) -> CharStyle) {
+        val sel = flowText.selection.normalized()
+        val editor = FlowEditor(state.document.flow)
+        val base = flowText.pendingStyle ?: editor.charStyleAt(sel.start)
+        val target = !prop(base)
+        if (sel.collapsed) {
+            flowText.pendingStyle = apply(base, target)
+            return
+        }
+        flowText.flushBurst()
+        flowText.commitEdit(editor.setCharStyle(sel) { apply(it, target) }, null)
+    }
+
+    private fun flowCopySelection(cut: Boolean) {
+        val sel = flowText.selection.normalized()
+        if (sel.collapsed) return
+        val flow = state.document.flow
+        val text = flow.plainText().substring(flow.globalOffset(sel.start), flow.globalOffset(sel.end))
+        val cm = appContext.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager ?: return
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("xnotes text", text))
+        if (cut) flowText.replaceExternal(sel, "")
+    }
+
+    private fun flowDeleteKey(forward: Boolean) {
+        val sel = flowText.selection.normalized()
+        if (!sel.collapsed) {
+            flowText.applyReplace(sel, "")
+            return
+        }
+        val flow = state.document.flow
+        val g = flow.globalOffset(sel.start)
+        val range = if (forward) {
+            if (g >= flow.globalOffset(flow.endPos())) return
+            FlowRange(sel.start, flow.posAtGlobal(g + 1))
+        } else {
+            if (g <= 0) return
+            FlowRange(flow.posAtGlobal(g - 1), sel.start)
+        }
+        flowText.applyReplace(range, "")
+    }
+
+    private fun flowMoveHorizontal(delta: Int, extend: Boolean) {
+        val flow = state.document.flow
+        val g = (flow.globalOffset(flowText.selection.end) + delta)
+            .coerceIn(0, flow.globalOffset(flow.endPos()))
+        flowMoveTo(flow.posAtGlobal(g), extend)
+    }
+
+    private fun flowMoveVertical(dir: Int, extend: Boolean) {
+        val pos = publishedFlow?.frame?.moveVertical(flowText.selection.end, dir) ?: return
+        flowMoveTo(pos, extend)
+    }
+
+    private fun flowLineEdge(start: Boolean, extend: Boolean) {
+        val pos = publishedFlow?.frame?.lineEdge(flowText.selection.end, start) ?: return
+        flowMoveTo(pos, extend)
+    }
+
+    private fun flowMoveTo(pos: FlowPos, extend: Boolean) {
+        if (extend) {
+            flowText.setSelection(FlowRange(flowText.selection.start, pos))
+        } else {
+            flowText.placeCaret(pos)
+        }
+        flowText.ensureCaretVisible()
     }
 
     /** Feeder C entry point: route stylus side-button key presses (Bluetooth/USI pens) to the
