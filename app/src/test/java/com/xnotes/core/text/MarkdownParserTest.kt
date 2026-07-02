@@ -1,0 +1,90 @@
+package com.xnotes.core.text
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MarkdownParserTest {
+
+    private fun parse(text: String) = MarkdownParser.parse(text, baseSizePt = 12.0)
+
+    @Test
+    fun detectorAcceptsStructureAndEmphasisButNotProse() {
+        assertTrue(MarkdownParser.looksLikeMarkdown("# Title"))
+        assertTrue(MarkdownParser.looksLikeMarkdown("some\n```\ncode\n```"))
+        assertTrue(MarkdownParser.looksLikeMarkdown("- item one"))
+        assertTrue(MarkdownParser.looksLikeMarkdown("1. first"))
+        assertTrue(MarkdownParser.looksLikeMarkdown("has **bold** and `code` bits"))
+        assertFalse(MarkdownParser.looksLikeMarkdown("plain prose with a * star and 3.14"))
+        assertFalse(MarkdownParser.looksLikeMarkdown("{\"json\": 1}\nvalue = f(x)"))
+    }
+
+    @Test
+    fun headingsScaleAndBold() {
+        val p = parse("## Section")[0]
+        assertEquals("Section", p.plainText())
+        assertTrue(p.runs[0].style.bold)
+        assertEquals(18.0, p.runs[0].style.sizePt!!, 1e-9)
+    }
+
+    @Test
+    fun fencedCodeBecomesCodeParagraphsWithLanguage() {
+        val paras = parse("before\n```kotlin\nval x = 1\n\n  indented\n```\nafter")
+        assertEquals(5, paras.size)
+        assertEquals(null, paras[0].codeLang)
+        assertEquals("kotlin", paras[1].codeLang)
+        assertEquals("val x = 1", paras[1].plainText())
+        assertEquals("kotlin", paras[2].codeLang)
+        assertEquals(0, paras[2].length)
+        assertEquals("  indented", paras[3].plainText())
+        assertEquals(null, paras[4].codeLang)
+    }
+
+    @Test
+    fun listsTasksAndQuotesMapToParagraphProperties() {
+        val paras = parse("- a\n  - nested\n1. one\n- [x] done\n- [ ] todo\n> quoted")
+        assertEquals(ListKind.BULLET, paras[0].list)
+        assertEquals(0, paras[0].indent)
+        assertEquals(1, paras[1].indent)
+        assertEquals(ListKind.ORDERED, paras[2].list)
+        assertEquals(ListKind.CHECK, paras[3].list)
+        assertTrue(paras[3].checked)
+        assertFalse(paras[4].checked)
+        assertEquals("quoted", paras[5].plainText())
+        assertEquals(1, paras[5].indent)
+    }
+
+    @Test
+    fun inlineEmphasisNestsAndMerges() {
+        val runs = parse("a **bold _both_** `code` ~~gone~~ plain")[0].runs
+        assertEquals("a bold both code gone plain", runs.joinToString("") { it.text })
+        val bold = runs.first { it.text == "bold " }
+        assertTrue(bold.style.bold)
+        assertFalse(bold.style.italic)
+        val both = runs.first { it.text == "both" }
+        assertTrue(both.style.bold)
+        assertTrue(both.style.italic)
+        assertTrue(runs.first { it.text == "code" }.style.code)
+        assertTrue(runs.first { it.text == "gone" }.style.strike)
+    }
+
+    @Test
+    fun unmatchedMarkersStayLiteral() {
+        val p = parse("2 * 3 = 6 and a_var stays")[0]
+        assertEquals("2 * 3 = 6 and a_var stays", p.plainText())
+        assertEquals(1, p.runs.size)
+        assertEquals(CharStyle.DEFAULT, p.runs[0].style)
+    }
+
+    @Test
+    fun linksKeepStyledTextAndDropTheUrl() {
+        val runs = parse("see [the docs](https://x.y) now")[0].runs
+        assertEquals("see the docs now", runs.joinToString("") { it.text })
+        val link = runs.first { it.text == "the docs" }
+        assertTrue(link.style.underline)
+        assertEquals(MarkdownParser.LINK_COLOR, link.style.color)
+        val img = parse("![alt text](pic.png)")[0]
+        assertEquals("alt text", img.plainText())
+    }
+}
