@@ -97,6 +97,6 @@ class TreeSitterHighlighter(
 
     companion object {
         /** Languages whose grammars ship in libxnotests. */
-        val SUPPORTED = setOf("bash", "c", "java", "javascript", "json", "kotlin", "python")
+        val SUPPORTED = setOf("bash", "c", "cpp", "java", "javascript", "json", "kotlin", "python")
     }
 }

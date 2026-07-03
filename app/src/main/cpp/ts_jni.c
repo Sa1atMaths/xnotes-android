@@ -11,6 +11,7 @@
 
 const TSLanguage *tree_sitter_bash(void);
 const TSLanguage *tree_sitter_c(void);
+const TSLanguage *tree_sitter_cpp(void);
 const TSLanguage *tree_sitter_java(void);
 const TSLanguage *tree_sitter_javascript(void);
 const TSLanguage *tree_sitter_json(void);
@@ -25,6 +26,7 @@ typedef struct {
 static const LangEntry LANGS[] = {
     {"bash", tree_sitter_bash},
     {"c", tree_sitter_c},
+    {"cpp", tree_sitter_cpp},
     {"java", tree_sitter_java},
     {"javascript", tree_sitter_javascript},
     {"json", tree_sitter_json},

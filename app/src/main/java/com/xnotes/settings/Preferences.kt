@@ -51,7 +51,7 @@ data class Preferences(
     /** Per-language user .scm highlight-query overrides: language id -> imported file path. */
     val customScm: Map<String, String> = emptyMap(),
     /** Language "Paste as Code" assigns to pasted blocks; "plain" pastes unhighlighted. */
-    val defaultCodeLanguage: String = "kotlin",
+    val defaultCodeLanguage: String = "cpp",
 ) {
     val isDark: Boolean get() = uiAppearance != "light"
 
@@ -120,8 +120,8 @@ data class Preferences(
                     obj.keys().asSequence().associateWith { k -> obj.optString(k) }
                         .filterValues { it.isNotEmpty() }
                 } ?: emptyMap(),
-                defaultCodeLanguage = o.optString("default_code_language", "kotlin")
-                    .lowercase().trim().ifEmpty { "kotlin" },
+                defaultCodeLanguage = o.optString("default_code_language", "cpp")
+                    .lowercase().trim().ifEmpty { "cpp" },
             )
         }
     }

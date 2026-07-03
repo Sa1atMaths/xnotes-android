@@ -13,6 +13,8 @@ set(GRAMMAR_SOURCES
     grammars/bash/parser.c
     grammars/bash/scanner.c
     grammars/c/parser.c
+    grammars/cpp/parser.c
+    grammars/cpp/scanner.c
     grammars/java/parser.c
     grammars/javascript/parser.c
     grammars/javascript/scanner.c
