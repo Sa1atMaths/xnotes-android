@@ -407,7 +407,11 @@ class Editor(context: Context) {
         it.onHaptic = {
             runCatching { view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) }
         }
-        it.onCaretChanged = { flowSelTick++ }
+        it.onCaretChanged = {
+            flowSelTick++
+            flowContextMenu = null
+        }
+        it.onContextMenu = { viewport -> flowContextMenu = viewport }
     }
 
     /** Bumped whenever the flow caret/selection or pending style moves (the format bar keys on it). */
@@ -417,7 +421,7 @@ class Editor(context: Context) {
     private val flowInput = com.xnotes.canvas.FlowInput(view, flowText, { state.document.flow })
         .also {
             view.flowInput = it
-            it.onPaste = { pasteTextAtCaret() }
+            it.onPaste = { pastePlainAtCaret() }
         }
 
     /** True while the inline text caret session is live (drives the bottom format bar/IME). */
@@ -434,25 +438,30 @@ class Editor(context: Context) {
 
     fun clipboardHasText(): Boolean = clipboardText() != null
 
-    /**
-     * Paste the clipboard's text at the flow caret. Text that reads as markdown is
-     * parsed to rich paragraphs (fences become code lines); anything else lands as
-     * plain text, so literal stars and hashes in prose survive.
-     */
-    fun pasteTextAtCaret() {
-        ensureFlowCaret()
+    /** Where the flow-editing context menu is anchored (viewport px), or null when closed. */
+    var flowContextMenu by mutableStateOf<com.xnotes.core.geometry.Pt?>(null)
+        private set
+
+    fun dismissFlowContextMenu() {
+        flowContextMenu = null
+    }
+
+    /** Paste the clipboard's text verbatim at the flow caret. */
+    fun pastePlainAtCaret() {
         if (!flowText.active) return
         val text = clipboardText() ?: return
-        if (com.xnotes.core.text.MarkdownParser.looksLikeMarkdown(text)) {
-            insertFlowParagraphs(com.xnotes.core.text.MarkdownParser.parse(text, flowDefaultSizePt()))
-        } else {
-            flowText.replaceExternal(flowText.selection, text)
-        }
+        flowText.replaceExternal(flowText.selection, text)
+    }
+
+    /** Parse the clipboard's text as markdown and paste it as rich paragraphs. */
+    fun pasteMarkdownAtCaret() {
+        if (!flowText.active) return
+        val text = clipboardText() ?: return
+        insertFlowParagraphs(com.xnotes.core.text.MarkdownParser.parse(text, flowDefaultSizePt()))
     }
 
     /** Paste the clipboard's text as a code block (one code paragraph per line). */
     fun pasteAsCodeAtCaret() {
-        ensureFlowCaret()
         if (!flowText.active) return
         val text = clipboardText() ?: return
         insertFlowParagraphs(
@@ -463,19 +472,6 @@ class Editor(context: Context) {
                 )
             },
         )
-    }
-
-    /** Bar paste without a caret yet: open a session at the end of the flow. */
-    private fun ensureFlowCaret() {
-        if (tool != Tool.TEXT || flowText.active) return
-        flowText.startSession(FlowRange.caret(state.document.flow.endPos()))
-    }
-
-    /** Long-press menu paste: arm the text tool, place the caret at [content], then paste. */
-    fun pasteTextAt(content: com.xnotes.core.geometry.Pt, asCode: Boolean) {
-        selectTool(Tool.TEXT)
-        flowText.tapAt(content)
-        if (asCode) pasteAsCodeAtCaret() else pasteTextAtCaret()
     }
 
     /** Splice ready-made paragraphs at the caret as one undo step (rich paste). */
@@ -545,6 +541,7 @@ class Editor(context: Context) {
         if (active) {
             flowInput.startSession()
         } else {
+            flowContextMenu = null
             flowInput.endSession()
             refreshContent()
         }
@@ -2942,7 +2939,7 @@ class Editor(context: Context) {
             ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_A -> flowText.selectAll()
             ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_C -> flowCopySelection(cut = false)
             ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_X -> flowCopySelection(cut = true)
-            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_V -> pasteTextAtCaret()
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_V -> pastePlainAtCaret()
             ctrl -> return false // other Ctrl combos (save, zoom...) stay global
             e.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
                 e.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ->

@@ -82,7 +82,6 @@ object XnotesIcons {
     val alignJustify = icon("M3 12h18", "M3 18h18", "M3 6h18")
     val indentIncrease = icon("M21 12H11", "M21 18H11", "M21 6H11", "m3 8 4 4-4 4")
     val indentDecrease = icon("M21 12H11", "M21 18H11", "M21 6H11", "m7 8-4 4 4 4")
-    val code = icon("m16 18 6-6-6-6", "m8 6-6 6 6 6")
     val image = icon(rect(3.0, 3.0, 18.0, 18.0), circle(8.5, 8.5, 1.5), "M21 15l-5-5L5 21")
     // The screenshot tool: plain scissors (Feather "scissors"), the same glyph as Cut.
     val scissors = icon(circle(6.0, 6.0, 3.0), circle(6.0, 18.0, 3.0), "M20 4 8.12 15.88", "M14.47 14.48 20 20", "M8.12 8.12 12 12")

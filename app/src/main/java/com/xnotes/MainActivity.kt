@@ -633,6 +633,7 @@ private fun EditorScreen(
                                 pendingInsertContent = c
                                 insertImageLauncher.launch(arrayOf("image/*"))
                             })
+                            com.xnotes.ui.FlowPasteMenu(editor)
                             ZoomLockHint(editor)
                             RefiningPdfHint(editor)
                         }

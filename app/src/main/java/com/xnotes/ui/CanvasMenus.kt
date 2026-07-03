@@ -141,16 +141,35 @@ fun LongPressMenu(editor: Editor, onInsertImageAt: (com.xnotes.core.geometry.Pt)
                     editor.pasteClipboardImageAt(target.content); editor.dismissContextMenu()
                 })
             }
-            if (editor.clipboardHasText()) {
-                DropdownMenuItem(text = { Text("Paste text") }, onClick = {
-                    editor.pasteTextAt(target.content, asCode = false); editor.dismissContextMenu()
-                })
-                DropdownMenuItem(text = { Text("Paste as code") }, onClick = {
-                    editor.pasteTextAt(target.content, asCode = true); editor.dismissContextMenu()
-                })
-            }
             DropdownMenuItem(text = { Text("Insert image…") }, onClick = {
                 onInsertImageAt(target.content); editor.dismissContextMenu()
+            })
+        }
+    }
+}
+
+/**
+ * The flow-editing context menu (long press with the text tool, after the word
+ * selection lands): explicit paste modes only, no auto-detection anywhere.
+ */
+@Composable
+fun FlowPasteMenu(editor: Editor) {
+    val at = editor.flowContextMenu ?: return
+    val density = LocalDensity.current
+    val xDp = with(density) { at.x.toFloat().toDp() }
+    val yDp = with(density) { at.y.toFloat().toDp() }
+    val enabled = editor.clipboardHasText()
+
+    Box(modifier = Modifier.offset(xDp, yDp).size(1.dp)) {
+        DropdownMenu(expanded = true, onDismissRequest = { editor.dismissFlowContextMenu() }) {
+            DropdownMenuItem(text = { Text("Paste") }, enabled = enabled, onClick = {
+                editor.pastePlainAtCaret(); editor.dismissFlowContextMenu()
+            })
+            DropdownMenuItem(text = { Text("Paste as Markdown") }, enabled = enabled, onClick = {
+                editor.pasteMarkdownAtCaret(); editor.dismissFlowContextMenu()
+            })
+            DropdownMenuItem(text = { Text("Paste as Code") }, enabled = enabled, onClick = {
+                editor.pasteAsCodeAtCaret(); editor.dismissFlowContextMenu()
             })
         }
     }

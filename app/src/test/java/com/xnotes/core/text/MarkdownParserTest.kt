@@ -10,17 +10,6 @@ class MarkdownParserTest {
     private fun parse(text: String) = MarkdownParser.parse(text, baseSizePt = 12.0)
 
     @Test
-    fun detectorAcceptsStructureAndEmphasisButNotProse() {
-        assertTrue(MarkdownParser.looksLikeMarkdown("# Title"))
-        assertTrue(MarkdownParser.looksLikeMarkdown("some\n```\ncode\n```"))
-        assertTrue(MarkdownParser.looksLikeMarkdown("- item one"))
-        assertTrue(MarkdownParser.looksLikeMarkdown("1. first"))
-        assertTrue(MarkdownParser.looksLikeMarkdown("has **bold** and `code` bits"))
-        assertFalse(MarkdownParser.looksLikeMarkdown("plain prose with a * star and 3.14"))
-        assertFalse(MarkdownParser.looksLikeMarkdown("{\"json\": 1}\nvalue = f(x)"))
-    }
-
-    @Test
     fun headingsScaleAndBold() {
         val p = parse("## Section")[0]
         assertEquals("Section", p.plainText())

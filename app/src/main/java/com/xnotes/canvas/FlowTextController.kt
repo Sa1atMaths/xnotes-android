@@ -70,6 +70,9 @@ class FlowTextController(
     /** Long-press armed a selection: a short haptic tick. */
     var onHaptic: () -> Unit = {}
 
+    /** A long-press gesture finished: open the editing context menu at this viewport point. */
+    var onContextMenu: (Pt) -> Unit = {}
+
     private val handler = Handler(Looper.getMainLooper())
     private val idleFlush = Runnable { flushBurst() }
 
@@ -83,6 +86,7 @@ class FlowTextController(
     private var pressAnchor: FlowPos? = null
     private var pressHit: FlowHit? = null
     private var pressViewport = Pt(0.0, 0.0)
+    private var pressContent = Pt(0.0, 0.0)
     private var selectionArmed = false
     private var armedAnchor: FlowRange? = null
     private var lastTapAtMs = 0L
@@ -127,6 +131,7 @@ class FlowTextController(
 
     fun pressAt(content: Pt, viewport: Pt) {
         pressViewport = viewport
+        pressContent = content
         selectionArmed = false
         armedAnchor = null
         val (pi, local) = pagePointAt(content) ?: return
@@ -141,14 +146,21 @@ class FlowTextController(
         handler.postDelayed(longPressRun, LONG_PRESS_MS)
     }
 
-    /** Long press while still: arm selection on the word under the finger. */
+    /** Long press while still: arm selection on the word under the finger (the release opens the menu). */
     private fun onLongPressFired() {
         val anchor = pressAnchor ?: return
         if (!active) startSession(FlowRange.caret(anchor))
-        val word = wordRangeAt(flow(), anchor).normalized()
-        selectionArmed = true
-        armedAnchor = word
-        selection = if (word.collapsed) FlowRange.caret(anchor) else word
+        if (pressHit == FlowHit.BeyondEnd) {
+            // Below the text: place the caret on the pressed line (empty-line fill) instead.
+            tapBeyondEnd(pressContent)
+            selectionArmed = true
+            armedAnchor = FlowRange.caret(selection.end)
+        } else {
+            val word = wordRangeAt(flow(), anchor).normalized()
+            selectionArmed = true
+            armedAnchor = word
+            selection = if (word.collapsed) FlowRange.caret(anchor) else word
+        }
         onHaptic()
         imeSync()
         requestRender()
@@ -184,6 +196,7 @@ class FlowTextController(
             armedAnchor = null
             imeSync()
             requestRender()
+            onContextMenu(viewport)
             return
         }
         when (hit) {

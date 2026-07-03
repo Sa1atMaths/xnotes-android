@@ -3,12 +3,13 @@ package com.xnotes.core.text
 import com.xnotes.core.model.Rgba
 
 /**
- * A deliberately small, line-based markdown reader for paste (no AST, no tables,
- * no indented code blocks). Headings map to size multipliers over the flow's
- * default size, fenced blocks become code paragraphs (one per line, language
- * from the fence info), lists/tasks/blockquotes map to paragraph properties,
- * and the inline pass handles ** __ * _ ~~ `code` plus links (styled text, URL
- * dropped) and images (alt text). Unclosed markers fall out as literal text.
+ * A deliberately small, line-based markdown reader for the explicit "Paste as
+ * Markdown" action (no AST, no tables, no indented code blocks). Headings map to
+ * size multipliers over the flow's default size, fenced blocks become code
+ * paragraphs (one per line, language from the fence info), lists/tasks/
+ * blockquotes map to paragraph properties, and the inline pass handles
+ * ** __ * _ ~~ `code` plus links (styled text, URL dropped) and images (alt
+ * text). Unclosed markers fall out as literal text.
  */
 object MarkdownParser {
 
@@ -34,36 +35,6 @@ object MarkdownParser {
 
     /** Common fence-info aliases to the bundled grammar ids. */
     fun normalizeLang(id: String): String = LANG_ALIASES[id] ?: id
-
-    /**
-     * The cheap paste heuristic: one structural line (heading, fence, list, task,
-     * ordered item, blockquote) or two inline emphasis pairs within the first 200
-     * lines reads as markdown; plain prose does not.
-     */
-    fun looksLikeMarkdown(text: String): Boolean {
-        var inlinePairs = 0
-        for ((i, line) in text.lineSequence().withIndex()) {
-            if (i >= 200) break
-            if (HEADING.matches(line) || FENCE.matches(line) || TASK.matches(line) ||
-                BULLET.matches(line) || ORDERED.matches(line) || BLOCKQUOTE.matches(line)
-            ) {
-                return true
-            }
-            inlinePairs += pairCount(line, "**") + pairCount(line, "~~") + pairCount(line, "`")
-            if (inlinePairs >= 2) return true
-        }
-        return false
-    }
-
-    private fun pairCount(line: String, marker: String): Int {
-        var count = 0
-        var i = line.indexOf(marker)
-        while (i >= 0) {
-            count++
-            i = line.indexOf(marker, i + marker.length)
-        }
-        return count / 2
-    }
 
     /** Parse [text] into flow paragraphs; [baseSizePt] anchors the heading sizes. */
     fun parse(text: String, baseSizePt: Double): List<Paragraph> {
