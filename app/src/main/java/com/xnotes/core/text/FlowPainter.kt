@@ -19,17 +19,45 @@ object FlowPainter {
 
     fun paintPage(r: Renderer, frame: FlowFrame, pageIndex: Int, region: Rect) {
         val page = frame.pages.getOrNull(pageIndex) ?: return
+        paintCodeChips(r, frame, page.lines, region)
         for (line in page.lines) {
             if (line.bottom < region.top || line.top > region.bottom) continue
             paintLine(r, frame, line)
         }
     }
 
-    private fun paintLine(r: Renderer, frame: FlowFrame, line: PlacedLine) {
-        if (line.codeLine) {
-            val w = line.codeRight - line.codeLeft + 2 * CODE_PAD
-            r.fillRect(Rect(line.codeLeft - CODE_PAD, line.top, w, line.height), frame.codeBg ?: CODE_BG)
+    /**
+     * One background rect per contiguous code block, not per line: abutting
+     * per-line rects leave antialiased seam hairlines at their shared fractional
+     * edges (two half-covered translucent fills never sum back to a solid one).
+     */
+    private fun paintCodeChips(r: Renderer, frame: FlowFrame, lines: List<PlacedLine>, region: Rect) {
+        var i = 0
+        while (i < lines.size) {
+            if (!lines[i].codeLine) {
+                i++
+                continue
+            }
+            val top = lines[i].top
+            var left = lines[i].codeLeft
+            var right = lines[i].codeRight
+            while (i + 1 < lines.size && lines[i + 1].codeLine) {
+                i++
+                left = minOf(left, lines[i].codeLeft)
+                right = maxOf(right, lines[i].codeRight)
+            }
+            val bottom = lines[i].bottom
+            if (bottom >= region.top && top <= region.bottom) {
+                r.fillRect(
+                    Rect(left - CODE_PAD, top, right - left + 2 * CODE_PAD, bottom - top),
+                    frame.codeBg ?: CODE_BG,
+                )
+            }
+            i++
         }
+    }
+
+    private fun paintLine(r: Renderer, frame: FlowFrame, line: PlacedLine) {
         for (deco in line.decos) {
             deco.style.highlight?.let {
                 r.fillRect(Rect(deco.x0, line.top, deco.x1 - deco.x0, line.height), it)

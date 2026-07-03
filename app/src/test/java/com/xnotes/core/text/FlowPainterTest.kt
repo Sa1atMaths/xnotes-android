@@ -67,6 +67,19 @@ class FlowPainterTest {
     }
 
     @Test
+    fun aCodeBlockPaintsOneSeamlessChip() {
+        val flow = TextFlow().apply {
+            paragraphs.add(Paragraph(mutableListOf(Run("a")), codeLang = "python"))
+            paragraphs.add(Paragraph(mutableListOf(Run("b")), codeLang = "python"))
+            paragraphs.add(Paragraph(mutableListOf(Run("plain"))))
+            paragraphs.add(Paragraph(mutableListOf(Run("c")), codeLang = "python"))
+        }
+        val ops = paint(frameOf(flow)).ops
+        // One rect for the two-line block, one for the separate single-line block.
+        assertEquals(2, ops.count { it == "fillRect" })
+    }
+
+    @Test
     fun orderedMarkersDrawTheirMeasuredLabel() {
         val flow = TextFlow().apply {
             paragraphs.add(Paragraph(mutableListOf(Run("x")), list = ListKind.ORDERED))
