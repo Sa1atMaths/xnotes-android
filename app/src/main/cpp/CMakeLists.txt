@@ -6,10 +6,21 @@ cmake_minimum_required(VERSION 3.22.1)
 project(xnotests C)
 
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_FLAGS_RELEASE "-Os -fvisibility=hidden -ffunction-sections -fdata-sections")
+# Applied to every build type (AGP release uses RelWithDebInfo, not Release).
+add_compile_options(-Os -fvisibility=hidden -ffunction-sections -fdata-sections)
 
 set(GRAMMAR_SOURCES
+    grammars/bash/parser.c
+    grammars/bash/scanner.c
+    grammars/c/parser.c
+    grammars/java/parser.c
+    grammars/javascript/parser.c
+    grammars/javascript/scanner.c
     grammars/json/parser.c
+    grammars/kotlin/parser.c
+    grammars/kotlin/scanner.c
+    grammars/python/parser.c
+    grammars/python/scanner.c
 )
 
 add_library(xnotests SHARED

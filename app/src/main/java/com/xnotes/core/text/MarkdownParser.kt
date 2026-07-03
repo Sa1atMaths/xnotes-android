@@ -26,6 +26,15 @@ object MarkdownParser {
 
     private val HEADING_SCALE = doubleArrayOf(2.0, 1.5, 1.25, 1.1, 1.0, 1.0)
 
+    private val LANG_ALIASES = mapOf(
+        "js" to "javascript", "jsx" to "javascript", "ts" to "javascript",
+        "py" to "python", "kt" to "kotlin", "kts" to "kotlin",
+        "sh" to "bash", "shell" to "bash", "zsh" to "bash",
+    )
+
+    /** Common fence-info aliases to the bundled grammar ids. */
+    fun normalizeLang(id: String): String = LANG_ALIASES[id] ?: id
+
     /**
      * The cheap paste heuristic: one structural line (heading, fence, list, task,
      * ordered item, blockquote) or two inline emphasis pairs within the first 200
@@ -65,7 +74,7 @@ object MarkdownParser {
             val line = lines[i]
             val fence = FENCE.matchEntire(line)
             if (fence != null) {
-                val lang = fence.groupValues[1].lowercase()
+                val lang = normalizeLang(fence.groupValues[1].lowercase())
                 i++
                 while (i < lines.size && !FENCE.matches(lines[i])) {
                     out.add(codeLine(lines[i], lang))

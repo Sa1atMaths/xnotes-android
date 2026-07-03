@@ -39,6 +39,14 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // The tree-sitter parser tables gzip ~6x: compressed packaging keeps the
+            // APK at ~12MB instead of ~30MB, at the cost of extract-on-install.
+            useLegacyPackaging = true
+        }
+    }
+
     // F-Droid rejects the AGP dependency-metadata block in the APK signing block.
     dependenciesInfo {
         includeInApk = false

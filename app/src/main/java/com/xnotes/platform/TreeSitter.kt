@@ -96,7 +96,7 @@ class TreeSitterHighlighter(
     }
 
     companion object {
-        /** Languages whose grammars ship in libxnotests (grows with the vendored set). */
-        val SUPPORTED = setOf("json")
+        /** Languages whose grammars ship in libxnotests. */
+        val SUPPORTED = setOf("bash", "c", "java", "javascript", "json", "kotlin", "python")
     }
 }
