@@ -38,9 +38,11 @@ class FlowInput(
     private var pendingStart = -1
     private var pendingBefore = 0
     private var pendingText = ""
+    private var batchDepth = 0
 
     private var extractedToken = 0
     private var extractedMonitor = false
+    private var cursorUpdatesMode = 0
 
     private val watcher = object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -152,6 +154,7 @@ class FlowInput(
     }
 
     private fun notifySelection() {
+        if (batchDepth > 0) return // one report at endBatchEdit, not per step (Gboard swipe)
         val s = Selection.getSelectionStart(mirror).coerceAtLeast(0)
         val e = Selection.getSelectionEnd(mirror).coerceAtLeast(0)
         val cs = BaseInputConnection.getComposingSpanStart(mirror)
@@ -160,6 +163,32 @@ class FlowInput(
         if (extractedMonitor) {
             imm()?.updateExtractedText(view, extractedToken, buildExtracted())
         }
+        if (cursorUpdatesMode and InputConnection.CURSOR_UPDATE_MONITOR != 0) {
+            reportCursorAnchor()
+        }
+    }
+
+    /** Where the caret sits on screen, for handwriting IMEs (S Pen write-in-place). */
+    private fun reportCursorAnchor() {
+        val rect = session.caretViewportRect() ?: return
+        val (s, e) = selectionGlobal()
+        val loc = IntArray(2)
+        view.getLocationOnScreen(loc)
+        val matrix = android.graphics.Matrix().apply {
+            postTranslate(loc[0].toFloat(), loc[1].toFloat())
+        }
+        val info = android.view.inputmethod.CursorAnchorInfo.Builder()
+            .setSelectionRange(s, e)
+            .setInsertionMarkerLocation(
+                rect.left.toFloat(),
+                rect.top.toFloat(),
+                rect.bottom.toFloat(),
+                rect.bottom.toFloat(),
+                android.view.inputmethod.CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION,
+            )
+            .setMatrix(matrix)
+            .build()
+        imm()?.updateCursorAnchorInfo(view, info)
     }
 
     private fun buildExtracted(): ExtractedText = ExtractedText().apply {
@@ -189,6 +218,25 @@ class FlowInput(
 
     private inner class FlowInputConnection : BaseInputConnection(view, true) {
         override fun getEditable(): Editable = mirror
+
+        override fun beginBatchEdit(): Boolean {
+            batchDepth++
+            return true
+        }
+
+        override fun endBatchEdit(): Boolean {
+            if (batchDepth > 0) batchDepth--
+            if (batchDepth == 0) notifySelection()
+            return batchDepth > 0
+        }
+
+        override fun requestCursorUpdates(cursorUpdateMode: Int): Boolean {
+            cursorUpdatesMode = cursorUpdateMode
+            if (cursorUpdateMode and InputConnection.CURSOR_UPDATE_IMMEDIATE != 0) {
+                view.post { reportCursorAnchor() }
+            }
+            return true
+        }
 
         override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText {
             // Samsung's keyboard needs a real extracted-text answer (and monitoring) or its
