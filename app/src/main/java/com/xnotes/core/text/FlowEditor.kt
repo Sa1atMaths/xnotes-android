@@ -154,6 +154,14 @@ class FlowEditor(private val flow: TextFlow) {
         return styleForInsert(para, pos.offset.coerceIn(0, para.length))
     }
 
+    /** The style of the first character inside [range] (what a format bar reports for selections). */
+    fun styleAtRangeStart(range: FlowRange): CharStyle {
+        val r = range.normalized()
+        val para = flow.paragraphs.getOrNull(r.start.para) ?: return CharStyle.DEFAULT
+        if (para.length == 0) return styleForInsert(para, 0)
+        return styleOfCharAt(para, r.start.offset.coerceIn(0, para.length - 1)) ?: CharStyle.DEFAULT
+    }
+
     // --- internals ---
 
     private fun combined(cmds: List<Command>): Command? = when {

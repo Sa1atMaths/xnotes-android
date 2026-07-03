@@ -131,6 +131,19 @@ class FlowEditorTest {
     }
 
     @Test
+    fun rangeStyleReadsTheFirstSelectedCharacter() {
+        val flow = TextFlow().apply {
+            paragraphs.add(
+                Paragraph(mutableListOf(Run("ab", CharStyle(sizePt = 10.0)), Run("cd", CharStyle(sizePt = 20.0)))),
+            )
+        }
+        val editor = FlowEditor(flow)
+        // A selection starting at 'c' reports the 20pt run, not the 10pt char before it.
+        assertEquals(20.0, editor.styleAtRangeStart(FlowRange(FlowPos(0, 2), FlowPos(0, 4))).sizePt)
+        assertEquals(10.0, editor.charStyleAt(FlowPos(0, 2)).sizePt)
+    }
+
+    @Test
     fun typingWithExplicitStyleStartsAStyledRun() {
         val flow = TextFlow().apply { paragraphs.add(para("ab")) }
         FlowEditor(flow).insertText(FlowPos(0, 1), "X", CharStyle(italic = true))

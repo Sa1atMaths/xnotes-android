@@ -413,16 +413,21 @@ class Editor(context: Context) {
         onSessionChanged = { active -> onFlowSessionChanged(active) },
         onViewChanged = { refreshView() },
         requestRender = { onRender() },
-    ).also {
-        controller.flowText = it
-        it.onHaptic = {
+    ).also { ctrl ->
+        controller.flowText = ctrl
+        ctrl.onHaptic = {
             runCatching { view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) }
         }
-        it.onCaretChanged = {
+        ctrl.onCaretChanged = {
             flowSelTick++
             flowContextMenu = null
         }
-        it.onContextMenu = { viewport -> flowContextMenu = viewport }
+        ctrl.onContextMenu = { viewport -> flowContextMenu = viewport }
+        ctrl.caretMetricsFor = { style ->
+            val flow = state.document.flow
+            val para = flow.paragraphs.getOrNull(ctrl.selection.normalized().start.para) ?: Paragraph()
+            textMeasurer.metrics(com.xnotes.core.text.resolveFont(flow, para, style))
+        }
     }
 
     /** Bumped whenever the flow caret/selection or pending style moves (the format bar keys on it). */
@@ -464,22 +469,32 @@ class Editor(context: Context) {
         flowText.replaceExternal(flowText.selection, text)
     }
 
-    /** Parse the clipboard's text as markdown and paste it as rich paragraphs. */
+    /** Parse the clipboard's text as markdown and paste it at the caret's font size. */
     fun pasteMarkdownAtCaret() {
         if (!flowText.active) return
         val text = clipboardText() ?: return
-        insertFlowParagraphs(com.xnotes.core.text.MarkdownParser.parse(text, flowDefaultSizePt()))
+        val caretSize = flowCaretStyle().sizePt
+        val paras = com.xnotes.core.text.MarkdownParser.parse(text, caretSize ?: flowDefaultSizePt())
+        if (caretSize != null) {
+            for (p in paras) {
+                for (run in p.runs) {
+                    if (run.style.sizePt == null) run.style = run.style.copy(sizePt = caretSize)
+                }
+            }
+        }
+        insertFlowParagraphs(paras)
     }
 
-    /** Paste the clipboard's text as a code block in the preferred default language. */
+    /** Paste the clipboard's text as a code block, at the caret's font size. */
     fun pasteAsCodeAtCaret() {
         if (!flowText.active) return
         val text = clipboardText() ?: return
         val lang = settings.prefs.defaultCodeLanguage.takeIf { it != "plain" } ?: ""
+        val style = CharStyle(sizePt = flowCaretStyle().sizePt)
         insertFlowParagraphs(
             text.split('\n').map { line ->
                 Paragraph(
-                    if (line.isEmpty()) mutableListOf() else mutableListOf(com.xnotes.core.text.Run(line)),
+                    if (line.isEmpty()) mutableListOf() else mutableListOf(com.xnotes.core.text.Run(line, style)),
                     codeLang = lang,
                 )
             },
@@ -2973,10 +2988,15 @@ class Editor(context: Context) {
 
     // --- flow formatting (the bottom format bar + shortcuts) ---
 
-    /** The style a caret would type with right now (pending style wins over the text's). */
+    /** The style the bar reports: pending/typing style at a caret, the first char of a selection. */
     fun flowCaretStyle(): CharStyle {
         val sel = flowText.selection.normalized()
-        return flowText.pendingStyle ?: FlowEditor(state.document.flow).charStyleAt(sel.start)
+        val editor = FlowEditor(state.document.flow)
+        return if (sel.collapsed) {
+            flowText.pendingStyle ?: editor.charStyleAt(sel.start)
+        } else {
+            editor.styleAtRangeStart(sel)
+        }
     }
 
     /** The paragraph under the caret / selection start, for the bar's paragraph toggles. */
@@ -2995,6 +3015,7 @@ class Editor(context: Context) {
         if (sel.collapsed) {
             flowText.pendingStyle = apply(flowCaretStyle())
             flowSelTick++
+            onRender() // the caret previews the pending style (e.g. its new size)
             return
         }
         flowText.flushBurst()

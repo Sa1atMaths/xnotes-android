@@ -73,6 +73,9 @@ class FlowTextController(
     /** A long-press gesture finished: open the editing context menu at this viewport point. */
     var onContextMenu: (Pt) -> Unit = {}
 
+    /** Metrics of the font [pendingStyle] resolves to, so the caret previews it before typing. */
+    var caretMetricsFor: ((CharStyle) -> com.xnotes.core.pal.LineMetrics)? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private val idleFlush = Runnable { flushBurst() }
 
@@ -422,8 +425,19 @@ class FlowTextController(
         } else {
             val (pi, cr) = f.caretRect(selection.end) ?: return
             val pr = state.pageRects.getOrNull(pi) ?: return
+            var top = cr.top
+            var height = cr.h
+            // A pending style (size bumped before typing) previews on the caret itself,
+            // grown/shrunk about the line's baseline like the glyphs it will produce.
+            pendingStyle?.let { pending ->
+                caretMetricsFor?.invoke(pending)?.let { m ->
+                    val baseline = f.placedLineFor(selection.end)?.second?.baseline ?: (cr.top + cr.h)
+                    top = baseline - m.ascent
+                    height = m.height
+                }
+            }
             val w = (FlowFrame.CARET_WIDTH / state.zoom).coerceAtLeast(0.75)
-            r.fillRect(Rect(pr.left + cr.left - w / 2.0, pr.top + cr.top, w, cr.h), accent)
+            r.fillRect(Rect(pr.left + cr.left - w / 2.0, pr.top + top, w, height), accent)
         }
     }
 
