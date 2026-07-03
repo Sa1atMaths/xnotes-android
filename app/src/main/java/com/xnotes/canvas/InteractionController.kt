@@ -1531,6 +1531,14 @@ class InteractionController(
      * (tap = place caret / toggle checkbox / fill empty lines, drag = select a range).
      */
     private fun beginTextGesture(content: Pt, viewport: Pt) {
+        // A selection handle wins over everything, including legacy boxes beneath it.
+        if (flowText?.isOnHandle(viewport) == true) {
+            clearSelection()
+            mode = PointerMode.FLOW_TEXT
+            flowText?.pressAt(content, viewport)
+            requestRender()
+            return
+        }
         val pi = state.pageIndexAtContent(content)
         if (pi != null) {
             val pr = state.pageRects[pi]

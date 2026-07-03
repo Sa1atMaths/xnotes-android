@@ -96,6 +96,24 @@ class FlowTextController(
     private var lastTapViewport = Pt(0.0, 0.0)
     private val longPressRun = Runnable { onLongPressFired() }
 
+    // selection handles + edge autoscroll while extending a selection
+    private enum class Handle { START, END }
+    private var draggingHandle: Handle? = null
+    private var handleFixed: FlowPos? = null
+    private var lastDragViewport: Pt? = null
+    private var autoscrollVel = 0.0
+    private val autoscrollRun = object : Runnable {
+        override fun run() {
+            val vp = lastDragViewport ?: return
+            if (autoscrollVel == 0.0) return
+            state.scrollBy(0.0, autoscrollVel)
+            onViewChanged()
+            updateDragSelection(vp)
+            requestRender()
+            handler.postDelayed(this, AUTOSCROLL_TICK_MS)
+        }
+    }
+
     // --- session ---
 
     fun startSession(range: FlowRange) {
@@ -115,6 +133,9 @@ class FlowTextController(
 
     fun endSession() {
         handler.removeCallbacks(longPressRun)
+        stopAutoscroll()
+        draggingHandle = null
+        handleFixed = null
         if (!active) return
         flushBurst()
         active = false
@@ -137,6 +158,15 @@ class FlowTextController(
         pressContent = content
         selectionArmed = false
         armedAnchor = null
+        // Grabbing a selection handle resizes the selection from its other end.
+        if (active && !selection.collapsed) {
+            grabHandle(viewport)?.let { h ->
+                val r = selection.normalized()
+                draggingHandle = h
+                handleFixed = if (h == Handle.START) r.end else r.start
+                return
+            }
+        }
         val (pi, local) = pagePointAt(content) ?: return
         val hit = frame()?.hitTest(pi, local) ?: return
         pressHit = hit
@@ -148,6 +178,10 @@ class FlowTextController(
         handler.removeCallbacks(longPressRun)
         handler.postDelayed(longPressRun, LONG_PRESS_MS)
     }
+
+    /** True when a press at [viewport] lands on a selection handle (routes to this controller). */
+    fun isOnHandle(viewport: Pt): Boolean =
+        active && !selection.collapsed && grabHandle(viewport) != null
 
     /** Long press while still: arm selection on the word under the finger (the release opens the menu). */
     private fun onLongPressFired() {
@@ -170,15 +204,16 @@ class FlowTextController(
     }
 
     /**
-     * Drag while pressed. An armed (long-pressed) drag extends the selection from
-     * the anchored word; a plain drag past the slop is a document pan: returns true
-     * so the interaction controller hands the rest of the gesture to its pan mode.
+     * Drag while pressed. A grabbed handle or an armed (long-pressed) drag extends
+     * the selection, autoscrolling near the viewport edges; a plain drag past the
+     * slop is a document pan: returns true so the interaction controller hands the
+     * rest of the gesture to its pan mode.
      */
     fun dragTo(content: Pt, viewport: Pt): Boolean {
-        if (selectionArmed) {
-            val pos = caretPosAt(content) ?: return false
-            val a = armedAnchor ?: FlowRange.caret(pressAnchor ?: return false)
-            selection = if (pos < a.start) FlowRange(a.end, pos) else FlowRange(a.start, pos)
+        if (draggingHandle != null || selectionArmed) {
+            lastDragViewport = viewport
+            updateDragSelection(viewport)
+            updateAutoscroll(viewport)
             requestRender()
             return false
         }
@@ -189,11 +224,57 @@ class FlowTextController(
         return true
     }
 
+    /** Re-derive the moving selection end from the finger's viewport point. */
+    private fun updateDragSelection(viewport: Pt) {
+        val pos = caretPosAt(state.viewportToContent(viewport)) ?: return
+        val handle = draggingHandle
+        if (handle != null) {
+            selection = FlowRange(handleFixed ?: return, pos)
+            return
+        }
+        val a = armedAnchor ?: FlowRange.caret(pressAnchor ?: return)
+        selection = if (pos < a.start) FlowRange(a.end, pos) else FlowRange(a.start, pos)
+    }
+
+    /** Scroll while the finger sits in the top/bottom edge zone, speed scaling with depth. */
+    private fun updateAutoscroll(viewport: Pt) {
+        val zone = AUTOSCROLL_ZONE_DP * state.devicePxPerDp
+        val maxV = AUTOSCROLL_MAX_DP * state.devicePxPerDp
+        val vh = state.viewportH.toDouble()
+        val vel = when {
+            viewport.y < zone -> -maxV * ((zone - viewport.y) / zone).coerceAtMost(1.0)
+            viewport.y > vh - zone -> maxV * ((viewport.y - (vh - zone)) / zone).coerceAtMost(1.0)
+            else -> 0.0
+        }
+        val wasStill = autoscrollVel == 0.0
+        autoscrollVel = vel
+        if (vel == 0.0) {
+            handler.removeCallbacks(autoscrollRun)
+        } else if (wasStill) {
+            handler.removeCallbacks(autoscrollRun)
+            handler.post(autoscrollRun)
+        }
+    }
+
+    private fun stopAutoscroll() {
+        autoscrollVel = 0.0
+        lastDragViewport = null
+        handler.removeCallbacks(autoscrollRun)
+    }
+
     fun release(content: Pt, viewport: Pt, timeMs: Long) {
         handler.removeCallbacks(longPressRun)
+        stopAutoscroll()
         val hit = pressHit
         pressHit = null
         pressAnchor = null
+        if (draggingHandle != null) {
+            draggingHandle = null
+            handleFixed = null
+            imeSync()
+            requestRender()
+            return
+        }
         if (selectionArmed) {
             selectionArmed = false
             armedAnchor = null
@@ -412,7 +493,7 @@ class FlowTextController(
         return Rect(tl.x, tl.y, rect.w * state.zoom, rect.h * state.zoom)
     }
 
-    /** Selection highlight + caret, drawn in the interaction overlay (content space). */
+    /** Selection highlight + caret + drag handles, drawn in the interaction overlay (content space). */
     fun drawOverlay(r: com.xnotes.core.pal.Renderer) {
         if (!active) return
         val f = frame() ?: return
@@ -421,6 +502,16 @@ class FlowTextController(
             for ((pi, rect) in f.selectionRects(selection)) {
                 val pr = state.pageRects.getOrNull(pi) ?: continue
                 r.fillRect(rect.translate(pr.left, pr.top), accent.withAlpha(70))
+            }
+            val radius = HANDLE_RADIUS_DP * state.devicePxPerDp / state.zoom
+            val norm = selection.normalized()
+            for (pos in listOf(norm.start, norm.end)) {
+                val center = handleCenter(pos) ?: continue
+                r.fillRect(
+                    Rect(center.x - radius / 6.0, center.y - radius * 2.0, radius / 3.0, radius),
+                    accent,
+                )
+                r.fillCircle(center, radius, accent)
             }
         } else {
             val (pi, cr) = f.caretRect(selection.end) ?: return
@@ -438,6 +529,30 @@ class FlowTextController(
             }
             val w = (FlowFrame.CARET_WIDTH / state.zoom).coerceAtLeast(0.75)
             r.fillRect(Rect(pr.left + cr.left - w / 2.0, pr.top + top, w, height), accent)
+        }
+    }
+
+    /** Content-space centre of the drag handle hanging under the caret at [pos]. */
+    private fun handleCenter(pos: FlowPos): Pt? {
+        val f = frame() ?: return null
+        val (pi, cr) = f.caretRect(pos) ?: return null
+        val pr = state.pageRects.getOrNull(pi) ?: return null
+        val radius = HANDLE_RADIUS_DP * state.devicePxPerDp / state.zoom
+        return Pt(pr.left + cr.left, pr.top + cr.bottom + radius)
+    }
+
+    /** The handle a press at [viewport] grabs, preferring the nearer of the two. */
+    private fun grabHandle(viewport: Pt): Handle? {
+        val hitRadius = HANDLE_HIT_DP * state.devicePxPerDp
+        val norm = selection.normalized()
+        val dStart = handleCenter(norm.start)
+            ?.let { viewport.distanceTo(state.contentToViewport(it)) } ?: Double.MAX_VALUE
+        val dEnd = handleCenter(norm.end)
+            ?.let { viewport.distanceTo(state.contentToViewport(it)) } ?: Double.MAX_VALUE
+        return when {
+            dStart <= dEnd && dStart <= hitRadius -> Handle.START
+            dEnd <= hitRadius -> Handle.END
+            else -> null
         }
     }
 
@@ -475,5 +590,11 @@ class FlowTextController(
         const val CARET_MARGIN = 24.0
         const val BURST_IDLE_MS = 2000L
         val LONG_PRESS_MS = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+
+        const val HANDLE_RADIUS_DP = 8.0
+        const val HANDLE_HIT_DP = 26.0
+        const val AUTOSCROLL_ZONE_DP = 56.0
+        const val AUTOSCROLL_MAX_DP = 14.0
+        const val AUTOSCROLL_TICK_MS = 16L
     }
 }
