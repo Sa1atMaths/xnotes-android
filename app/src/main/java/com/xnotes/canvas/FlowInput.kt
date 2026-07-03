@@ -44,8 +44,13 @@ class FlowInput(
     private var extractedMonitor = false
     private var cursorUpdatesMode = 0
 
+    private var pendingOldText = ""
+
     private val watcher = object : TextWatcher {
-        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+            if (suppressWatcher) return
+            pendingOldText = s?.subSequence(start, start + count)?.toString().orEmpty()
+        }
 
         override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {
             if (suppressWatcher) return
@@ -57,14 +62,29 @@ class FlowInput(
         override fun afterTextChanged(s: Editable) {
             if (suppressWatcher || pendingStart < 0) return
             val start = pendingStart
-            val before = pendingBefore
-            val text = pendingText
+            val old = pendingOldText
+            val new = pendingText
             pendingStart = -1
-            // Offsets refer to the pre-change text, which is exactly the model's state.
-            val range = FlowRange(flow().posAtGlobal(start), flow().posAtGlobal(start + before))
-            applyingFromMirror = true
-            session.applyReplace(range, text)
-            applyingFromMirror = false
+            // Composing IMEs resend the whole word-in-progress on every keystroke; trim
+            // the untouched prefix/suffix so only the truly changed core reaches the
+            // model, or the resent characters would re-insert under one uniform style.
+            var p = 0
+            val maxPrefix = minOf(old.length, new.length)
+            while (p < maxPrefix && old[p] == new[p]) p++
+            var suf = 0
+            val maxSuffix = minOf(old.length, new.length) - p
+            while (suf < maxSuffix && old[old.length - 1 - suf] == new[new.length - 1 - suf]) suf++
+            val insert = new.substring(p, new.length - suf)
+            if (old.length - p - suf > 0 || insert.isNotEmpty()) {
+                // Offsets refer to the pre-change text, which is exactly the model's state.
+                val range = FlowRange(
+                    flow().posAtGlobal(start + p),
+                    flow().posAtGlobal(start + old.length - suf),
+                )
+                applyingFromMirror = true
+                session.applyReplace(range, insert)
+                applyingFromMirror = false
+            }
             // The connection has already placed the mirror's selection; adopt it as truth.
             val selS = Selection.getSelectionStart(mirror).coerceAtLeast(0)
             val selE = Selection.getSelectionEnd(mirror).coerceAtLeast(0)

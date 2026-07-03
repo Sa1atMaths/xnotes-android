@@ -372,7 +372,8 @@ class FlowTextController(
     fun applyReplace(range: FlowRange, text: String, style: CharStyle? = null): FlowPos {
         val r = range.normalized()
         val para = flow().paragraphs.getOrNull(r.start.para)
-        val effStyle = style ?: pendingStyle?.also { pendingStyle = null }
+        // The armed style is only spent on text that actually lands; a deletion keeps it.
+        val effStyle = style ?: (if (text.isNotEmpty()) pendingStyle?.also { pendingStyle = null } else null)
         if (r.start.para == r.end.para && '\n' !in text && para != null) {
             if (burstPara !== para) {
                 flushBurst()
