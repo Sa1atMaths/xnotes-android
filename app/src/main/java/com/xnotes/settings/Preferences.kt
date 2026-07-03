@@ -48,8 +48,8 @@ data class Preferences(
     val maxCacheResolution: Int = 2048,
     /** Open in fullscreen; null ⇒ auto (on unless the display has a camera cutout). */
     val startFullscreen: Boolean? = null,
-    /** Per-language user .scm highlight-query overrides: language id -> imported file path. */
-    val customScm: Map<String, String> = emptyMap(),
+    /** An imported Helix code theme's file path, or null for the built-in colours. */
+    val codeThemePath: String? = null,
     /** Language "Paste as Code" assigns to pasted blocks; "plain" pastes unhighlighted. */
     val defaultCodeLanguage: String = "cpp",
 ) {
@@ -79,7 +79,7 @@ data class Preferences(
         .put("max_cache_resolution", maxCacheResolution)
         .apply {
             startFullscreen?.let { put("start_fullscreen", it) }
-            if (customScm.isNotEmpty()) put("custom_scm", JSONObject(customScm))
+            codeThemePath?.let { put("code_theme_path", it) }
             put("default_code_language", defaultCodeLanguage)
         }
 
@@ -116,10 +116,7 @@ data class Preferences(
                 sideMargin = o.optDouble("side_margin", 16.0).coerceIn(0.0, 80.0),
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
                 startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
-                customScm = o.optJSONObject("custom_scm")?.let { obj ->
-                    obj.keys().asSequence().associateWith { k -> obj.optString(k) }
-                        .filterValues { it.isNotEmpty() }
-                } ?: emptyMap(),
+                codeThemePath = o.optString("code_theme_path").ifEmpty { null },
                 defaultCodeLanguage = o.optString("default_code_language", "cpp")
                     .lowercase().trim().ifEmpty { "cpp" },
             )

@@ -335,15 +335,12 @@ private fun EditorScreen(
         pendingInsertContent = null
     }
 
-    // A user .scm highlight query for one language (validated + stored by the editor).
-    var pendingScmLanguage by remember { mutableStateOf<String?>(null) }
-    val importScmLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val lang = pendingScmLanguage
-        pendingScmLanguage = null
-        if (uri != null && lang != null) {
+    // A user Helix code theme (.toml), parsed + stored by the editor.
+    val importCodeThemeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
             runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }
                 .getOrNull()
-                ?.let { editor.importScm(lang, it) }
+                ?.let { editor.importCodeTheme(it) }
                 ?: run { editor.message = "Could not read the file." }
         }
     }
@@ -562,10 +559,7 @@ private fun EditorScreen(
                 view = backstageView,
                 onSelectView = { backstageView = it },
                 onExitApp = { (context as? android.app.Activity)?.finish() },
-                onImportScm = { lang ->
-                    pendingScmLanguage = lang
-                    importScmLauncher.launch(arrayOf("*/*"))
-                },
+                onImportCodeTheme = { importCodeThemeLauncher.launch(arrayOf("*/*")) },
                 onOpenSystem = { openLauncher.launch(arrayOf("*/*")) },
                 onImportPdf = { importPdfLauncher.launch(arrayOf("application/pdf")) },
                 onOpenFile = { uri -> guarded { openTreeFile(uri) } },

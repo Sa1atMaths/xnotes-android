@@ -28,7 +28,7 @@ object FlowPainter {
     private fun paintLine(r: Renderer, frame: FlowFrame, line: PlacedLine) {
         if (line.codeLine) {
             val w = line.codeRight - line.codeLeft + 2 * CODE_PAD
-            r.fillRect(Rect(line.codeLeft - CODE_PAD, line.top, w, line.height), CODE_BG)
+            r.fillRect(Rect(line.codeLeft - CODE_PAD, line.top, w, line.height), frame.codeBg ?: CODE_BG)
         }
         for (deco in line.decos) {
             deco.style.highlight?.let {
@@ -37,7 +37,7 @@ object FlowPainter {
             if (deco.style.code && !line.codeLine) {
                 r.fillRect(
                     Rect(deco.x0 - CHIP_PAD, line.top, deco.x1 - deco.x0 + 2 * CHIP_PAD, line.height),
-                    CHIP_BG,
+                    frame.codeBg ?: CHIP_BG,
                 )
             }
         }

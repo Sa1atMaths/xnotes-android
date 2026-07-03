@@ -12,21 +12,15 @@ object TreeSitterNative {
     @JvmStatic external fun nativeHighlight(lang: String, textUtf8: ByteArray, scm: ByteArray): IntArray?
 
     @JvmStatic external fun nativeCaptureNames(lang: String, scm: ByteArray): Array<String>?
-
-    @JvmStatic external fun nativeValidateQuery(lang: String, scm: ByteArray): String?
 }
 
 /**
- * Highlights code blocks with the bundled tree-sitter grammars. The .scm query
- * per language resolves user-override first ([customScmPath], imported via SAF
- * and validated), then the bundled asset. Query bytes and capture names cache
- * per language; call [invalidate] after an import. [highlight] parses the whole
- * block per call (blocks are small) and is meant for background threads.
+ * Highlights code blocks with the bundled tree-sitter grammars and their bundled
+ * .scm queries (colours come from the theme layer, not from here). Query bytes
+ * and capture names cache per language. [highlight] parses the whole block per
+ * call (blocks are small) and is meant for background threads.
  */
-class TreeSitterHighlighter(
-    private val context: Context,
-    private val customScmPath: (String) -> String?,
-) : CodeHighlighter {
+class TreeSitterHighlighter(private val context: Context) : CodeHighlighter {
 
     private class LangData(val scm: ByteArray, val names: Array<String>)
 
@@ -53,19 +47,8 @@ class TreeSitterHighlighter(
         return out
     }
 
-    /** Forget cached query data ([language], or everything when null) after an .scm import. */
-    fun invalidate(language: String?) {
-        synchronized(cache) {
-            if (language == null) cache.clear() else cache.remove(language)
-        }
-    }
-
     private fun langData(language: String): LangData? = cache.getOrPut(language) {
-        val custom = customScmPath(language)
-            ?.let { path -> runCatching { File(path).readBytes() }.getOrNull() }
-            ?.takeIf { TreeSitterNative.nativeValidateQuery(language, it) == null }
-        val scm = custom
-            ?: runCatching { context.assets.open("scm/$language.scm").use { it.readBytes() } }.getOrNull()
+        val scm = runCatching { context.assets.open("scm/$language.scm").use { it.readBytes() } }.getOrNull()
             ?: return@getOrPut null
         val names = TreeSitterNative.nativeCaptureNames(language, scm) ?: return@getOrPut null
         LangData(scm, names)

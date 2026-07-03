@@ -92,7 +92,7 @@ fun PreferencesPane(
     sidebarOpen: Boolean,
     onShowSidebar: () -> Unit,
     onBackToHome: () -> Unit,
-    onImportScm: (String) -> Unit = {},
+    onImportCodeTheme: () -> Unit = {},
 ) {
     val palette = LocalPalette.current
     var prefs by remember { mutableStateOf(editor.preferences) }
@@ -283,18 +283,16 @@ fun PreferencesPane(
                     update(prefs.copy(defaultCodeLanguage = it))
                 }
 
-                FieldLabel("Import custom .scm")
+                FieldLabel("Code theme")
                 Text(
-                    "Restyle a language's highlighting with your own tree-sitter query.",
+                    "Import a Helix editor theme (.toml) to recolour code: Tokyo Night, GitHub, Gruvbox and friends all ship one.",
                     color = palette.textDim.toComposeColor(),
                     fontSize = 12.sp,
                 )
-                var scmLang by remember { mutableStateOf(editor.scmLanguages().first()) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OptionDropdown(langOptions, scmLang) { scmLang = it }
-                    TextButton(onClick = { onImportScm(scmLang) }) { Text("Import…", fontSize = 13.sp) }
-                    if (editor.hasCustomScm(scmLang)) {
-                        TextButton(onClick = { editor.resetScm(scmLang) }) { Text("Reset", fontSize = 13.sp) }
+                    TextButton(onClick = { onImportCodeTheme() }) { Text("Import theme…", fontSize = 13.sp) }
+                    if (editor.hasCustomCodeTheme) {
+                        TextButton(onClick = { editor.resetCodeTheme() }) { Text("Reset", fontSize = 13.sp) }
                         Text("custom", color = palette.accent.toComposeColor(), fontSize = 12.sp)
                     }
                 }

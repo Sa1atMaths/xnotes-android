@@ -4,7 +4,7 @@
 #include <jni.h>
 #include <regex.h>
 #include <stdbool.h>
-#include <stdio.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include "tree_sitter/api.h"
@@ -255,29 +255,3 @@ Java_com_xnotes_platform_TreeSitterNative_nativeCaptureNames(
     return out;
 }
 
-// -> null when the query compiles, else a short error description (user .scm import).
-JNIEXPORT jstring JNICALL
-Java_com_xnotes_platform_TreeSitterNative_nativeValidateQuery(
-    JNIEnv *env, jclass cls, jstring jlang, jbyteArray jscm) {
-    const TSLanguage *lang = lang_for(env, jlang);
-    if (!lang) return (*env)->NewStringUTF(env, "unsupported language");
-    uint32_t err_offset = 0;
-    TSQueryError err_type = TSQueryErrorNone;
-    TSQuery *query = make_query(lang, env, jscm, &err_offset, &err_type);
-    if (query) {
-        ts_query_delete(query);
-        return NULL;
-    }
-    const char *kind;
-    switch (err_type) {
-        case TSQueryErrorSyntax: kind = "syntax error"; break;
-        case TSQueryErrorNodeType: kind = "unknown node type"; break;
-        case TSQueryErrorField: kind = "unknown field"; break;
-        case TSQueryErrorCapture: kind = "unknown capture"; break;
-        case TSQueryErrorStructure: kind = "invalid structure"; break;
-        default: kind = "invalid query"; break;
-    }
-    char msg[96];
-    snprintf(msg, sizeof(msg), "%s at byte %u", kind, err_offset);
-    return (*env)->NewStringUTF(env, msg);
-}

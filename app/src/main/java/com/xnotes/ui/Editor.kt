@@ -166,11 +166,22 @@ class Editor(context: Context) {
     private class PublishedFlow(val frame: FlowFrame, val indexOf: Map<Page, Int>)
     private val flowLayout = FlowLayout(textMeasurer)
 
-    private val treeSitter = com.xnotes.platform.TreeSitterHighlighter(appContext) { lang ->
-        settings.prefs.customScm[lang]
-    }
+    private val treeSitter = com.xnotes.platform.TreeSitterHighlighter(appContext)
     private val highlighter: com.xnotes.core.text.CodeHighlighter? =
         treeSitter.takeIf { com.xnotes.platform.TreeSitterNative.loaded }
+
+    /** A user-imported Helix code theme (parsed once); null = the built-in dark/light pair. */
+    private var customCodeTheme: com.xnotes.core.text.HighlightTheme? =
+        settings.prefs.codeThemePath?.let { path ->
+            runCatching { com.xnotes.format.HelixTheme.parse(java.io.File(path).readText()) }.getOrNull()
+        }
+
+    private fun activeCodeTheme(): com.xnotes.core.text.HighlightTheme = customCodeTheme
+        ?: if (settings.prefs.isDark) {
+            com.xnotes.core.text.HighlightTheme.DARK
+        } else {
+            com.xnotes.core.text.HighlightTheme.LIGHT
+        }
 
     /** Derived spans per code paragraph, keyed by its revision (main thread only). */
     private val highlightCache = HashMap<Paragraph, Pair<Int, List<com.xnotes.core.text.HighlightSpan>>>()
@@ -822,15 +833,12 @@ class Editor(context: Context) {
         flowLayout.codeSpans = spans@{ para ->
             val (rev, spans) = highlightCache[para] ?: return@spans null
             if (rev != para.rev) return@spans null
-            val theme = if (settings.prefs.isDark) {
-                com.xnotes.core.text.HighlightTheme.DARK
-            } else {
-                com.xnotes.core.text.HighlightTheme.LIGHT
-            }
+            val theme = activeCodeTheme()
             spans.mapNotNull { s ->
                 theme.colorFor(s.capture)?.let { com.xnotes.core.text.CodeSpan(s.start, s.end, it) }
             }
         }
+        flowLayout.codeBackground = { activeCodeTheme().background }
     }
 
     /**
@@ -3072,45 +3080,42 @@ class Editor(context: Context) {
         onRender()
     }
 
-    // --- user .scm highlight queries ---
+    // --- user code themes (Helix .toml) ---
 
     val treeSitterAvailable: Boolean get() = highlighter != null
 
     fun scmLanguages(): List<String> = com.xnotes.platform.TreeSitterHighlighter.SUPPORTED.sorted()
 
-    fun hasCustomScm(language: String): Boolean = settings.prefs.customScm.containsKey(language)
+    val hasCustomCodeTheme: Boolean get() = customCodeTheme != null
 
-    /** Validate and adopt a user highlight query for [language]; reports via [message]. */
-    fun importScm(language: String, bytes: ByteArray) {
-        if (highlighter == null) {
-            message = "Code highlighting isn't available on this device."
+    /** Adopt a Helix theme file for code colours; reports via [message]. */
+    fun importCodeTheme(bytes: ByteArray) {
+        val parsed = com.xnotes.format.HelixTheme.parse(String(bytes, Charsets.UTF_8))
+        if (parsed == null) {
+            message = "Not a usable Helix theme (a self-contained .toml is needed)."
             return
         }
-        val error = com.xnotes.platform.TreeSitterNative.nativeValidateQuery(language, bytes)
-        if (error != null) {
-            message = "Not a valid $language highlight query: $error"
-            return
-        }
-        val file = java.io.File(java.io.File(appContext.filesDir, "scm").apply { mkdirs() }, "$language.scm")
+        val file = java.io.File(java.io.File(appContext.filesDir, "theme").apply { mkdirs() }, "code.toml")
         runCatching { file.writeBytes(bytes) }.onFailure {
-            message = "Couldn't store the query file."
+            message = "Couldn't store the theme file."
             return
         }
-        applyPreferences(settings.prefs.copy(customScm = settings.prefs.customScm + (language to file.path)))
-        rehighlight(language)
-        message = "Custom $language highlighting imported."
+        customCodeTheme = parsed
+        applyPreferences(settings.prefs.copy(codeThemePath = file.path))
+        retheme()
+        message = "Code theme imported."
     }
 
-    /** Back to the bundled query for [language]. */
-    fun resetScm(language: String) {
-        settings.prefs.customScm[language]?.let { runCatching { java.io.File(it).delete() } }
-        applyPreferences(settings.prefs.copy(customScm = settings.prefs.customScm - language))
-        rehighlight(language)
+    /** Back to the built-in dark/light code colours. */
+    fun resetCodeTheme() {
+        settings.prefs.codeThemePath?.let { runCatching { java.io.File(it).delete() } }
+        customCodeTheme = null
+        applyPreferences(settings.prefs.copy(codeThemePath = null))
+        retheme()
     }
 
-    private fun rehighlight(language: String) {
-        treeSitter.invalidate(language)
-        highlightCache.clear()
+    /** Colours changed, classification didn't: republish so frames rebuild with the new theme. */
+    private fun retheme() {
         republishFlow(invalidate = true)
         onRender()
     }

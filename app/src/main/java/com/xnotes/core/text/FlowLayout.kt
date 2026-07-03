@@ -2,6 +2,7 @@ package com.xnotes.core.text
 
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.PageSize
+import com.xnotes.core.model.Rgba
 import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.LineMetrics
@@ -46,6 +47,9 @@ class FlowLayout(private val measurer: TextMeasurer) {
      * highlight results recolour segments on the next republish, never persisting.
      */
     var codeSpans: (Paragraph) -> List<CodeSpan>? = { null }
+
+    /** The active code theme's block background, read at layout time (null = neutral grey). */
+    var codeBackground: () -> Rgba? = { null }
 
     // --- per-paragraph measurement (cached) ---
 
@@ -229,7 +233,7 @@ class FlowLayout(private val measurer: TextMeasurer) {
      * virtual pages the tail overflowed past the real ones.
      */
     fun layout(flow: TextFlow, pageBoxes: List<PageBox>, dpi: Int): FlowFrame {
-        if (pageBoxes.isEmpty()) return FlowFrame(emptyList(), flow.rev, 0, flow.defaultColor)
+        if (pageBoxes.isEmpty()) return FlowFrame(emptyList(), flow.rev, 0, flow.defaultColor, codeBackground())
         pruneCaches(flow)
         val contentRects = pageBoxes.map { contentRectOf(it, flow.margins, dpi) }
         val pageLines = List(pageBoxes.size) { mutableListOf<PlacedLine>() }
@@ -273,7 +277,7 @@ class FlowLayout(private val measurer: TextMeasurer) {
         }
         val extra = (page - (pageBoxes.size - 1)).coerceAtLeast(0)
         val pages = pageBoxes.indices.map { PageFlow(contentRects[it], pageLines[it]) }
-        return FlowFrame(pages, flow.rev, extra, flow.defaultColor)
+        return FlowFrame(pages, flow.rev, extra, flow.defaultColor, codeBackground())
     }
 
     private fun placeLine(

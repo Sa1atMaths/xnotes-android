@@ -91,6 +91,8 @@ class FlowFrame(
     val flowRev: Int,
     val extraPagesNeeded: Int,
     val defaultColor: Rgba,
+    /** Code chip background from the active code theme; null = the painter's neutral grey. */
+    val codeBg: Rgba? = null,
 ) {
     private val byPara = HashMap<Int, MutableList<Pair<Int, PlacedLine>>>()
 

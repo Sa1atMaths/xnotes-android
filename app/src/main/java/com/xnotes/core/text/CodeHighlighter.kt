@@ -21,9 +21,10 @@ interface CodeHighlighter {
 
 /**
  * Maps .scm capture names to colours by longest dotted prefix ("keyword.return"
- * falls back to "keyword"). Two presets keyed to the app's dark/light paper.
+ * falls back to "keyword"). Two presets keyed to the app's dark/light paper;
+ * user-imported themes may also carry the code-block [background].
  */
-class HighlightTheme(private val colors: Map<String, Rgba>) {
+class HighlightTheme(private val colors: Map<String, Rgba>, val background: Rgba? = null) {
 
     fun colorFor(capture: String): Rgba? {
         var name = capture
