@@ -271,24 +271,31 @@ fun PreferencesPane(
             if (editor.treeSitterAvailable) {
                 HorizontalDivider(color = palette.border.toComposeColor())
                 SectionTitle("Code highlighting")
+
+                val langOptions = editor.scmLanguages().map { it to it }
+                FieldLabel("Default code language")
                 Text(
-                    "Each language ships a default tree-sitter highlight query; import your own .scm to restyle it.",
+                    "\"Paste as Code\" highlights the pasted block in this language.",
                     color = palette.textDim.toComposeColor(),
                     fontSize = 12.sp,
                 )
-                for (lang in editor.scmLanguages()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            lang,
-                            color = palette.text.toComposeColor(),
-                            fontSize = 14.sp,
-                            modifier = Modifier.width(110.dp),
-                        )
-                        TextButton(onClick = { onImportScm(lang) }) { Text("Import .scm…", fontSize = 13.sp) }
-                        if (editor.hasCustomScm(lang)) {
-                            TextButton(onClick = { editor.resetScm(lang) }) { Text("Reset", fontSize = 13.sp) }
-                            Text("custom", color = palette.accent.toComposeColor(), fontSize = 12.sp)
-                        }
+                OptionDropdown(listOf("plain" to "plain (no highlighting)") + langOptions, prefs.defaultCodeLanguage) {
+                    update(prefs.copy(defaultCodeLanguage = it))
+                }
+
+                FieldLabel("Import custom .scm")
+                Text(
+                    "Restyle a language's highlighting with your own tree-sitter query.",
+                    color = palette.textDim.toComposeColor(),
+                    fontSize = 12.sp,
+                )
+                var scmLang by remember { mutableStateOf(editor.scmLanguages().first()) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OptionDropdown(langOptions, scmLang) { scmLang = it }
+                    TextButton(onClick = { onImportScm(scmLang) }) { Text("Import…", fontSize = 13.sp) }
+                    if (editor.hasCustomScm(scmLang)) {
+                        TextButton(onClick = { editor.resetScm(scmLang) }) { Text("Reset", fontSize = 13.sp) }
+                        Text("custom", color = palette.accent.toComposeColor(), fontSize = 12.sp)
                     }
                 }
             }

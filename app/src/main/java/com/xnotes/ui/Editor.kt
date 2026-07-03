@@ -460,15 +460,16 @@ class Editor(context: Context) {
         insertFlowParagraphs(com.xnotes.core.text.MarkdownParser.parse(text, flowDefaultSizePt()))
     }
 
-    /** Paste the clipboard's text as a code block (one code paragraph per line). */
+    /** Paste the clipboard's text as a code block in the preferred default language. */
     fun pasteAsCodeAtCaret() {
         if (!flowText.active) return
         val text = clipboardText() ?: return
+        val lang = settings.prefs.defaultCodeLanguage.takeIf { it != "plain" } ?: ""
         insertFlowParagraphs(
             text.split('\n').map { line ->
                 Paragraph(
                     if (line.isEmpty()) mutableListOf() else mutableListOf(com.xnotes.core.text.Run(line)),
-                    codeLang = "",
+                    codeLang = lang,
                 )
             },
         )

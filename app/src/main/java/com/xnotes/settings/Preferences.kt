@@ -50,6 +50,8 @@ data class Preferences(
     val startFullscreen: Boolean? = null,
     /** Per-language user .scm highlight-query overrides: language id -> imported file path. */
     val customScm: Map<String, String> = emptyMap(),
+    /** Language "Paste as Code" assigns to pasted blocks; "plain" pastes unhighlighted. */
+    val defaultCodeLanguage: String = "kotlin",
 ) {
     val isDark: Boolean get() = uiAppearance != "light"
 
@@ -78,6 +80,7 @@ data class Preferences(
         .apply {
             startFullscreen?.let { put("start_fullscreen", it) }
             if (customScm.isNotEmpty()) put("custom_scm", JSONObject(customScm))
+            put("default_code_language", defaultCodeLanguage)
         }
 
     companion object {
@@ -117,6 +120,8 @@ data class Preferences(
                     obj.keys().asSequence().associateWith { k -> obj.optString(k) }
                         .filterValues { it.isNotEmpty() }
                 } ?: emptyMap(),
+                defaultCodeLanguage = o.optString("default_code_language", "kotlin")
+                    .lowercase().trim().ifEmpty { "kotlin" },
             )
         }
     }
