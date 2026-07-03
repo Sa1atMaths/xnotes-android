@@ -150,26 +150,37 @@ fun LongPressMenu(editor: Editor, onInsertImageAt: (com.xnotes.core.geometry.Pt)
 
 /**
  * The flow-editing context menu (long press with the text tool, after the word
- * selection lands): explicit paste modes only, no auto-detection anywhere.
+ * selection lands): cut/copy, the explicit paste modes (no auto-detection
+ * anywhere), then delete.
  */
 @Composable
-fun FlowPasteMenu(editor: Editor) {
+fun FlowEditMenu(editor: Editor) {
     val at = editor.flowContextMenu ?: return
     val density = LocalDensity.current
     val xDp = with(density) { at.x.toFloat().toDp() }
     val yDp = with(density) { at.y.toFloat().toDp() }
-    val enabled = editor.clipboardHasText()
+    val hasClip = editor.clipboardHasText()
+    val hasSelection = editor.flowHasSelection
 
     Box(modifier = Modifier.offset(xDp, yDp).size(1.dp)) {
         DropdownMenu(expanded = true, onDismissRequest = { editor.dismissFlowContextMenu() }) {
-            DropdownMenuItem(text = { Text("Paste") }, enabled = enabled, onClick = {
+            DropdownMenuItem(text = { Text("Cut") }, enabled = hasSelection, onClick = {
+                editor.flowCut(); editor.dismissFlowContextMenu()
+            })
+            DropdownMenuItem(text = { Text("Copy") }, enabled = hasSelection, onClick = {
+                editor.flowCopy(); editor.dismissFlowContextMenu()
+            })
+            DropdownMenuItem(text = { Text("Paste") }, enabled = hasClip, onClick = {
                 editor.pastePlainAtCaret(); editor.dismissFlowContextMenu()
             })
-            DropdownMenuItem(text = { Text("Paste as Markdown") }, enabled = enabled, onClick = {
+            DropdownMenuItem(text = { Text("Paste as Markdown") }, enabled = hasClip, onClick = {
                 editor.pasteMarkdownAtCaret(); editor.dismissFlowContextMenu()
             })
-            DropdownMenuItem(text = { Text("Paste as Code") }, enabled = enabled, onClick = {
+            DropdownMenuItem(text = { Text("Paste as Code") }, enabled = hasClip, onClick = {
                 editor.pasteAsCodeAtCaret(); editor.dismissFlowContextMenu()
+            })
+            DropdownMenuItem(text = { Text("Delete") }, enabled = hasSelection, onClick = {
+                editor.flowDeleteSelection(); editor.dismissFlowContextMenu()
             })
         }
     }

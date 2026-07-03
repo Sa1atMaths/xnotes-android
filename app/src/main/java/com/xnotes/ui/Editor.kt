@@ -438,6 +438,7 @@ class Editor(context: Context) {
         .also {
             view.flowInput = it
             it.onPaste = { pastePlainAtCaret() }
+            it.onBackspaceSpecial = { flowBackspaceSpecial() }
         }
 
     /** True while the inline text caret session is live (drives the bottom format bar/IME). */
@@ -3141,6 +3142,17 @@ class Editor(context: Context) {
         onRender()
     }
 
+    val flowHasSelection: Boolean get() = !flowText.selection.collapsed
+
+    fun flowCut() = flowCopySelection(cut = true)
+
+    fun flowCopy() = flowCopySelection(cut = false)
+
+    fun flowDeleteSelection() {
+        val sel = flowText.selection.normalized()
+        if (!sel.collapsed) flowText.replaceExternal(sel, "")
+    }
+
     private fun flowCopySelection(cut: Boolean) {
         val sel = flowText.selection.normalized()
         if (sel.collapsed) return
@@ -3152,7 +3164,29 @@ class Editor(context: Context) {
         if (cut) flowText.replaceExternal(sel, "")
     }
 
+    /**
+     * Backspace at the start of an EMPTY code line strips the code property (the
+     * line becomes plain text) instead of deleting anything. Also the only way out
+     * for an empty code line at the very start of the document, where there is no
+     * preceding character to merge into. Returns true when it applied.
+     */
+    fun flowBackspaceSpecial(): Boolean {
+        if (!flowText.active) return false
+        val sel = flowText.selection.normalized()
+        if (!sel.collapsed || sel.start.offset != 0) return false
+        val flow = state.document.flow
+        val para = flow.paragraphs.getOrNull(sel.start.para) ?: return false
+        if (para.codeLang == null || para.length != 0) return false
+        flowText.flushBurst()
+        flowText.commitEdit(
+            FlowEditor(flow).setParaStyle(FlowRange.caret(sel.start)) { it.codeLang = null },
+            sel.start,
+        )
+        return true
+    }
+
     private fun flowDeleteKey(forward: Boolean) {
+        if (!forward && flowBackspaceSpecial()) return
         val sel = flowText.selection.normalized()
         if (!sel.collapsed) {
             flowText.applyReplace(sel, "")

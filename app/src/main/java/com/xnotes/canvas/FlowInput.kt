@@ -256,6 +256,13 @@ class FlowInput(
             return super.performContextMenuAction(id)
         }
 
+        override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+            // Soft-keyboard backspace: paragraph-property rules (empty code line
+            // turns plain) win over deleting the newline before it.
+            if (beforeLength > 0 && afterLength == 0 && onBackspaceSpecial()) return true
+            return super.deleteSurroundingText(beforeLength, afterLength)
+        }
+
         override fun closeConnection() {
             extractedMonitor = false
             super.closeConnection()
@@ -264,4 +271,7 @@ class FlowInput(
 
     /** IME-menu paste lands here; the Editor routes it to the shared text-paste path. */
     var onPaste: () -> Unit = {}
+
+    /** Backspace hook: returns true when a paragraph-property rule consumed the key. */
+    var onBackspaceSpecial: () -> Boolean = { false }
 }

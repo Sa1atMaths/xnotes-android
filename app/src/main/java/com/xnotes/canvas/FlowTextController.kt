@@ -503,16 +503,9 @@ class FlowTextController(
                 val pr = state.pageRects.getOrNull(pi) ?: continue
                 r.fillRect(rect.translate(pr.left, pr.top), accent.withAlpha(70))
             }
-            val radius = HANDLE_RADIUS_DP * state.devicePxPerDp / state.zoom
             val norm = selection.normalized()
-            for (pos in listOf(norm.start, norm.end)) {
-                val center = handleCenter(pos) ?: continue
-                r.fillRect(
-                    Rect(center.x - radius / 6.0, center.y - radius * 2.0, radius / 3.0, radius),
-                    accent,
-                )
-                r.fillCircle(center, radius, accent)
-            }
+            drawHandle(r, norm.start, isStart = true, accent)
+            drawHandle(r, norm.end, isStart = false, accent)
         } else {
             val (pi, cr) = f.caretRect(selection.end) ?: return
             val pr = state.pageRects.getOrNull(pi) ?: return
@@ -532,22 +525,36 @@ class FlowTextController(
         }
     }
 
-    /** Content-space centre of the drag handle hanging under the caret at [pos]. */
-    private fun handleCenter(pos: FlowPos): Pt? {
+    /**
+     * The classic Android teardrop: a circle whose squared-off quadrant puts a sharp
+     * tip exactly at the caret's bottom, the body hanging away from the selection
+     * (down-left for the start handle, down-right for the end handle).
+     */
+    private fun drawHandle(r: com.xnotes.core.pal.Renderer, pos: FlowPos, isStart: Boolean, color: com.xnotes.core.model.Rgba) {
+        val center = handleCenter(pos, isStart) ?: return
+        val radius = HANDLE_RADIUS_DP * state.devicePxPerDp / state.zoom
+        val tipX = if (isStart) center.x + radius else center.x - radius
+        r.fillCircle(center, radius, color)
+        r.fillRect(Rect(minOf(tipX, center.x), center.y - radius, radius, radius), color)
+    }
+
+    /** Content-space centre of the teardrop handle for the caret at [pos]. */
+    private fun handleCenter(pos: FlowPos, isStart: Boolean): Pt? {
         val f = frame() ?: return null
         val (pi, cr) = f.caretRect(pos) ?: return null
         val pr = state.pageRects.getOrNull(pi) ?: return null
         val radius = HANDLE_RADIUS_DP * state.devicePxPerDp / state.zoom
-        return Pt(pr.left + cr.left, pr.top + cr.bottom + radius)
+        val cx = if (isStart) pr.left + cr.left - radius else pr.left + cr.left + radius
+        return Pt(cx, pr.top + cr.bottom + radius)
     }
 
     /** The handle a press at [viewport] grabs, preferring the nearer of the two. */
     private fun grabHandle(viewport: Pt): Handle? {
         val hitRadius = HANDLE_HIT_DP * state.devicePxPerDp
         val norm = selection.normalized()
-        val dStart = handleCenter(norm.start)
+        val dStart = handleCenter(norm.start, isStart = true)
             ?.let { viewport.distanceTo(state.contentToViewport(it)) } ?: Double.MAX_VALUE
-        val dEnd = handleCenter(norm.end)
+        val dEnd = handleCenter(norm.end, isStart = false)
             ?.let { viewport.distanceTo(state.contentToViewport(it)) } ?: Double.MAX_VALUE
         return when {
             dStart <= dEnd && dStart <= hitRadius -> Handle.START
