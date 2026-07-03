@@ -175,6 +175,8 @@ fun Backstage(
     onExportFilePdf: (String) -> Unit,
     /** Home is the app's root: back from here leaves the app rather than dropping into the editor. */
     onExitApp: () -> Unit,
+    /** Preferences asked to import a user .scm highlight query for a language. */
+    onImportScm: (String) -> Unit = {},
 ) {
     // Below this width the sidebar becomes a slide-over drawer instead of a persistent pane.
     val compact = LocalConfiguration.current.screenWidthDp < COMPACT_WIDTH_DP
@@ -182,7 +184,7 @@ fun Backstage(
     // window already runs edge-to-edge with the system bars hidden (MainActivity.applyFullscreen).
     BackstageContent(
         editor, compact, view, onSelectView, onOpenSystem, onImportPdf,
-        onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onExitApp,
+        onOpenFile, onPickRoot, onShareFile, onSaveCopyFile, onExportFilePdf, onExitApp, onImportScm,
     )
 }
 
@@ -211,6 +213,7 @@ private fun BackstageContent(
     onSaveCopyFile: (String) -> Unit,
     onExportFilePdf: (String) -> Unit,
     onExitApp: () -> Unit,
+    onImportScm: (String) -> Unit,
 ) {
     val palette = LocalPalette.current
     var createMode by remember { mutableStateOf(CreateMode.NONE) }
@@ -259,7 +262,7 @@ private fun BackstageContent(
         Box(Modifier.fillMaxSize().background(palette.menuBg.toComposeColor()).imePadding()) {
             BackstageMain(
                 Modifier.fillMaxSize(), editor, view, compact, sidebarOpen, { animateClose = true; sidebarOpen = true }, { selectView(BackstageView.HOME) },
-                onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+                onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it }, onImportScm,
             )
             AnimatedVisibility(
                 visible = sidebarOpen,
@@ -288,7 +291,7 @@ private fun BackstageContent(
             }
             BackstageMain(
                 Modifier.weight(1f).fillMaxHeight(), editor, view, compact, sidebarOpen, { sidebarOpen = true }, { selectView(BackstageView.HOME) },
-                onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it },
+                onOpenFile, onPickRoot, importPdf, onShareFile, onSaveCopyFile, onExportFilePdf, createMode, { createMode = it }, onImportScm,
             )
         }
     }
@@ -349,6 +352,7 @@ private fun BackstageMain(
     onExportFilePdf: (String) -> Unit,
     createMode: CreateMode,
     onCreateMode: (CreateMode) -> Unit,
+    onImportScm: (String) -> Unit,
 ) {
     val palette = LocalPalette.current
     Column(modifier) {
@@ -376,7 +380,7 @@ private fun BackstageMain(
                     editor, onOpenFile, onPickRoot, onImportPdf,
                     onShareFile, onSaveCopyFile, onExportFilePdf, createMode, onCreateMode, sidebarOpen, onShowSidebar,
                 )
-                BackstageView.PREFERENCES -> PreferencesPane(editor, compact, sidebarOpen, onShowSidebar, onBackToHome)
+                BackstageView.PREFERENCES -> PreferencesPane(editor, compact, sidebarOpen, onShowSidebar, onBackToHome, onImportScm)
                 BackstageView.ABOUT -> AboutPane()
             }
         }

@@ -86,13 +86,22 @@ private val tapGestureOptions = listOf(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onShowSidebar: () -> Unit, onBackToHome: () -> Unit) {
+fun PreferencesPane(
+    editor: Editor,
+    compact: Boolean,
+    sidebarOpen: Boolean,
+    onShowSidebar: () -> Unit,
+    onBackToHome: () -> Unit,
+    onImportScm: (String) -> Unit = {},
+) {
     val palette = LocalPalette.current
     var prefs by remember { mutableStateOf(editor.preferences) }
     fun update(p: Preferences) {
         prefs = p
         editor.applyPreferences(p)
     }
+    // Follow out-of-pane preference changes too (the .scm import round-trips a picker).
+    LaunchedEffect(editor.prefsVersion) { prefs = editor.preferences }
 
     val scrollState = rememberScrollState()
     val layout = editor.toolbarLayout
@@ -258,6 +267,31 @@ fun PreferencesPane(editor: Editor, compact: Boolean, sidebarOpen: Boolean, onSh
                 color = palette.textDim.toComposeColor(),
                 fontSize = 12.sp,
             )
+
+            if (editor.treeSitterAvailable) {
+                HorizontalDivider(color = palette.border.toComposeColor())
+                SectionTitle("Code highlighting")
+                Text(
+                    "Each language ships a default tree-sitter highlight query; import your own .scm to restyle it.",
+                    color = palette.textDim.toComposeColor(),
+                    fontSize = 12.sp,
+                )
+                for (lang in editor.scmLanguages()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            lang,
+                            color = palette.text.toComposeColor(),
+                            fontSize = 14.sp,
+                            modifier = Modifier.width(110.dp),
+                        )
+                        TextButton(onClick = { onImportScm(lang) }) { Text("Import .scm…", fontSize = 13.sp) }
+                        if (editor.hasCustomScm(lang)) {
+                            TextButton(onClick = { editor.resetScm(lang) }) { Text("Reset", fontSize = 13.sp) }
+                            Text("custom", color = palette.accent.toComposeColor(), fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             Row(verticalAlignment = Alignment.CenterVertically) {

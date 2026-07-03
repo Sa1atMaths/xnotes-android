@@ -287,6 +287,10 @@ class Editor(context: Context) {
     var shapeConfig by mutableStateOf(ShapeConfig())
         private set
     var message by mutableStateOf<String?>(null)
+
+    /** Bumped on every preferences change so open panes refresh (e.g. after an .scm import). */
+    var prefsVersion by mutableStateOf(0)
+        private set
     var editingField by mutableStateOf<EditingField?>(null)
         private set
 
@@ -1136,6 +1140,7 @@ class Editor(context: Context) {
             refreshView()
         }
         settingsRepo.save(settings)
+        prefsVersion++
         view.requestRender()
     }
 
@@ -3058,6 +3063,49 @@ class Editor(context: Context) {
         republishFlow(invalidate = true)
         if (flowText.active) flowText.ensureCaretVisible()
         refreshContent()
+        onRender()
+    }
+
+    // --- user .scm highlight queries ---
+
+    val treeSitterAvailable: Boolean get() = highlighter != null
+
+    fun scmLanguages(): List<String> = com.xnotes.platform.TreeSitterHighlighter.SUPPORTED.sorted()
+
+    fun hasCustomScm(language: String): Boolean = settings.prefs.customScm.containsKey(language)
+
+    /** Validate and adopt a user highlight query for [language]; reports via [message]. */
+    fun importScm(language: String, bytes: ByteArray) {
+        if (highlighter == null) {
+            message = "Code highlighting isn't available on this device."
+            return
+        }
+        val error = com.xnotes.platform.TreeSitterNative.nativeValidateQuery(language, bytes)
+        if (error != null) {
+            message = "Not a valid $language highlight query: $error"
+            return
+        }
+        val file = java.io.File(java.io.File(appContext.filesDir, "scm").apply { mkdirs() }, "$language.scm")
+        runCatching { file.writeBytes(bytes) }.onFailure {
+            message = "Couldn't store the query file."
+            return
+        }
+        applyPreferences(settings.prefs.copy(customScm = settings.prefs.customScm + (language to file.path)))
+        rehighlight(language)
+        message = "Custom $language highlighting imported."
+    }
+
+    /** Back to the bundled query for [language]. */
+    fun resetScm(language: String) {
+        settings.prefs.customScm[language]?.let { runCatching { java.io.File(it).delete() } }
+        applyPreferences(settings.prefs.copy(customScm = settings.prefs.customScm - language))
+        rehighlight(language)
+    }
+
+    private fun rehighlight(language: String) {
+        treeSitter.invalidate(language)
+        highlightCache.clear()
+        republishFlow(invalidate = true)
         onRender()
     }
 
