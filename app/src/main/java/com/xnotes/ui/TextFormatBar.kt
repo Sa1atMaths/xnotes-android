@@ -91,6 +91,14 @@ fun TextFormatBar(editor: Editor) {
         BarIcon(XnotesIcons.indentDecrease, "Outdent", enabled = (para?.indent ?: 0) > 0) {
             editor.flowIndent(-1)
         }
+        BarDivider()
+        val hasClip = editor.clipboardHasText()
+        BarIcon(XnotesIcons.paste, "Paste (markdown aware)", enabled = hasClip) {
+            editor.pasteTextAtCaret()
+        }
+        BarIcon(XnotesIcons.code, "Paste as code", enabled = hasClip) {
+            editor.pasteAsCodeAtCaret()
+        }
     }
 }
 

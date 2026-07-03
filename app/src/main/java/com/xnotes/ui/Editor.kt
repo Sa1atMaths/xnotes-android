@@ -440,6 +440,7 @@ class Editor(context: Context) {
      * plain text, so literal stars and hashes in prose survive.
      */
     fun pasteTextAtCaret() {
+        ensureFlowCaret()
         if (!flowText.active) return
         val text = clipboardText() ?: return
         if (com.xnotes.core.text.MarkdownParser.looksLikeMarkdown(text)) {
@@ -451,6 +452,7 @@ class Editor(context: Context) {
 
     /** Paste the clipboard's text as a code block (one code paragraph per line). */
     fun pasteAsCodeAtCaret() {
+        ensureFlowCaret()
         if (!flowText.active) return
         val text = clipboardText() ?: return
         insertFlowParagraphs(
@@ -461,6 +463,12 @@ class Editor(context: Context) {
                 )
             },
         )
+    }
+
+    /** Bar paste without a caret yet: open a session at the end of the flow. */
+    private fun ensureFlowCaret() {
+        if (tool != Tool.TEXT || flowText.active) return
+        flowText.startSession(FlowRange.caret(state.document.flow.endPos()))
     }
 
     /** Long-press menu paste: arm the text tool, place the caret at [content], then paste. */
