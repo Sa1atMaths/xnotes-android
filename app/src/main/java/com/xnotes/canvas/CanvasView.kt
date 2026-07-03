@@ -376,8 +376,12 @@ class CanvasView @JvmOverloads constructor(
                 r.drawRaster(blit.base, Rect(blit.dx, blit.dy, dw, dh))
                 // A lifted flow is absent from the sharp ink layer too: draw it live
                 // between the sharp base and sharp ink so the stack order holds.
+                // Clipped to the blit's own rect: outside it the page loop's live pass
+                // already painted the flow, and a second (translucent) chip on top
+                // reads as a lighter band while the slid sharp frame settles.
                 if (st.flowLifted) {
                     r.withSave {
+                        r.clipRect(Rect(blit.dx, blit.dy, dw, dh))
                         r.translate(origin.x, origin.y)
                         r.scale(st.zoom, st.zoom)
                         for (i in st.document.pages.indices) {
