@@ -62,9 +62,9 @@ object XnotesIcons {
     )
     // The inline text tool: a caret (I-beam, Lucide "text-cursor"), not the old text-box "T".
     val text = icon(
-        "M17 22h-1a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4h1",
-        "M7 22h1a4 4 0 0 0 4-4v-1",
-        "M7 2h1a4 4 0 0 1 4 4v1",
+        "M17 21h-1a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h1",
+        "M7 21h1a4 4 0 0 0 4-4v-1",
+        "M7 3h1a4 4 0 0 1 4 4v1",
     )
     // The text box tool: the old serif "T" glyph shrunk into a box.
     val textBox = icon(
