@@ -4,7 +4,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
@@ -22,8 +21,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.LocalDensity
@@ -39,6 +38,7 @@ import com.xnotes.core.pal.FontFace
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Maps an abstract [FontFace] to the matching Compose generic family (shared with the style bar). */
 internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
@@ -91,76 +91,82 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    val xDp = with(density) { field.x.toFloat().toDp() }
-    val yDp = with(density) { field.y.toFloat().toDp() }
     val widthDp = with(density) { field.width.toFloat().toDp() }
     val heightDp = with(density) { field.heightPx.toFloat().toDp() }
     val fontSp = with(density) { field.fontPx.toFloat().toSp() }
 
-    BasicTextField(
-        value = value,
-        onValueChange = {
-            value = it
-            editor.updateEditingText(it.text)
-        },
-        modifier = Modifier
-            .then(NoBringIntoViewElement)
-            .offset(xDp, yDp)
-            .widthIn(min = widthDp, max = widthDp)
-            .heightIn(min = heightDp)
-            // Unbounded height: the field sizes to its content and never scrolls its own text. The
-            // box grows; the page scrolls to reach the rest; the host Box clips the overflow.
-            .layout { measurable, constraints ->
-                val placeable = measurable.measure(constraints.copy(maxHeight = Constraints.Infinity))
-                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-            }
-            // No fill: the edited box is lifted out of the ink cache, so a transparent field lets the
-            // page/PDF underneath show through while typing (true WYSIWYG). The border marks the bounds.
-            .border(1.dp, palette.accent.toComposeColor())
-            .focusRequester(focusRequester)
-            .onGloballyPositioned { coords = it }
-            .pointerInput(Unit) {
-                val slop = viewConfiguration.touchSlop
-                val longPress = viewConfiguration.longPressTimeoutMillis
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    if (down.type != PointerType.Touch) return@awaitEachGesture
-                    val lc = coords ?: return@awaitEachGesture
-                    var lastRoot = lc.localToRoot(down.position)
-                    var dragging = false
-                    var yielded = false
-                    var totalX = 0f
-                    var totalY = 0f
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) { if (dragging) change.consume(); break }
-                        if (yielded) continue
-                        // Resolve to root coordinates each event so the field's own movement (it follows
-                        // the page as we scroll) does not cancel out the finger delta.
-                        val cur = (coords ?: lc).localToRoot(change.position)
-                        val dx = cur.x - lastRoot.x
-                        val dy = cur.y - lastRoot.y
-                        lastRoot = cur
-                        totalX += dx
-                        totalY += dy
-                        if (!dragging) {
-                            if (abs(totalX) <= slop && abs(totalY) <= slop) continue
-                            // A drag that only starts after a long hold is a text selection, not a
-                            // scroll: yield so the field's own selection handling runs.
-                            if (change.uptimeMillis - down.uptimeMillis >= longPress) { yielded = true; continue }
-                            dragging = true
-                        }
-                        editor.panWhileEditing(dx, dy)
-                        change.consume()
-                    }
-                }
+    /**
+     * The field is measured through this wrapper with fully unbounded constraints and placed at
+     * the box's viewport position in raw px. Measured against the canvas area's own (bounded)
+     * constraints, a box taller than the screen would have its outer size clamped, and the text
+     * field would scroll its content to the end-of-text caret — a tall box visibly showed its
+     * tail at its top. Unbounded, the field is always exactly its content's size, so there is
+     * nothing to scroll and the text stays put; the host Box clips the overflow.
+     */
+    Layout(content = {
+        BasicTextField(
+            value = value,
+            onValueChange = {
+                value = it
+                editor.updateEditingText(it.text)
             },
-        textStyle = TextStyle(
-            color = field.rgba.toComposeColor(),
-            fontFamily = field.face.toComposeFamily(),
-            fontSize = fontSp,
-        ),
-        cursorBrush = SolidColor(palette.accent.toComposeColor()),
-    )
+            modifier = Modifier
+                .then(NoBringIntoViewElement)
+                .widthIn(min = widthDp, max = widthDp)
+                .heightIn(min = heightDp)
+                // No fill: the edited box is lifted out of the ink cache, so a transparent field lets the
+                // page/PDF underneath show through while typing (true WYSIWYG). The border marks the bounds.
+                .border(1.dp, palette.accent.toComposeColor())
+                .focusRequester(focusRequester)
+                .onGloballyPositioned { coords = it }
+                .pointerInput(Unit) {
+                    val slop = viewConfiguration.touchSlop
+                    val longPress = viewConfiguration.longPressTimeoutMillis
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        if (down.type != PointerType.Touch) return@awaitEachGesture
+                        val lc = coords ?: return@awaitEachGesture
+                        var lastRoot = lc.localToRoot(down.position)
+                        var dragging = false
+                        var yielded = false
+                        var totalX = 0f
+                        var totalY = 0f
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) { if (dragging) change.consume(); break }
+                            if (yielded) continue
+                            // Resolve to root coordinates each event so the field's own movement (it follows
+                            // the page as we scroll) does not cancel out the finger delta.
+                            val cur = (coords ?: lc).localToRoot(change.position)
+                            val dx = cur.x - lastRoot.x
+                            val dy = cur.y - lastRoot.y
+                            lastRoot = cur
+                            totalX += dx
+                            totalY += dy
+                            if (!dragging) {
+                                if (abs(totalX) <= slop && abs(totalY) <= slop) continue
+                                // A drag that only starts after a long hold is a text selection, not a
+                                // scroll: yield so the field's own selection handling runs.
+                                if (change.uptimeMillis - down.uptimeMillis >= longPress) { yielded = true; continue }
+                                dragging = true
+                            }
+                            editor.panWhileEditing(dx, dy)
+                            change.consume()
+                        }
+                    }
+                },
+            textStyle = TextStyle(
+                color = field.rgba.toComposeColor(),
+                fontFamily = field.face.toComposeFamily(),
+                fontSize = fontSp,
+            ),
+            cursorBrush = SolidColor(palette.accent.toComposeColor()),
+        )
+    }) { measurables, constraints ->
+        val placeable = measurables[0].measure(Constraints())
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            placeable.place(field.x.roundToInt(), field.y.roundToInt())
+        }
+    }
 }
