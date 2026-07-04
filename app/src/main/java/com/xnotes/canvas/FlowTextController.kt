@@ -387,8 +387,13 @@ class FlowTextController(
             return caret
         }
         flushBurst()
+        // A typed paragraph break lands the caret on a fresh line with no left
+        // neighbour to inherit from, so carry the typing style over as pending
+        // (commitEdit -> placeCaret clears it, hence re-armed after).
+        val carry = if (text.endsWith("\n")) effStyle ?: FlowEditor(flow()).charStyleAt(r.start) else null
         val (cmd, caret) = FlowEditor(flow()).replaceRange(r, text, effStyle)
         commitEdit(cmd, caret)
+        if (carry != null && carry != CharStyle.DEFAULT) pendingStyle = carry
         return caret
     }
 
