@@ -17,6 +17,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
+import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.FormatAlignCenter
+import androidx.compose.material.icons.filled.FormatAlignJustify
+import androidx.compose.material.icons.filled.FormatAlignLeft
+import androidx.compose.material.icons.filled.FormatAlignRight
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.FormatStrikethrough
+import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -74,7 +88,7 @@ fun TextFormatBar(editor: Editor) {
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BarIcon(XnotesIcons.checkboxItem, "Checkbox item", active = para?.list == ListKind.CHECK) {
+        BarIcon(Icons.Outlined.CheckBox, "Checkbox item", active = para?.list == ListKind.CHECK) {
             editor.flowToggleList(ListKind.CHECK)
         }
         BarDivider()
@@ -84,33 +98,33 @@ fun TextFormatBar(editor: Editor) {
         FontFaceButton(editor)
         SizeStepper(style.sizePt ?: editor.flowDefaultSizePt()) { editor.flowAdjustSize(it) }
         BarDivider()
-        BarIcon(XnotesIcons.bold, "Bold", active = style.bold) { editor.flowToggleBold() }
-        BarIcon(XnotesIcons.italic, "Italic", active = style.italic) { editor.flowToggleItalic() }
-        BarIcon(XnotesIcons.underline, "Underline", active = style.underline) { editor.flowToggleUnderline() }
-        BarIcon(XnotesIcons.strikethrough, "Strikethrough", active = style.strike) { editor.flowToggleStrike() }
+        BarIcon(Icons.Filled.FormatBold, "Bold", active = style.bold) { editor.flowToggleBold() }
+        BarIcon(Icons.Filled.FormatItalic, "Italic", active = style.italic) { editor.flowToggleItalic() }
+        BarIcon(Icons.Filled.FormatUnderlined, "Underline", active = style.underline) { editor.flowToggleUnderline() }
+        BarIcon(Icons.Filled.FormatStrikethrough, "Strikethrough", active = style.strike) { editor.flowToggleStrike() }
         BarDivider()
-        BarIcon(XnotesIcons.listOrdered, "Ordered list", active = para?.list == ListKind.ORDERED) {
+        BarIcon(Icons.Filled.FormatListNumbered, "Ordered list", active = para?.list == ListKind.ORDERED) {
             editor.flowToggleList(ListKind.ORDERED)
         }
-        BarIcon(XnotesIcons.listBullet, "Bullet list", active = para?.list == ListKind.BULLET) {
+        BarIcon(Icons.AutoMirrored.Filled.FormatListBulleted, "Bullet list", active = para?.list == ListKind.BULLET) {
             editor.flowToggleList(ListKind.BULLET)
         }
         BarDivider()
         BarIcon(alignIcon(para?.align ?: ParaAlign.LEFT), "Alignment", active = para != null && para.align != ParaAlign.LEFT) {
             editor.flowCycleAlign()
         }
-        BarIcon(XnotesIcons.indentIncrease, "Indent") { editor.flowIndent(1) }
-        BarIcon(XnotesIcons.indentDecrease, "Outdent", enabled = (para?.indent ?: 0) > 0) {
+        BarIcon(Icons.AutoMirrored.Filled.FormatIndentIncrease, "Indent") { editor.flowIndent(1) }
+        BarIcon(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Outdent", enabled = (para?.indent ?: 0) > 0) {
             editor.flowIndent(-1)
         }
     }
 }
 
 private fun alignIcon(align: ParaAlign): ImageVector = when (align) {
-    ParaAlign.LEFT -> XnotesIcons.alignLeft
-    ParaAlign.CENTER -> XnotesIcons.alignCenter
-    ParaAlign.RIGHT -> XnotesIcons.alignRight
-    ParaAlign.JUSTIFY -> XnotesIcons.alignJustify
+    ParaAlign.LEFT -> Icons.Filled.FormatAlignLeft
+    ParaAlign.CENTER -> Icons.Filled.FormatAlignCenter
+    ParaAlign.RIGHT -> Icons.Filled.FormatAlignRight
+    ParaAlign.JUSTIFY -> Icons.Filled.FormatAlignJustify
 }
 
 @Composable
