@@ -21,8 +21,9 @@ interface CodeHighlighter {
 
 /**
  * Maps .scm capture names to colours by longest dotted prefix ("keyword.return"
- * falls back to "keyword"). Two presets keyed to the app's dark/light paper;
- * user-imported themes may also carry the code-block [background].
+ * falls back to "keyword"). Two presets keyed to the app's dark/light paper
+ * (github-dark and github-light); the dark preset and user-imported themes also
+ * carry a code-block [background].
  */
 class HighlightTheme(private val colors: Map<String, Rgba>, val background: Rgba? = null) {
 
@@ -37,37 +38,40 @@ class HighlightTheme(private val colors: Map<String, Rgba>, val background: Rgba
     }
 
     companion object {
+        // github-dark (Primer palette), resolved from its Helix theme.
         val DARK = HighlightTheme(
             mapOf(
-                "keyword" to Rgba(198, 120, 221, 255),
-                "function" to Rgba(97, 175, 239, 255),
-                "type" to Rgba(229, 192, 123, 255),
-                "string" to Rgba(152, 195, 121, 255),
-                "escape" to Rgba(86, 182, 194, 255),
-                "number" to Rgba(209, 154, 102, 255),
-                "constant" to Rgba(209, 154, 102, 255),
-                "comment" to Rgba(127, 132, 142, 255),
-                "operator" to Rgba(86, 182, 194, 255),
-                "property" to Rgba(224, 108, 117, 255),
-                "variable" to Rgba(224, 108, 117, 255),
-                "punctuation" to Rgba(140, 146, 155, 255),
+                "keyword" to Rgba(255, 123, 114, 255),
+                "function" to Rgba(210, 168, 255, 255),
+                "type" to Rgba(255, 166, 87, 255),
+                "string" to Rgba(165, 214, 255, 255),
+                "escape" to Rgba(121, 192, 255, 255),
+                "number" to Rgba(121, 192, 255, 255),
+                "constant" to Rgba(121, 192, 255, 255),
+                "comment" to Rgba(139, 148, 158, 255),
+                "operator" to Rgba(165, 214, 255, 255),
+                "property" to Rgba(165, 214, 255, 255),
+                "variable" to Rgba(201, 209, 217, 255),
+                "punctuation" to Rgba(201, 209, 217, 255),
             ),
+            background = Rgba(13, 17, 23, 255),
         )
 
+        // github-light (Primer palette), resolved from its Helix theme.
         val LIGHT = HighlightTheme(
             mapOf(
-                "keyword" to Rgba(166, 38, 164, 255),
-                "function" to Rgba(64, 120, 242, 255),
-                "type" to Rgba(193, 132, 1, 255),
-                "string" to Rgba(80, 161, 79, 255),
-                "escape" to Rgba(1, 132, 188, 255),
-                "number" to Rgba(152, 104, 1, 255),
-                "constant" to Rgba(152, 104, 1, 255),
-                "comment" to Rgba(160, 161, 167, 255),
-                "operator" to Rgba(1, 132, 188, 255),
-                "property" to Rgba(228, 86, 73, 255),
-                "variable" to Rgba(228, 86, 73, 255),
-                "punctuation" to Rgba(105, 112, 122, 255),
+                "keyword" to Rgba(207, 34, 46, 255),
+                "function" to Rgba(130, 80, 223, 255),
+                "type" to Rgba(149, 56, 0, 255),
+                "string" to Rgba(10, 48, 105, 255),
+                "escape" to Rgba(5, 80, 174, 255),
+                "number" to Rgba(5, 80, 174, 255),
+                "constant" to Rgba(5, 80, 174, 255),
+                "comment" to Rgba(87, 96, 106, 255),
+                "operator" to Rgba(10, 48, 105, 255),
+                "property" to Rgba(10, 48, 105, 255),
+                "variable" to Rgba(36, 41, 47, 255),
+                "punctuation" to Rgba(36, 41, 47, 255),
             ),
         )
     }
