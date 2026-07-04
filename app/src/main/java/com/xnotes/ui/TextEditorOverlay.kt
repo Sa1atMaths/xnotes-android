@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
@@ -24,7 +25,9 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.relocation.BringIntoViewModifierNode
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -43,6 +46,25 @@ internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
     FontFace.SERIF -> FontFamily.Serif
     FontFace.MONO -> FontFamily.Monospace
     FontFace.HAND -> FontFamily.Cursive
+}
+
+/**
+ * Swallows the text field's bring-into-view requests. On focus (and every caret move) Compose
+ * asks the platform to reveal the caret via requestRectangleOnScreen; with the keyboard open in
+ * an edge-to-edge window, ViewRootImpl answers by panning the whole window, which visibly lifts
+ * a box taller than the viewport. Dispatch stops at the nearest [BringIntoViewModifierNode], so
+ * a no-op ancestor keeps the request from ever reaching the platform: the page must never move
+ * on its own during a box edit.
+ */
+private object NoBringIntoViewElement : ModifierNodeElement<NoBringIntoViewNode>() {
+    override fun create() = NoBringIntoViewNode()
+    override fun update(node: NoBringIntoViewNode) {}
+    override fun hashCode(): Int = 0
+    override fun equals(other: Any?): Boolean = other === this
+}
+
+private class NoBringIntoViewNode : Modifier.Node(), BringIntoViewModifierNode {
+    override suspend fun bringIntoView(childCoordinates: LayoutCoordinates, boundsProvider: () -> Rect?) {}
 }
 
 /**
@@ -82,6 +104,7 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
             editor.updateEditingText(it.text)
         },
         modifier = Modifier
+            .then(NoBringIntoViewElement)
             .offset(xDp, yDp)
             .widthIn(min = widthDp, max = widthDp)
             .heightIn(min = heightDp)
