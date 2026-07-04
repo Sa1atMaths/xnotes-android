@@ -54,6 +54,8 @@ data class Preferences(
     val codeThemeName: String? = null,
     /** Language "Paste as Code" assigns to pasted blocks; "plain" pastes unhighlighted. */
     val defaultCodeLanguage: String = "cpp",
+    /** Language the format bar's code toggle last applied; "" until a language is picked. */
+    val lastCodeLanguage: String = "",
 ) {
     val isDark: Boolean get() = uiAppearance != "light"
 
@@ -84,6 +86,7 @@ data class Preferences(
             codeThemePath?.let { put("code_theme_path", it) }
             codeThemeName?.let { put("code_theme_name", it) }
             put("default_code_language", defaultCodeLanguage)
+            lastCodeLanguage.takeIf { it.isNotEmpty() }?.let { put("last_code_language", it) }
         }
 
     companion object {
@@ -123,6 +126,7 @@ data class Preferences(
                 codeThemeName = o.optString("code_theme_name").ifEmpty { null },
                 defaultCodeLanguage = o.optString("default_code_language", "cpp")
                     .lowercase().trim().ifEmpty { "cpp" },
+                lastCodeLanguage = o.optString("last_code_language").lowercase().trim(),
             )
         }
     }

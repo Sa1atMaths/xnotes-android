@@ -3089,6 +3089,60 @@ class Editor(context: Context) {
         flowParaOp {
             it.list = target
             if (target != ListKind.CHECK) it.checked = false
+            if (target != ListKind.NONE) it.codeLang = null
+        }
+    }
+
+    /** Toggle the paragraph(s) into code lines in the last-used language, or back to plain. */
+    fun flowToggleCode() {
+        if (flowCaretParagraph()?.codeLang != null) {
+            flowParaOp { it.codeLang = null }
+        } else {
+            flowStartCode(lastCodeLanguage())
+        }
+    }
+
+    /** Language token ("plain" or a tree-sitter id) the code toggle arms next. */
+    fun lastCodeLanguage(): String =
+        settings.prefs.lastCodeLanguage.ifEmpty { settings.prefs.defaultCodeLanguage }
+
+    /** Tokens the language menu offers: plain plus every highlightable language. */
+    fun codeLanguageChoices(): List<String> =
+        listOf("plain") + (if (treeSitterAvailable) scmLanguages() else emptyList())
+
+    /** Pick a code language: retarget the caret's whole code block, or start one. */
+    fun flowSetCodeLanguage(token: String) {
+        if (!flowText.active) return
+        if (flowCaretParagraph()?.codeLang != null) {
+            val lang = if (token == "plain") "" else token
+            val flow = state.document.flow
+            val sel = flowText.selection.normalized()
+            var first = sel.start.para
+            while (first > 0 && flow.paragraphs[first - 1].codeLang != null) first--
+            var last = sel.end.para.coerceAtMost(flow.paragraphs.size - 1)
+            while (last + 1 < flow.paragraphs.size && flow.paragraphs[last + 1].codeLang != null) last++
+            flowText.flushBurst()
+            flowText.commitEdit(
+                FlowEditor(flow).setParaStyle(FlowRange(FlowPos(first, 0), FlowPos(last, 0))) {
+                    if (it.codeLang != null) it.codeLang = lang
+                },
+                null,
+            )
+            flowSelTick++
+        } else {
+            flowStartCode(token)
+        }
+        settings = settings.copy(prefs = settings.prefs.copy(lastCodeLanguage = token))
+        settingsRepo.save(settings)
+    }
+
+    /** Make the selected paragraph(s) code lines in [token]'s language. */
+    private fun flowStartCode(token: String) {
+        val lang = if (token == "plain") "" else token
+        flowParaOp {
+            it.codeLang = lang
+            it.list = ListKind.NONE
+            it.checked = false
         }
     }
 

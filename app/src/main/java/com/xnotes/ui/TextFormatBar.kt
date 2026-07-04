@@ -1,8 +1,10 @@
 package com.xnotes.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FormatAlignCenter
 import androidx.compose.material.icons.filled.FormatAlignJustify
 import androidx.compose.material.icons.filled.FormatAlignLeft
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -69,8 +73,9 @@ import kotlin.math.roundToInt
  * legacy box edit is open). Sits as the last child of the editor column, so the
  * adjustResize window floats it directly above the soft keyboard. Controls, in
  * order: checkbox item, font colour, highlight, font face, size, bold/italic/
- * underline/strikethrough, ordered and unordered lists, alignment (cycles),
- * indent, outdent. Centred when it fits, scrollable when it does not.
+ * underline/strikethrough, ordered and unordered lists, code block (tap toggles,
+ * long-press picks the language), alignment (cycles), indent, outdent. Centred
+ * when it fits, scrollable when it does not.
  */
 @Composable
 fun TextFormatBar(editor: Editor) {
@@ -111,6 +116,7 @@ fun TextFormatBar(editor: Editor) {
         BarIcon(Icons.AutoMirrored.Filled.FormatListBulleted, "Bullet list", active = para?.list == ListKind.BULLET) {
             editor.flowToggleList(ListKind.BULLET)
         }
+        CodeBlockButton(editor, para?.codeLang)
         BarDivider()
         BarIcon(alignIcon(para?.align ?: ParaAlign.LEFT), "Alignment", active = para != null && para.align != ParaAlign.LEFT) {
             editor.flowCycleAlign()
@@ -127,6 +133,76 @@ private fun alignIcon(align: ParaAlign): ImageVector = when (align) {
     ParaAlign.CENTER -> Icons.Filled.FormatAlignCenter
     ParaAlign.RIGHT -> Icons.Filled.FormatAlignRight
     ParaAlign.JUSTIFY -> Icons.Filled.FormatAlignJustify
+}
+
+/** Short form shown on the active code toggle; "" is plain/unhighlighted code. */
+private fun shortLangLabel(lang: String): String = when (lang) {
+    "" -> "txt"
+    "bash" -> "sh"
+    "javascript" -> "js"
+    "kotlin" -> "kt"
+    "python" -> "py"
+    else -> lang.take(4)
+}
+
+/** Code block: tap toggles it like a list, long-press picks the block's language.
+ *  While on, the icon gives way to the active language's short form. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CodeBlockButton(editor: Editor, lang: String?) {
+    val palette = LocalPalette.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .combinedClickable(
+                    onClick = { editor.flowToggleCode() },
+                    onLongClick = { menuOpen = true },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (lang != null) {
+                Text(
+                    shortLangLabel(lang),
+                    color = palette.accent.toComposeColor(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    style = TextStyle(fontFamily = FontFamily.Monospace),
+                )
+            } else {
+                Icon(
+                    Icons.Filled.Code,
+                    contentDescription = "Code block",
+                    tint = palette.textDim.toComposeColor(),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            val current = when {
+                lang == null -> editor.lastCodeLanguage()
+                lang.isEmpty() -> "plain"
+                else -> lang
+            }
+            for (token in editor.codeLanguageChoices()) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (token == "plain") "plain (no highlighting)" else token,
+                            color = (if (token == current) palette.accent else palette.text).toComposeColor(),
+                            fontSize = 14.sp,
+                        )
+                    },
+                    onClick = {
+                        editor.flowSetCodeLanguage(token)
+                        menuOpen = false
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable
