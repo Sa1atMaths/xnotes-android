@@ -4,7 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +16,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -25,12 +30,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.pal.FontFace
 import com.xnotes.core.text.ListKind
 import com.xnotes.core.text.ParaAlign
 import com.xnotes.core.tools.Tool
@@ -43,8 +52,9 @@ import kotlin.math.roundToInt
  * The bottom text-format strip, shown while the inline text tool is armed (and no
  * legacy box edit is open). Sits as the last child of the editor column, so the
  * adjustResize window floats it directly above the soft keyboard. Controls, in
- * order: checkbox item, font colour, highlight, size, bold/italic/underline/
- * strikethrough, ordered and unordered lists, alignment (cycles), indent, outdent.
+ * order: checkbox item, font colour, highlight, font face, size, bold/italic/
+ * underline/strikethrough, ordered and unordered lists, alignment (cycles),
+ * indent, outdent. Centred when it fits, scrollable when it does not.
  */
 @Composable
 fun TextFormatBar(editor: Editor) {
@@ -61,15 +71,17 @@ fun TextFormatBar(editor: Editor) {
             .height(48.dp)
             .background(palette.panel.toComposeColor())
             .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BarIcon(XnotesIcons.checkboxItem, "Checkbox item", active = para?.list == ListKind.CHECK) {
             editor.flowToggleList(ListKind.CHECK)
         }
         BarDivider()
-        FontColorDot(editor, style.color)
-        HighlightDot(editor, style.highlight)
+        FontColorButton(editor, style.color)
+        HighlightButton(editor, style.highlight)
         BarDivider()
+        FontFaceButton(editor)
         SizeStepper(style.sizePt ?: editor.flowDefaultSizePt()) { editor.flowAdjustSize(it) }
         BarDivider()
         BarIcon(XnotesIcons.bold, "Bold", active = style.bold) { editor.flowToggleBold() }
@@ -131,22 +143,33 @@ private fun BarDivider() {
     )
 }
 
-/** Font colour: a dot filled with the caret's colour, opening the shared picker. */
+/** Font colour: an "A" over a bar in the caret's colour, opening the shared picker. */
 @Composable
-private fun FontColorDot(editor: Editor, current: Rgba?) {
+private fun FontColorButton(editor: Editor, current: Rgba?) {
     val palette = LocalPalette.current
     var open by remember { mutableStateOf(false) }
     val shown = current ?: editor.flowDefaultColor()
     Box {
         Box(
-            Modifier
-                .padding(horizontal = 6.dp)
-                .size(26.dp)
-                .clip(CircleShape)
-                .background(shown.toComposeColor())
-                .border(1.dp, palette.border.toComposeColor(), CircleShape)
-                .clickable { open = true },
-        )
+            Modifier.size(44.dp).clip(CircleShape).clickable { open = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "A",
+                    color = palette.text.toComposeColor(),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Box(
+                    Modifier
+                        .width(16.dp)
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(shown.toComposeColor()),
+                )
+            }
+        }
         if (open) {
             ColorPickerPopup(
                 initial = shown,
@@ -158,27 +181,33 @@ private fun FontColorDot(editor: Editor, current: Rgba?) {
     }
 }
 
-/** Highlight: tap clears an active highlight, or opens the picker when there is none. */
+/** Highlight: an "A" on a swatch; tap clears an active highlight, or opens the picker. */
 @Composable
-private fun HighlightDot(editor: Editor, current: Rgba?) {
+private fun HighlightButton(editor: Editor, current: Rgba?) {
     val palette = LocalPalette.current
     var open by remember { mutableStateOf(false) }
     Box {
         Box(
-            modifier = Modifier
-                .padding(horizontal = 6.dp)
-                .size(26.dp)
+            Modifier
+                .size(44.dp)
                 .clip(CircleShape)
-                .then(
-                    if (current != null) Modifier.background(current.toComposeColor())
-                    else Modifier.background(palette.panel.toComposeColor()),
-                )
-                .border(1.dp, palette.border.toComposeColor(), CircleShape)
                 .clickable { if (current != null) editor.flowSetCharHighlight(null) else open = true },
             contentAlignment = Alignment.Center,
         ) {
-            if (current == null) {
-                Text("ab", color = palette.textDim.toComposeColor(), fontSize = 10.sp)
+            Box(
+                Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background((current ?: palette.panel).toComposeColor())
+                    .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(7.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "A",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (current != null) swatchInk(current) else palette.textDim.toComposeColor(),
+                )
             }
         }
         if (open) {
@@ -192,22 +221,61 @@ private fun HighlightDot(editor: Editor, current: Rgba?) {
     }
 }
 
+/** Black or white, whichever reads against the swatch colour. */
+private fun swatchInk(c: Rgba): Color =
+    if (0.299 * c.r + 0.587 * c.g + 0.114 * c.b > 150) Color.Black else Color.White
+
+/** Font face: the document default, as in the tool's config popup (live reflow). */
+@Composable
+private fun FontFaceButton(editor: Editor) {
+    val palette = LocalPalette.current
+    var open by remember { mutableStateOf(false) }
+    val faces = listOf(
+        FontFace.SANS to "Sans",
+        FontFace.SERIF to "Serif",
+        FontFace.MONO to "Mono",
+        FontFace.HAND to "Hand",
+    )
+    Box {
+        BarIcon(XnotesIcons.fontFace, "Font") { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val current = editor.flowDefaultFace()
+            for ((f, label) in faces) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            label,
+                            color = (if (f == current) palette.accent else palette.text).toComposeColor(),
+                            style = TextStyle(fontFamily = f.toComposeFamily(), fontSize = 14.sp),
+                        )
+                    },
+                    onClick = {
+                        editor.setFlowDefaultFace(f)
+                        open = false
+                    },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SizeStepper(size: Double, onDelta: (Double) -> Unit) {
     val palette = LocalPalette.current
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(36.dp).clickable { onDelta(-1.0) }, contentAlignment = Alignment.Center) {
-            Text("−", color = palette.text.toComposeColor(), fontSize = 20.sp)
+        Box(Modifier.size(36.dp).clip(CircleShape).clickable { onDelta(-1.0) }, contentAlignment = Alignment.Center) {
+            Icon(XnotesIcons.minus, "Smaller", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
         }
         Text(
             size.roundToInt().toString(),
             color = palette.text.toComposeColor(),
             fontSize = 14.sp,
-            modifier = Modifier.width(24.dp),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(26.dp),
             style = TextStyle(fontFamily = FontFamily.Monospace),
         )
-        Box(Modifier.size(36.dp).clickable { onDelta(1.0) }, contentAlignment = Alignment.Center) {
-            Text("+", color = palette.text.toComposeColor(), fontSize = 20.sp)
+        Box(Modifier.size(36.dp).clip(CircleShape).clickable { onDelta(1.0) }, contentAlignment = Alignment.Center) {
+            Icon(XnotesIcons.plus, "Larger", tint = palette.textDim.toComposeColor(), modifier = Modifier.size(16.dp))
         }
     }
 }

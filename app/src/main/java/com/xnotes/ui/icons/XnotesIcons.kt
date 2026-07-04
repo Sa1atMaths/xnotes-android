@@ -107,6 +107,9 @@ object XnotesIcons {
     val fullscreen = icon("M15 3h6v6", "M9 21H3v-6", "M21 3l-7 7", "M3 21l7-7")
     val present = icon("M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6", "M2 12a9 9 0 0 1 8 8", "M2 16a5 5 0 0 1 4 4", "M2 20h.01")
     val plus = icon("M12 5v14", "M5 12h14")
+    val minus = icon("M5 12h14")
+    // The flow bar's font-face button (Lucide "type").
+    val fontFace = icon("M12 4v16", "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2", "M9 20h6")
     val trash = icon("M3 6h18", "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2")
     val close = icon("M18 6 6 18", "M6 6l12 12")
     val bookmark = icon("M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2Z")
