@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.model.Rgba
@@ -56,6 +58,7 @@ import com.xnotes.core.pal.FontFace
 import com.xnotes.core.text.ListKind
 import com.xnotes.core.text.ParaAlign
 import com.xnotes.core.tools.Tool
+import com.xnotes.platform.FontCatalog
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -238,12 +241,31 @@ private fun HighlightButton(editor: Editor, current: Rgba?) {
 private fun swatchInk(c: Rgba): Color =
     if (0.299 * c.r + 0.587 * c.g + 0.114 * c.b > 150) Color.Black else Color.White
 
-/** Font face: applies to the selection, or arms for what is typed next (like bold). */
+/** Font face: applies to the selection, or arms for what is typed next (like bold).
+ *  Labelled with the effective font's name in that font. */
 @Composable
 private fun FontFaceButton(editor: Editor, current: FontFace?) {
+    val palette = LocalPalette.current
     var open by remember { mutableStateOf(false) }
+    val shown = current ?: editor.flowDefaultFace()
     Box {
-        BarIcon(XnotesIcons.fontFace, "Font") { open = true }
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { open = true }
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                FontCatalog.label(shown),
+                color = palette.text.toComposeColor(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 120.dp),
+                style = TextStyle(fontFamily = shown.toComposeFamily(), fontSize = 14.sp),
+            )
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             FontMenuItems(current = current, withDefault = true) {
                 editor.flowSetCharFace(it)
