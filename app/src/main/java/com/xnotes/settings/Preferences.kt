@@ -50,6 +50,8 @@ data class Preferences(
     val startFullscreen: Boolean? = null,
     /** An imported Helix code theme's file path, or null for the built-in colours. */
     val codeThemePath: String? = null,
+    /** The imported code theme's original file name, shown in preferences. */
+    val codeThemeName: String? = null,
     /** Language "Paste as Code" assigns to pasted blocks; "plain" pastes unhighlighted. */
     val defaultCodeLanguage: String = "cpp",
 ) {
@@ -80,6 +82,7 @@ data class Preferences(
         .apply {
             startFullscreen?.let { put("start_fullscreen", it) }
             codeThemePath?.let { put("code_theme_path", it) }
+            codeThemeName?.let { put("code_theme_name", it) }
             put("default_code_language", defaultCodeLanguage)
         }
 
@@ -117,6 +120,7 @@ data class Preferences(
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
                 startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
                 codeThemePath = o.optString("code_theme_path").ifEmpty { null },
+                codeThemeName = o.optString("code_theme_name").ifEmpty { null },
                 defaultCodeLanguage = o.optString("default_code_language", "cpp")
                     .lowercase().trim().ifEmpty { "cpp" },
             )

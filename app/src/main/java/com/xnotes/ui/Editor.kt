@@ -3109,7 +3109,7 @@ class Editor(context: Context) {
     val hasCustomCodeTheme: Boolean get() = customCodeTheme != null
 
     /** Adopt a Helix theme file for code colours; reports via [message]. */
-    fun importCodeTheme(bytes: ByteArray) {
+    fun importCodeTheme(bytes: ByteArray, sourceName: String? = null) {
         val parsed = com.xnotes.format.HelixTheme.parse(String(bytes, Charsets.UTF_8))
         if (parsed == null) {
             message = "Not a usable Helix theme (a self-contained .toml is needed)."
@@ -3121,7 +3121,7 @@ class Editor(context: Context) {
             return
         }
         customCodeTheme = parsed
-        applyPreferences(settings.prefs.copy(codeThemePath = file.path))
+        applyPreferences(settings.prefs.copy(codeThemePath = file.path, codeThemeName = sourceName))
         retheme()
         message = "Code theme imported."
     }
@@ -3130,7 +3130,7 @@ class Editor(context: Context) {
     fun resetCodeTheme() {
         settings.prefs.codeThemePath?.let { runCatching { java.io.File(it).delete() } }
         customCodeTheme = null
-        applyPreferences(settings.prefs.copy(codeThemePath = null))
+        applyPreferences(settings.prefs.copy(codeThemePath = null, codeThemeName = null))
         retheme()
     }
 

@@ -341,7 +341,7 @@ private fun EditorScreen(
         if (uri != null) {
             runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }
                 .getOrNull()
-                ?.let { editor.importCodeTheme(it) }
+                ?.let { editor.importCodeTheme(it, displayNameOf(resolver, uri)) }
                 ?: run { editor.message = "Could not read the file." }
         }
     }

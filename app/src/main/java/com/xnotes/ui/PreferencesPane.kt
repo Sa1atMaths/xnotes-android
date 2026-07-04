@@ -287,17 +287,21 @@ fun PreferencesPane(
 
                 FieldLabel("Code theme")
                 Text(
-                    "Import a Helix editor theme (.toml) to recolour code: Tokyo Night, GitHub, Gruvbox and friends all ship one.",
+                    "Import a Helix editor theme (.toml) to recolour code.",
                     color = palette.textDim.toComposeColor(),
                     fontSize = 12.sp,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { onImportCodeTheme() }) { Text("Import theme…", fontSize = 13.sp) }
-                    if (editor.hasCustomCodeTheme) {
+                if (editor.hasCustomCodeTheme) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            prefs.codeThemeName ?: "Custom theme",
+                            color = palette.text.toComposeColor(),
+                            fontSize = 13.sp,
+                        )
                         TextButton(onClick = { editor.resetCodeTheme() }) { Text("Reset", fontSize = 13.sp) }
-                        Text("custom", color = palette.accent.toComposeColor(), fontSize = 12.sp)
                     }
                 }
+                TextButton(onClick = { onImportCodeTheme() }) { Text("Import theme…", fontSize = 13.sp) }
             }
 
             HorizontalDivider(color = palette.border.toComposeColor())
