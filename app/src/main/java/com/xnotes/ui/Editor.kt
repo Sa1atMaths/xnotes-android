@@ -3451,6 +3451,8 @@ class Editor(context: Context) {
      *  [noteOpen] so the editor is removed from the stack. The document stays as an inert buffer. */
     fun goHome() {
         if (!noteOpen) return
+        commitText() // commit an open text box before leaving (also hides its keyboard)
+        flowText.endSession() // end any live flow caret (flushes typing, hides the keyboard)
         saveViewState() // remember this folder note's view before leaving
         flushThen(showOverlay = true) {
             // Regenerate this folder note's grid tile now that editing is done (off-thread, low priority);
