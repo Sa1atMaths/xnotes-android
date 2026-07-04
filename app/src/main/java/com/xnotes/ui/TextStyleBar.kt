@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -50,10 +51,12 @@ fun TextStyleBar(editor: Editor) {
     val palette = LocalPalette.current
     val density = LocalDensity.current
 
-    // While editing, the bar also carries a commit (✓) button, so it is wider.
-    val barWidth = if (bar.editing) 240.dp else 196.dp
+    // The bar wraps its content so a long font name never clips the trailing controls;
+    // its width is known only after layout, so centre by an estimate then the measured value.
+    var measuredWidthPx by remember { mutableStateOf<Float?>(null) }
+    val estWidth = if (bar.editing) 240.dp else 196.dp
     val barHeightPx = with(density) { 44.dp.toPx() }
-    val barWidthPx = with(density) { barWidth.toPx() }
+    val barWidthPx = measuredWidthPx ?: with(density) { estWidth.toPx() }
     val gapPx = with(density) { 8.dp.toPx() }
     // When the box is only selected (not editing), the generic selection menu also sits above it,
     // so raise this bar by that menu's height + a gap to stack cleanly above it.
@@ -73,7 +76,7 @@ fun TextStyleBar(editor: Editor) {
         modifier = Modifier
             .offset(xDp, yDp)
             .height(44.dp)
-            .width(barWidth)
+            .onSizeChanged { measuredWidthPx = it.width.toFloat() }
             .clip(RoundedCornerShape(10.dp))
             .background(palette.menuBg.toComposeColor())
             .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(10.dp)),
