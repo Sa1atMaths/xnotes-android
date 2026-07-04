@@ -69,13 +69,19 @@ enum class PointerMode {
     TEXT_DRAG, RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE,
 }
 
-/** On-screen geometry of the live text editor field (viewport pixels). */
+/**
+ * Geometry of the live text editor field: [x]/[y] place its top-left in viewport pixels, while
+ * [width]/[height]/[fontPx] are **content-space** (page pixels, pre-zoom) and [zoom] maps them
+ * to the screen. The overlay lays text out at content scale and draws scaled by [zoom] — the
+ * same mechanism as the baked painter — so its line wrapping matches the canvas exactly.
+ */
 data class EditingField(
     val x: Double,
     val y: Double,
     val width: Double,
-    val heightPx: Double,
+    val height: Double,
     val fontPx: Double,
+    val zoom: Double,
     val face: FontFace,
     val rgba: Rgba,
     val text: String,
@@ -1646,9 +1652,10 @@ class InteractionController(
         return EditingField(
             x = topLeft.x,
             y = topLeft.y,
-            width = item.width * state.zoom,
-            heightPx = item.bounds().h * state.zoom,
-            fontPx = item.pointSize * com.xnotes.platform.AndroidText.POINTS_TO_PX * state.zoom,
+            width = item.width,
+            height = item.bounds().h,
+            fontPx = item.pointSize * com.xnotes.platform.AndroidText.POINTS_TO_PX,
+            zoom = state.zoom,
             face = item.face,
             rgba = item.rgba,
             text = item.text,
@@ -1725,7 +1732,7 @@ class InteractionController(
         val editing = editingText
         if (editing != null) {
             val f = editingField() ?: return null
-            return TextBar(Rect(f.x, f.y, f.width, f.heightPx), editing.face, editing.pointSize, editing = true)
+            return TextBar(Rect(f.x, f.y, f.width * f.zoom, f.height * f.zoom), editing.face, editing.pointSize, editing = true)
         }
         if (mode != PointerMode.IDLE) return null
         val sel = selection.singleOrNull()?.item as? TextItem ?: return null

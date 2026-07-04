@@ -17,6 +17,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -32,7 +34,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.xnotes.canvas.EditingField
 import com.xnotes.core.pal.FontFace
 import com.xnotes.ui.theme.LocalPalette
@@ -91,8 +93,14 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    val widthDp = with(density) { field.width.toFloat().toDp() }
-    val heightDp = with(density) { field.heightPx.toFloat().toDp() }
+    // Content-space geometry: the field lays its text out on the box's own pixel grid (the
+    // baked painter wraps a StaticLayout at floor(width) px with a content-size font, then
+    // draws through a zoom-scaled canvas). Re-wrapping at screen scale instead would break
+    // lines at slightly different words, since advances and line rounding aren't linear in
+    // font size. The graphicsLayer below applies the zoom at draw time, just like the canvas.
+    val z = field.zoom.toFloat()
+    val widthDp = with(density) { field.width.toInt().toDp() }
+    val heightDp = with(density) { field.height.toFloat().toDp() }
     val fontSp = with(density) { field.fontPx.toFloat().toSp() }
 
     /**
@@ -112,11 +120,13 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
             },
             modifier = Modifier
                 .then(NoBringIntoViewElement)
+                .graphicsLayer(scaleX = z, scaleY = z, transformOrigin = TransformOrigin(0f, 0f))
                 .widthIn(min = widthDp, max = widthDp)
                 .heightIn(min = heightDp)
                 // No fill: the edited box is lifted out of the ink cache, so a transparent field lets the
-                // page/PDF underneath show through while typing (true WYSIWYG). The border marks the bounds.
-                .border(1.dp, palette.accent.toComposeColor())
+                // page/PDF underneath show through while typing (true WYSIWYG). The border marks the
+                // bounds; its width is pre-divided so it stays 1dp after the layer scale.
+                .border(Dp(1f / z), palette.accent.toComposeColor())
                 .focusRequester(focusRequester)
                 .onGloballyPositioned { coords = it }
                 .pointerInput(Unit) {
