@@ -37,17 +37,23 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import com.xnotes.canvas.EditingField
 import com.xnotes.core.pal.FontFace
+import com.xnotes.platform.FontCatalog
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** Maps an abstract [FontFace] to the matching Compose generic family (shared with the style bar). */
+private val composeFamilies = java.util.concurrent.ConcurrentHashMap<String, FontFamily>()
+
+/** Maps a [FontFace] to a Compose family: generic tokens directly, the rest via the catalog. */
 internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
+    FontFace.SANS -> FontFamily.SansSerif
     FontFace.SERIF -> FontFamily.Serif
     FontFace.MONO -> FontFamily.Monospace
     FontFace.HAND -> FontFamily.Cursive
-    else -> FontFamily.SansSerif
+    else -> composeFamilies.getOrPut(id) {
+        FontFamily(FontCatalog.resolve(this, bold = false, italic = false).typeface)
+    }
 }
 
 /**
