@@ -3233,9 +3233,6 @@ class Editor(context: Context) {
     private fun retheme() {
         republishFlow(invalidate = true)
         onRender()
-        // Explorer tiles bake code colours in; drop them all so they re-render themed.
-        synchronized(noteThumbs) { noteThumbs.evictAll() }
-        thumbCache.prune(emptySet())
     }
 
     // --- user fonts (Preferences imports .ttf/.otf; notes reference them by name) ---
