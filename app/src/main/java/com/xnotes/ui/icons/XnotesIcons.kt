@@ -68,10 +68,10 @@ object XnotesIcons {
     )
     // The text box tool: the old serif "T" glyph shrunk into a box.
     val textBox = icon(
-        rect(4.0, 4.0, 16.0, 16.0),
-        "M8 10V8h8v2",
-        "M12 8v8",
-        "M10 16h4",
+        rect(3.0, 3.0, 18.0, 18.0),
+        "M8 9.5V7.5h8v2",
+        "M12 7.5v9",
+        "M10 16.5h4",
     )
 
     // The flow format bar's glyphs (Lucide: bold/italic/underline/strikethrough, lists,
