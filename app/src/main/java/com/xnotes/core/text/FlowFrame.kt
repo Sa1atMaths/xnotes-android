@@ -264,3 +264,29 @@ fun wordRangeAt(flow: TextFlow, pos: FlowPos): FlowRange {
     while (e < text.length && cls(text[e]) == k) e++
     return FlowRange(FlowPos(pos.para, s), FlowPos(pos.para, e))
 }
+
+/**
+ * The next word boundary from [pos] in the given direction, for Ctrl+arrow movement
+ * and Ctrl+Backspace/Delete. Works in flat plainText space so it crosses paragraphs:
+ * skip separators then a same-class content run (letters/digits/_ vs punctuation).
+ */
+fun wordBoundary(flow: TextFlow, pos: FlowPos, forward: Boolean): FlowPos {
+    val text = flow.plainText()
+    val n = text.length
+    var j = flow.globalOffset(pos).coerceIn(0, n)
+    fun content(c: Char): Int = if (c.isLetterOrDigit() || c == '_') 0 else 1
+    if (forward) {
+        while (j < n && text[j].isWhitespace()) j++
+        if (j < n) {
+            val k = content(text[j])
+            while (j < n && !text[j].isWhitespace() && content(text[j]) == k) j++
+        }
+    } else {
+        while (j > 0 && text[j - 1].isWhitespace()) j--
+        if (j > 0) {
+            val k = content(text[j - 1])
+            while (j > 0 && !text[j - 1].isWhitespace() && content(text[j - 1]) == k) j--
+        }
+    }
+    return flow.posAtGlobal(j)
+}

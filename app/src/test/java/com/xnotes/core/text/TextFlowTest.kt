@@ -62,6 +62,30 @@ class TextFlowTest {
     }
 
     @Test
+    fun wordBoundaryWalksForwardAcrossWordsPunctuationAndParagraphs() {
+        val flow = flowOf("foo bar.baz", "next")
+        fun fwd(g: Int) = flow.globalOffset(wordBoundary(flow, flow.posAtGlobal(g), forward = true))
+        assertEquals(3, fwd(0))   // over "foo", stop before the space
+        assertEquals(7, fwd(3))   // skip space, over "bar", stop before '.'
+        assertEquals(8, fwd(7))   // over "."
+        assertEquals(11, fwd(8))  // over "baz" to the paragraph end
+        assertEquals(16, fwd(11)) // skip newline, over "next"
+        assertEquals(16, fwd(16)) // already at the end: no move
+    }
+
+    @Test
+    fun wordBoundaryWalksBackwardAcrossWordsPunctuationAndParagraphs() {
+        val flow = flowOf("foo bar.baz", "next")
+        fun back(g: Int) = flow.globalOffset(wordBoundary(flow, flow.posAtGlobal(g), forward = false))
+        assertEquals(12, back(16)) // over "next"
+        assertEquals(8, back(12))  // skip newline, over "baz"
+        assertEquals(7, back(8))   // over "."
+        assertEquals(4, back(7))   // over "bar"
+        assertEquals(0, back(4))   // skip space, over "foo"
+        assertEquals(0, back(0))   // already at the start: no move
+    }
+
+    @Test
     fun rangeNormalizationOrdersEndpoints() {
         val a = FlowPos(0, 2)
         val b = FlowPos(1, 0)

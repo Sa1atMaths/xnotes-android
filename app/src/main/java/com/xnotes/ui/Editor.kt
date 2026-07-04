@@ -55,6 +55,7 @@ import com.xnotes.core.text.ListKind
 import com.xnotes.core.text.PageBox
 import com.xnotes.core.text.ParaAlign
 import com.xnotes.core.text.Paragraph
+import com.xnotes.core.text.wordBoundary
 import com.xnotes.core.tools.InkPalette
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.Tool
@@ -2999,6 +3000,10 @@ class Editor(context: Context) {
             ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_C -> flowCopySelection(cut = false)
             ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_X -> flowCopySelection(cut = true)
             ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_V -> pastePlainAtCaret()
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT -> flowMoveWord(forward = false, extend = shift)
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> flowMoveWord(forward = true, extend = shift)
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_DEL -> flowDeleteWord(forward = false)
+            ctrl && e.keyCode == android.view.KeyEvent.KEYCODE_FORWARD_DEL -> flowDeleteWord(forward = true)
             ctrl -> return false // other Ctrl combos (save, zoom...) stay global
             e.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
                 e.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ->
@@ -3368,6 +3373,24 @@ class Editor(context: Context) {
         val g = (flow.globalOffset(flowText.selection.end) + delta)
             .coerceIn(0, flow.globalOffset(flow.endPos()))
         flowMoveTo(flow.posAtGlobal(g), extend)
+    }
+
+    private fun flowMoveWord(forward: Boolean, extend: Boolean) {
+        val flow = state.document.flow
+        flowMoveTo(wordBoundary(flow, flowText.selection.end, forward), extend)
+    }
+
+    private fun flowDeleteWord(forward: Boolean) {
+        val sel = flowText.selection.normalized()
+        if (!sel.collapsed) {
+            flowText.applyReplace(sel, "")
+            return
+        }
+        val flow = state.document.flow
+        val to = wordBoundary(flow, sel.start, forward)
+        if (to == sel.start) return
+        val range = if (forward) FlowRange(sel.start, to) else FlowRange(to, sel.start)
+        flowText.applyReplace(range, "")
     }
 
     private fun flowMoveVertical(dir: Int, extend: Boolean) {
