@@ -15,6 +15,7 @@ enum class Tool(val id: String) {
     SCREENSHOT("screenshot"),
     SHAPE("shape"),
     TEXT("text"),
+    TEXT_BOX("text_box"),
     IMAGE("image");
 
     /** Tools that produce ink via the stroke engine. */

@@ -8,7 +8,7 @@ package com.xnotes.core.tools
 
 /** Every atomic, movable toolbar element. The three block ids each render a fixed multi-control
  *  cluster but move and hide as one unit. [id] is the persistence key (never rename without a
- *  migration); the 12 tool ids match the matching [Tool.id]. */
+ *  migration); the tool ids match the matching [Tool.id]. */
 enum class ToolbarItem(val id: String, val label: String) {
     HOME("home", "Home"),
     TITLE("title", "Title"),
@@ -28,6 +28,7 @@ enum class ToolbarItem(val id: String, val label: String) {
     SHAPE("shape", "Shape"),
     RULER("ruler", "Ruler"),
     TEXT("text", "Text"),
+    TEXT_BOX("text_box", "Text box"),
     IMAGE("image", "Image"),
     UNDO("undo", "Undo"),
     REDO("redo", "Redo"),
@@ -107,17 +108,37 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
         return copy(sections = mutable.mapIndexed { idx, e -> sections[idx].copy(entries = e) })
     }
 
-    /** Append any canonical item missing from this layout to the last section, visible. */
+    /** Add any canonical item missing from this layout, visible, so the bar never goes stale
+     *  across versions: an item with a designated neighbour ([INSERT_AFTER]) slots in right
+     *  after it; anything else is appended to the last section. */
     fun withMissingItemsAppended(): ToolbarLayout {
-        val present = sections.flatMap { it.entries }.map { it.item }.toSet()
-        val missing = ToolbarItem.entries.filter { it !in present }
-        if (missing.isEmpty()) return this
+        var layout = this
+        for (item in ToolbarItem.entries) {
+            if (layout.sections.any { s -> s.entries.any { it.item == item } }) continue
+            layout = layout.insertMissing(item)
+        }
+        return layout
+    }
+
+    private fun insertMissing(item: ToolbarItem): ToolbarLayout {
+        val anchor = INSERT_AFTER[item]
+        if (anchor != null) {
+            sections.forEachIndexed { si, sec ->
+                val i = sec.entries.indexOfFirst { it.item == anchor }
+                if (i >= 0) {
+                    val entries = sec.entries.toMutableList().also { it.add(i + 1, ToolbarEntry(item)) }
+                    return copy(sections = sections.toMutableList().also { it[si] = sec.copy(entries = entries) })
+                }
+            }
+        }
         val last = sections.last()
-        val merged = last.copy(entries = last.entries + missing.map { ToolbarEntry(it) })
-        return copy(sections = sections.dropLast(1) + merged)
+        return copy(sections = sections.dropLast(1) + last.copy(entries = last.entries + ToolbarEntry(item)))
     }
 
     companion object {
+        /** Later-added items that belong beside an existing one in stored layouts. */
+        private val INSERT_AFTER = mapOf(ToolbarItem.TEXT_BOX to ToolbarItem.TEXT)
+
         /** Mirrors the hardcoded bar exactly (see Toolbar.kt) so existing users see no change. */
         val DEFAULT: ToolbarLayout = of(
             listOf(ToolbarItem.HOME, ToolbarItem.TITLE),
@@ -127,7 +148,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
                 ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER,
             ),
             listOf(ToolbarItem.PAN, ToolbarItem.SELECT, ToolbarItem.LASSO, ToolbarItem.SCREENSHOT),
-            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.TEXT),
+            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.TEXT, ToolbarItem.TEXT_BOX),
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
             listOf(ToolbarItem.UNDO, ToolbarItem.REDO),

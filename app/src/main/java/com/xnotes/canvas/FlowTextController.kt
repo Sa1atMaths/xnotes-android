@@ -179,10 +179,6 @@ class FlowTextController(
         handler.postDelayed(longPressRun, LONG_PRESS_MS)
     }
 
-    /** True when a press at [viewport] lands on a selection handle (routes to this controller). */
-    fun isOnHandle(viewport: Pt): Boolean =
-        active && !selection.collapsed && grabHandle(viewport) != null
-
     /** Long press while still: arm selection on the word under the finger (the release opens the menu). */
     private fun onLongPressFired() {
         val anchor = pressAnchor ?: return

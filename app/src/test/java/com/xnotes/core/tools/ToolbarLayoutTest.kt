@@ -28,7 +28,7 @@ class ToolbarLayoutTest {
             d.sections[3].entries.map { it.item },
         )
         assertEquals(
-            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.TEXT),
+            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.TEXT, ToolbarItem.TEXT_BOX),
             d.sections[4].entries.map { it.item },
         )
         assertEquals(listOf(ToolbarItem.FULLSCREEN, ToolbarItem.PRESENT), d.sections[10].entries.map { it.item })
@@ -72,6 +72,28 @@ class ToolbarLayoutTest {
         val last = back.sections.last().entries
         assertTrue(last.any { it.item == ToolbarItem.PRESENT && it.visible })
         assertTrue(last.any { it.item == ToolbarItem.STYLES && it.visible })
+    }
+
+    @Test fun missingTextBoxSlotsInAfterText() {
+        // A layout stored before the text box tool existed: it must appear right after
+        // the inline text item, not at the end of the bar.
+        val raw = ToolbarLayout.DEFAULT.toRaw()
+            .map { s -> s.filterNot { it.first == ToolbarItem.TEXT_BOX.id } }
+        val back = ToolbarLayout.fromRaw(raw)
+        val sec = back.sections.first { s -> s.entries.any { it.item == ToolbarItem.TEXT } }
+        val items = sec.entries.map { it.item }
+        assertEquals(items.indexOf(ToolbarItem.TEXT) + 1, items.indexOf(ToolbarItem.TEXT_BOX))
+    }
+
+    @Test fun missingTextBoxWithoutTextAppendsToLastSection() {
+        val raw = ToolbarLayout.DEFAULT.toRaw()
+            .map { s -> s.filterNot { it.first == ToolbarItem.TEXT_BOX.id || it.first == ToolbarItem.TEXT.id } }
+            .filter { it.isNotEmpty() }
+        val back = ToolbarLayout.fromRaw(raw)
+        assertEquals(ToolbarItem.entries.toSet(), back.items().toSet())
+        val last = back.sections.last().entries.map { it.item }
+        // TEXT lands at the end first (enum order), then TEXT_BOX slots in after it.
+        assertEquals(last.indexOf(ToolbarItem.TEXT) + 1, last.indexOf(ToolbarItem.TEXT_BOX))
     }
 
     @Test fun hiddenFlagSurvivesRaw() {
