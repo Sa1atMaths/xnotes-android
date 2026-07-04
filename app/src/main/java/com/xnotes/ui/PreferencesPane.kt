@@ -303,7 +303,7 @@ fun PreferencesPane(
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle("Fonts")
             Text(
-                "Import a .ttf or .otf to offer it in the text font pickers. Notes reference it by name and fall back to Sans wherever it is missing.",
+                "Import a .ttf or .otf to offer it in the text font pickers.",
                 color = palette.textDim.toComposeColor(),
                 fontSize = 12.sp,
             )
