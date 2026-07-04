@@ -280,6 +280,9 @@ class FlowInput(
             // Soft-keyboard backspace: paragraph-property rules (empty code line
             // turns plain) win over deleting the newline before it.
             if (beforeLength > 0 && afterLength == 0 && onBackspaceSpecial()) return true
+            // Soft-keyboard forward delete: a block line keeps its properties
+            // when the previous line merges into it.
+            if (beforeLength == 0 && afterLength > 0 && onForwardDeleteSpecial()) return true
             return super.deleteSurroundingText(beforeLength, afterLength)
         }
 
@@ -294,4 +297,7 @@ class FlowInput(
 
     /** Backspace hook: returns true when a paragraph-property rule consumed the key. */
     var onBackspaceSpecial: () -> Boolean = { false }
+
+    /** Forward-delete hook: returns true when a paragraph-property rule consumed the key. */
+    var onForwardDeleteSpecial: () -> Boolean = { false }
 }

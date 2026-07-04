@@ -25,9 +25,16 @@ class FlowEditor(private val flow: TextFlow) {
      * Replace [range] with [text] in one undo step. New text takes [style] when
      * given, else the style at the range start (what a caret there would type).
      * New paragraphs from '\n' splits inherit the first paragraph's properties,
-     * with [Paragraph.checked] cleared on continuations.
+     * with [Paragraph.checked] cleared on continuations. [adoptEndProps] makes a
+     * cross-paragraph merge keep the END paragraph's properties instead (the
+     * forward-delete-into-a-block rule).
      */
-    fun replaceRange(range: FlowRange, text: String, style: CharStyle? = null): Pair<Command?, FlowPos> {
+    fun replaceRange(
+        range: FlowRange,
+        text: String,
+        style: CharStyle? = null,
+        adoptEndProps: Boolean = false,
+    ): Pair<Command?, FlowPos> {
         val r = range.normalized()
         if (flow.paragraphs.isEmpty()) {
             if (text.isEmpty()) return null to FlowPos.START
@@ -55,6 +62,7 @@ class FlowEditor(private val flow: TextFlow) {
         }
 
         val first = flow.paragraphs[start.para]
+        val props = if (adoptEndProps) flow.paragraphs[end.para] else first
         val insStyle = style ?: styleForInsert(first, start.offset)
         val head = copyRunsBefore(first, start.offset)
         val tail = copyRunsAfter(flow.paragraphs[end.para], end.offset)
@@ -65,9 +73,9 @@ class FlowEditor(private val flow: TextFlow) {
             if (line.isNotEmpty()) runs += Run(line, insStyle)
             if (i == lines.lastIndex) runs += tail
             Paragraph(
-                runs, first.align, first.indent, first.list,
-                checked = if (i == 0) first.checked else false,
-                codeLang = first.codeLang,
+                runs, props.align, props.indent, props.list,
+                checked = if (i == 0) props.checked else false,
+                codeLang = props.codeLang,
             ).also { normalize(it) }
         }
         val removed = flow.paragraphs.subList(start.para, end.para + 1).toList()

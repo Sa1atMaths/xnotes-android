@@ -72,6 +72,28 @@ class FlowEditorTest {
     }
 
     @Test
+    fun forwardDeleteMergeCanAdoptTheBlockLineProperties() {
+        val flow = TextFlow().apply {
+            paragraphs.add(para("plain"))
+            paragraphs.add(para("todo").apply { list = ListKind.CHECK; checked = true; indent = 1 })
+        }
+        val range = FlowRange(FlowPos(0, 5), FlowPos(1, 0))
+        val (cmd, caret) = FlowEditor(flow).replaceRange(range, "", adoptEndProps = true)
+        assertNotNull(cmd)
+        assertEquals(1, flow.paragraphs.size)
+        val merged = flow.paragraphs[0]
+        assertEquals("plaintodo", merged.plainText())
+        assertEquals(ListKind.CHECK, merged.list)
+        assertTrue(merged.checked)
+        assertEquals(1, merged.indent)
+        assertEquals(FlowPos(0, 5), caret)
+        cmd!!.undo()
+        assertEquals("plain\ntodo", flow.plainText())
+        assertEquals(ListKind.NONE, flow.paragraphs[0].list)
+        assertEquals(ListKind.CHECK, flow.paragraphs[1].list)
+    }
+
+    @Test
     fun styleRangeSplitsRunsAndUnstyleMergesThemBack() {
         val flow = TextFlow().apply { paragraphs.add(para("hello")) }
         val editor = FlowEditor(flow)

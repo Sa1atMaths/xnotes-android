@@ -435,6 +435,7 @@ class Editor(context: Context) {
             view.flowInput = it
             it.onPaste = { pastePlainAtCaret() }
             it.onBackspaceSpecial = { flowBackspaceSpecial() }
+            it.onForwardDeleteSpecial = { flowForwardDeleteSpecial() }
         }
 
     /** True while the inline text caret session is live (drives the bottom format bar/IME). */
@@ -3214,8 +3215,33 @@ class Editor(context: Context) {
         return true
     }
 
+    /**
+     * Forward delete at the end of a line whose NEXT line is a block (list item,
+     * checkbox, code): the line is prepended into the block, which keeps its
+     * paragraph properties, instead of the block being flattened into a plain
+     * line. Only fires when the current line is not itself a block, so merging
+     * two list items keeps the current item's state. Returns true when it applied.
+     */
+    fun flowForwardDeleteSpecial(): Boolean {
+        if (!flowText.active) return false
+        val sel = flowText.selection.normalized()
+        if (!sel.collapsed) return false
+        val flow = state.document.flow
+        val para = flow.paragraphs.getOrNull(sel.start.para) ?: return false
+        if (sel.start.offset < para.length) return false
+        if (para.list != ListKind.NONE || para.codeLang != null) return false
+        val next = flow.paragraphs.getOrNull(sel.start.para + 1) ?: return false
+        if (next.list == ListKind.NONE && next.codeLang == null) return false
+        flowText.flushBurst()
+        val range = FlowRange(FlowPos(sel.start.para, para.length), FlowPos(sel.start.para + 1, 0))
+        val (cmd, caret) = FlowEditor(flow).replaceRange(range, "", adoptEndProps = true)
+        flowText.commitEdit(cmd, caret)
+        return true
+    }
+
     private fun flowDeleteKey(forward: Boolean) {
         if (!forward && flowBackspaceSpecial()) return
+        if (forward && flowForwardDeleteSpecial()) return
         val sel = flowText.selection.normalized()
         if (!sel.collapsed) {
             flowText.applyReplace(sel, "")
