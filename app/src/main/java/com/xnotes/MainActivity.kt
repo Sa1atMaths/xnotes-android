@@ -346,6 +346,16 @@ private fun EditorScreen(
         }
     }
 
+    // A user font (.ttf/.otf), stored + registered by the editor.
+    val importFontLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }
+                .getOrNull()
+                ?.let { editor.importFont(it, displayNameOf(resolver, uri)) }
+                ?: run { editor.message = "Could not read the file." }
+        }
+    }
+
     // Grant a folder for the in-app explorer (a one-time system folder picker).
     val pickRootLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
@@ -561,6 +571,7 @@ private fun EditorScreen(
                 onSelectView = { backstageView = it },
                 onExitApp = { (context as? android.app.Activity)?.finish() },
                 onImportCodeTheme = { importCodeThemeLauncher.launch(arrayOf("*/*")) },
+                onImportFont = { importFontLauncher.launch(arrayOf("*/*")) },
                 onOpenSystem = { openLauncher.launch(arrayOf("*/*")) },
                 onImportPdf = { importPdfLauncher.launch(arrayOf("application/pdf")) },
                 onOpenFile = { uri -> guarded { openTreeFile(uri) } },

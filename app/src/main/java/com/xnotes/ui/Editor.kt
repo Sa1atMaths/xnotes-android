@@ -3140,6 +3140,37 @@ class Editor(context: Context) {
         onRender()
     }
 
+    // --- user fonts (Preferences imports .ttf/.otf; notes reference them by name) ---
+
+    val customFonts = mutableStateListOf<com.xnotes.platform.FontCatalog.Choice>().apply {
+        addAll(com.xnotes.platform.FontCatalog.customFonts())
+    }
+
+    /** Adopt a font file for the pickers; reports via [message]. */
+    fun importFont(bytes: ByteArray, sourceName: String?) {
+        com.xnotes.platform.FontCatalog.importFont(bytes, sourceName)
+            .onSuccess { message = "Font \"${it.id}\" imported." }
+            .onFailure { message = it.message ?: "Could not import that font." }
+        fontsChanged()
+    }
+
+    fun removeCustomFont(face: FontFace) {
+        com.xnotes.platform.FontCatalog.removeCustomFont(face)
+        fontsChanged()
+    }
+
+    /** Font resolution moved under open content: re-shape, re-bake, re-list. */
+    private fun fontsChanged() {
+        customFonts.clear()
+        customFonts.addAll(com.xnotes.platform.FontCatalog.customFonts())
+        invalidateComposeFamilies()
+        state.document.flow.reshapeAll()
+        republishFlow(invalidate = true)
+        state.invalidateAllCaches()
+        refreshContent()
+        onRender()
+    }
+
     val flowHasSelection: Boolean get() = !flowText.selection.collapsed
 
     fun flowCut() = flowCopySelection(cut = true)

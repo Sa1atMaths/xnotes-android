@@ -45,6 +45,9 @@ import kotlin.math.roundToInt
 
 private val composeFamilies = java.util.concurrent.ConcurrentHashMap<String, FontFamily>()
 
+/** Drop memoized Compose families after a font import/removal changed resolution. */
+internal fun invalidateComposeFamilies() = composeFamilies.clear()
+
 /** Maps a [FontFace] to a Compose family: generic tokens directly, the rest via the catalog. */
 internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
     FontFace.SANS -> FontFamily.SansSerif

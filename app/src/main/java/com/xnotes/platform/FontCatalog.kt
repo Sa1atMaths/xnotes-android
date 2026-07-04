@@ -2,8 +2,12 @@ package com.xnotes.platform
 
 import android.content.Context
 import android.content.res.AssetManager
+import android.graphics.Paint
 import android.graphics.Typeface
 import com.xnotes.core.pal.FontFace
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -56,25 +60,37 @@ object FontCatalog {
         Family(FontFace("Ubuntu Mono"), "ubuntu-mono", mono = true, variable = false),
     )
 
+    /** A user-imported font: one file, [mono] encoded in its name (`Name.mono.ttf`). */
+    class CustomFont(val face: FontFace, val file: File, val mono: Boolean)
+
     private val byId = BUNDLED.associateBy { it.face.id }
     private val hand: Typeface = Typeface.create("cursive", Typeface.NORMAL)
 
     @Volatile
     private var assets: AssetManager? = null
+    @Volatile
+    private var customDir: File? = null
+    private val custom = ConcurrentHashMap<String, CustomFont>()
     private val cache = ConcurrentHashMap<String, Resolved>()
 
     fun init(context: Context) {
         assets = context.applicationContext.assets
+        customDir = File(context.applicationContext.filesDir, "fonts")
+        reloadCustom()
     }
 
-    /** The pickable fonts, generic tokens first, in display order. */
+    /** The pickable fonts, generic tokens first, then bundled, then imported. */
     fun choices(): List<Choice> = buildList {
         add(Choice(FontFace.SANS, "Sans", mono = false))
         add(Choice(FontFace.SERIF, "Serif", mono = false))
         add(Choice(FontFace.MONO, "Mono", mono = true))
         add(Choice(FontFace.HAND, "Hand", mono = false))
         for (f in BUNDLED) add(Choice(f.face, f.face.id, f.mono))
+        for (c in custom.values.sortedBy { it.face.id.lowercase() }) add(Choice(c.face, c.face.id, c.mono))
     }
+
+    fun customFonts(): List<Choice> =
+        custom.values.sortedBy { it.face.id.lowercase() }.map { Choice(it.face, it.face.id, it.mono) }
 
     fun label(face: FontFace): String = when (face) {
         FontFace.SANS -> "Sans"
@@ -87,17 +103,136 @@ object FontCatalog {
     fun resolve(face: FontFace, bold: Boolean, italic: Boolean): Resolved {
         generic(face)?.let { return Resolved(Typeface.create(it, style(bold, italic)), false, false) }
         return cache.getOrPut("${face.id}/$bold/$italic") {
-            val family = byId[face.id]
             val am = assets
-            if (family == null || am == null) {
-                Resolved(Typeface.create(Typeface.SANS_SERIF, style(bold, italic)), false, false)
-            } else {
-                runCatching { loadBundled(family, bold, italic, am) }.getOrElse {
-                    Resolved(Typeface.create(Typeface.SANS_SERIF, style(bold, italic)), false, false)
-                }
+            val family = byId[face.id]
+            val fallback = { Resolved(Typeface.create(Typeface.SANS_SERIF, style(bold, italic)), false, false) }
+            when {
+                family != null && am != null ->
+                    runCatching { loadBundled(family, bold, italic, am) }.getOrElse { fallback() }
+                else -> custom[face.id]?.let { c ->
+                    // Single-file families: the framework synthesizes bold/italic.
+                    runCatching {
+                        Resolved(Typeface.create(Typeface.createFromFile(c.file), style(bold, italic)), false, false)
+                    }.getOrElse { fallback() }
+                } ?: fallback()
             }
         }
     }
+
+    // --- user-imported fonts (filesDir/fonts; the file name carries family + mono) ---
+
+    private fun reloadCustom() {
+        custom.clear()
+        val files = customDir?.listFiles() ?: return
+        for (f in files) {
+            if (!f.isFile || !f.name.endsWith(".ttf")) continue
+            val mono = f.name.endsWith(".mono.ttf")
+            val name = f.name.removeSuffix(".ttf").removeSuffix(".mono")
+            if (name.isNotEmpty()) custom[name] = CustomFont(FontFace(name), f, mono)
+        }
+    }
+
+    /**
+     * Adopt [bytes] as a user font. The family name comes from the font's name
+     * table (falling back to [sourceName]); monospace is detected by measuring.
+     * Returns the new face, or a human-readable problem.
+     */
+    fun importFont(bytes: ByteArray, sourceName: String?): Result<FontFace> {
+        val dir = customDir ?: return Result.failure(IllegalStateException("Fonts are unavailable."))
+        val fallback = sourceName?.substringBeforeLast('.')?.trim().orEmpty()
+        val name = sanitizeFamily(parseFamilyName(bytes) ?: fallback)
+            ?: return Result.failure(IllegalArgumentException("Could not name this font."))
+        if (name.lowercase() in listOf("sans", "serif", "mono", "hand", "default") || byId.containsKey(name)) {
+            return Result.failure(IllegalArgumentException("“$name” is already built in."))
+        }
+        dir.mkdirs()
+        val tmp = File(dir, ".import.tmp")
+        tmp.writeBytes(bytes)
+        val tf = runCatching { Typeface.Builder(tmp).build() }.getOrNull()
+        if (tf == null) {
+            tmp.delete()
+            return Result.failure(IllegalArgumentException("Not a readable .ttf/.otf font."))
+        }
+        val mono = looksMonospace(tf)
+        custom[name]?.file?.delete() // re-import replaces (the mono marker may differ)
+        val dest = File(dir, if (mono) "$name.mono.ttf" else "$name.ttf")
+        if (!tmp.renameTo(dest)) {
+            dest.writeBytes(bytes)
+            tmp.delete()
+        }
+        val face = FontFace(name)
+        custom[name] = CustomFont(face, dest, mono)
+        cache.clear() // the id may have been resolving to the sans fallback
+        return Result.success(face)
+    }
+
+    fun removeCustomFont(face: FontFace): Boolean {
+        val c = custom.remove(face.id) ?: return false
+        c.file.delete()
+        cache.clear()
+        return true
+    }
+
+    /** Path-hostile characters stripped; null when nothing usable remains. */
+    private fun sanitizeFamily(raw: String?): String? {
+        val cleaned = raw.orEmpty()
+            .replace(Regex("[/\\\\\\x00-\\x1f]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return cleaned.take(64).trim().ifEmpty { null }
+    }
+
+    private fun looksMonospace(tf: Typeface): Boolean {
+        val paint = Paint().apply { typeface = tf; textSize = 100f }
+        val widths = "ilWM. ".map { paint.measureText(it.toString()) }
+        return widths.all { kotlin.math.abs(it - widths[0]) < 0.5f }
+    }
+
+    /**
+     * The typographic (id 16) or plain (id 1) family name from an sfnt name
+     * table; TTF, OTF and the first face of a TTC all work. Null on anything
+     * unparsable, then the file name is used instead.
+     */
+    private fun parseFamilyName(bytes: ByteArray): String? = runCatching {
+        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
+        var base = 0
+        if (buf.getInt(0) == 0x74746366) base = buf.getInt(12) // 'ttcf': first face
+        val numTables = buf.getShort(base + 4).toInt() and 0xFFFF
+        var nameTable = -1
+        for (i in 0 until numTables) {
+            val rec = base + 12 + i * 16
+            if (buf.getInt(rec) == 0x6E616D65) { // 'name'
+                nameTable = buf.getInt(rec + 8)
+                break
+            }
+        }
+        if (nameTable < 0) return@runCatching null
+        val count = buf.getShort(nameTable + 2).toInt() and 0xFFFF
+        val strings = nameTable + (buf.getShort(nameTable + 4).toInt() and 0xFFFF)
+        var best: String? = null
+        var bestScore = -1
+        for (i in 0 until count) {
+            val rec = nameTable + 6 + i * 12
+            val platform = buf.getShort(rec).toInt() and 0xFFFF
+            val nameId = buf.getShort(rec + 6).toInt() and 0xFFFF
+            if (nameId != 16 && nameId != 1) continue
+            val len = buf.getShort(rec + 8).toInt() and 0xFFFF
+            val off = strings + (buf.getShort(rec + 10).toInt() and 0xFFFF)
+            if (off + len > bytes.size || len == 0) continue
+            val value = when (platform) {
+                0, 3 -> String(bytes, off, len, Charsets.UTF_16BE)
+                1 -> String(bytes, off, len, Charsets.ISO_8859_1)
+                else -> continue
+            }
+            // Prefer the typographic name, and Windows/Unicode entries within each id.
+            val score = (if (nameId == 16) 2 else 0) + (if (platform == 3) 1 else 0)
+            if (score > bestScore && value.isNotBlank()) {
+                best = value
+                bestScore = score
+            }
+        }
+        best
+    }.getOrNull()
 
     private fun generic(face: FontFace): Typeface? = when (face) {
         FontFace.SANS -> Typeface.SANS_SERIF

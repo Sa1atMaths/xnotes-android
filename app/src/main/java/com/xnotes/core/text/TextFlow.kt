@@ -180,6 +180,12 @@ class TextFlow {
         return FlowPos(paragraphs.size - 1, paragraphs.last().length)
     }
 
+    /** Force re-shaping of every paragraph (font resolution changed under us). */
+    fun reshapeAll() {
+        paragraphs.forEach { it.touch() }
+        touch()
+    }
+
     /** The position after the last character of the flow. */
     fun endPos(): FlowPos =
         if (paragraphs.isEmpty()) FlowPos.START else FlowPos(paragraphs.size - 1, paragraphs.last().length)

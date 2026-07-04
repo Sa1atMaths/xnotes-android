@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -93,6 +94,7 @@ fun PreferencesPane(
     onShowSidebar: () -> Unit,
     onBackToHome: () -> Unit,
     onImportCodeTheme: () -> Unit = {},
+    onImportFont: () -> Unit = {},
 ) {
     val palette = LocalPalette.current
     var prefs by remember { mutableStateOf(editor.preferences) }
@@ -295,6 +297,29 @@ fun PreferencesPane(
                         TextButton(onClick = { editor.resetCodeTheme() }) { Text("Reset", fontSize = 13.sp) }
                         Text("custom", color = palette.accent.toComposeColor(), fontSize = 12.sp)
                     }
+                }
+            }
+
+            HorizontalDivider(color = palette.border.toComposeColor())
+            SectionTitle("Fonts")
+            Text(
+                "Import a .ttf or .otf to offer it in the text font pickers. Notes reference it by name and fall back to Sans wherever it is missing.",
+                color = palette.textDim.toComposeColor(),
+                fontSize = 12.sp,
+            )
+            TextButton(onClick = { onImportFont() }) { Text("Import font…", fontSize = 13.sp) }
+            for (font in editor.customFonts) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        font.label,
+                        color = palette.text.toComposeColor(),
+                        fontSize = 13.sp,
+                        style = TextStyle(fontFamily = font.face.toComposeFamily()),
+                    )
+                    if (font.mono) {
+                        Text("  mono", color = palette.accent.toComposeColor(), fontSize = 11.sp)
+                    }
+                    TextButton(onClick = { editor.removeCustomFont(font.face) }) { Text("Remove", fontSize = 12.sp) }
                 }
             }
 
