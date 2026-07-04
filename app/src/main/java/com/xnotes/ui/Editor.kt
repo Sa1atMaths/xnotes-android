@@ -305,10 +305,6 @@ class Editor(context: Context) {
     var editingField by mutableStateOf<EditingField?>(null)
         private set
 
-    /** Visible canvas height in px (excludes the soft keyboard via adjustResize); drives caret-into-view. */
-    var viewportHeightPx by mutableStateOf(0)
-        private set
-
     /** The floating text style bar's target (active box rect + style), or null when no box is active. */
     var textBar by mutableStateOf<TextBar?>(null)
         private set
@@ -1267,7 +1263,6 @@ class Editor(context: Context) {
     private fun refreshView() {
         zoomPercent = (state.zoom * 100).roundToInt()
         pageIndex = state.currentPageIndex()
-        viewportHeightPx = state.viewportH
         warmVisibleLinks(pageIndex)
         if (controller.editingItem != null) editingField = controller.editingField()
         refreshTextBar()
@@ -1310,11 +1305,6 @@ class Editor(context: Context) {
     /** A one-finger drag over the editor scrolls the page (edit stays open), not the box's own text. */
     fun panWhileEditing(dxFinger: Float, dyFinger: Float) {
         controller.panWhileEditing(dxFinger.toDouble(), dyFinger.toDouble())
-    }
-
-    /** Scroll the page so the editor caret stays above the keyboard while typing. */
-    fun ensureEditingCaretVisible(topViewportY: Float, bottomViewportY: Float) {
-        controller.ensureEditingCaretVisible(topViewportY.toDouble(), bottomViewportY.toDouble())
     }
 
     // --- page styles (paper colour + ruling): document-wide ("All Pages") and per-page ---

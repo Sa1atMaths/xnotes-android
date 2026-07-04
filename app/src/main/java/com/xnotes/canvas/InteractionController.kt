@@ -1638,29 +1638,6 @@ class InteractionController(
         requestRender()
     }
 
-    /**
-     * Keep the editor caret on screen while typing by scrolling the document (never the field): if
-     * the caret falls below the visible canvas (which already excludes the keyboard, since the window
-     * is adjustResize) or above its top, scroll just enough to bring it back. [topViewportY] and
-     * [bottomViewportY] are the caret's edges in viewport pixels.
-     */
-    fun ensureEditingCaretVisible(topViewportY: Double, bottomViewportY: Double) {
-        if (editingText == null) return
-        val margin = TEXT_CARET_MARGIN * state.devicePxPerDp
-        val top = margin
-        val bottom = state.viewportH - margin
-        if (bottom <= top) return
-        val dy = when {
-            bottomViewportY > bottom -> bottomViewportY - bottom
-            topViewportY < top -> topViewportY - top
-            else -> 0.0
-        }
-        if (abs(dy) < 1.0) return
-        state.scrollBy(0.0, dy)
-        onViewChanged()
-        requestRender()
-    }
-
     /** Current on-screen geometry of the editor field, or null when not editing. */
     fun editingField(): EditingField? {
         val item = editingText ?: return null
@@ -2772,9 +2749,6 @@ class InteractionController(
 
         /** Min drag (viewport px, either axis) for a text-box gesture to size a box rather than tap-create. */
         const val TEXT_DRAG_SLOP = 14.0
-
-        /** Breathing room (dp) kept around the editor caret when scrolling the page to keep it visible. */
-        const val TEXT_CARET_MARGIN = 24.0
 
         /** Text point-size clamp for the style bar. */
         const val TEXT_MIN_PT = 6.0

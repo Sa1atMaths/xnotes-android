@@ -12,7 +12,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -26,7 +25,6 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -55,34 +53,21 @@ internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
  *
  * The field never scrolls its own text. It is measured with unbounded height so it sizes to its
  * content, and a one-finger drag on the box is rerouted to a document pan ([Editor.panWhileEditing])
- * with the edit kept live and the box following the page. Typing scrolls the *page* to keep the
- * caret on screen ([Editor.ensureEditingCaretVisible]). The pan delta is taken in root coordinates
- * (the field itself moves with the page, so its own local frame would self-cancel). Touches off the
- * box reach the canvas as before (tap to commit, drag to scroll).
+ * with the edit kept live and the box following the page. The page never scrolls on its own — a
+ * box must stay exactly where it is for the whole edit; reaching an off-screen caret is the
+ * user's pan. The pan delta is taken in root coordinates (the field itself moves with the page,
+ * so its own local frame would self-cancel). Touches off the box reach the canvas as before
+ * (tap to commit, drag to scroll).
  */
 @Composable
 fun TextEditorOverlay(editor: Editor, field: EditingField) {
     val density = LocalDensity.current
     val palette = LocalPalette.current
     var value by remember { mutableStateOf(TextFieldValue(field.text, TextRange(field.text.length))) }
-    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val focusRequester = remember { FocusRequester() }
-    val currentField by rememberUpdatedState(field)
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
-
-    // Keep the caret on screen as the user types/moves it. Keyed on text/selection/layout/viewport,
-    // never the field offset, so a manual pan is not snapped back to the caret.
-    LaunchedEffect(value.text, value.selection, layout, editor.viewportHeightPx) {
-        val lay = layout ?: return@LaunchedEffect
-        // Clamp to the laid-out length, not value.text.length: fast typing outruns onTextLayout, so a
-        // stale (shorter) layout would reject value's newer caret offset. The next layout pass corrects it.
-        val caret = value.selection.end.coerceIn(0, lay.layoutInput.text.length)
-        val rect = lay.getCursorRect(caret)
-        val f = currentField
-        editor.ensureEditingCaretVisible((f.y + rect.top).toFloat(), (f.y + rect.bottom).toFloat())
-    }
 
     val xDp = with(density) { field.x.toFloat().toDp() }
     val yDp = with(density) { field.y.toFloat().toDp() }
@@ -96,7 +81,6 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
             value = it
             editor.updateEditingText(it.text)
         },
-        onTextLayout = { layout = it },
         modifier = Modifier
             .offset(xDp, yDp)
             .widthIn(min = widthDp, max = widthDp)
