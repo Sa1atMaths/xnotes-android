@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,23 +27,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.pal.FontFace
+import com.xnotes.platform.FontCatalog
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.roundToInt
-
-/** The four selectable faces and their labels, in the order the picker lists them. */
-private val FACES = listOf(
-    FontFace.SANS to "Sans",
-    FontFace.SERIF to "Serif",
-    FontFace.MONO to "Mono",
-    FontFace.HAND to "Hand",
-)
-
-private fun faceLabel(face: FontFace): String = FACES.firstOrNull { it.first == face }?.second ?: "Mono"
 
 /**
  * Floating font/size bar for the active text box (the one being edited, or a lone
@@ -130,24 +122,19 @@ private fun FacePicker(current: FontFace, onPick: (FontFace) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                faceLabel(current),
+                FontCatalog.label(current),
                 color = palette.text.toComposeColor(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 92.dp),
                 style = TextStyle(fontFamily = current.toComposeFamily(), fontSize = 15.sp),
             )
             Text(" ▾", color = palette.textDim.toComposeColor(), fontSize = 11.sp)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            for ((face, label) in FACES) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            label,
-                            color = palette.text.toComposeColor(),
-                            style = TextStyle(fontFamily = face.toComposeFamily(), fontSize = 15.sp),
-                        )
-                    },
-                    onClick = { onPick(face); open = false },
-                )
+            FontMenuItems(current = current) {
+                if (it != null) onPick(it)
+                open = false
             }
         }
     }
