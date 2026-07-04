@@ -1050,13 +1050,53 @@ class Editor(context: Context) {
     }
 
     /**
+     * A [FlowLayout] carrying the active code theme, for transient layout passes (PDF
+     * export, explorer tiles). The async [highlightCache] only feeds the live published
+     * layout, so [flow]'s code blocks are parsed synchronously here — cheap (blocks are
+     * small) and safe off-thread (the highlighter is stateless per call).
+     */
+    private fun themedFlowLayout(flow: com.xnotes.core.text.TextFlow): FlowLayout {
+        val layout = FlowLayout(textMeasurer)
+        val theme = activeCodeTheme()
+        layout.codeBackground = { theme.background }
+        val hl = highlighter ?: return layout
+        val spans = HashMap<Paragraph, List<com.xnotes.core.text.CodeSpan>>()
+        var i = 0
+        while (i < flow.paragraphs.size) {
+            val lang = flow.paragraphs[i].codeLang
+            if (lang.isNullOrEmpty() || !hl.supports(lang)) {
+                i++
+                continue
+            }
+            val start = i
+            while (i < flow.paragraphs.size && flow.paragraphs[i].codeLang == lang) i++
+            val paras = flow.paragraphs.subList(start, i)
+            // Contiguous same-language paragraphs parse as ONE text, like [scheduleHighlight].
+            val sorted = hl.highlight(paras.joinToString("\n") { it.plainText() }, lang)
+                ?.sortedBy { it.start } ?: continue
+            var offset = 0
+            for (p in paras) {
+                val len = p.length
+                spans[p] = sorted.mapNotNull { s ->
+                    val a = (s.start - offset).coerceAtLeast(0)
+                    val b = (s.end - offset).coerceAtMost(len)
+                    if (b > a) theme.colorFor(s.capture)?.let { com.xnotes.core.text.CodeSpan(a, b, it) } else null
+                }
+                offset += len + 1
+            }
+        }
+        layout.codeSpans = { spans[it] }
+        return layout
+    }
+
+    /**
      * Flow painters for a PDF export of [doc]: a private layout pass over its own pages
      * (exports run off-thread and may target transient/subset documents, so the published
      * on-screen snapshot is never reused). Pages foreign to [doc] paint nothing.
      */
     private fun flowExportHooks(doc: Document): com.xnotes.platform.PdfExporter.FlowExport {
         if (doc.flow.isEmpty) return com.xnotes.platform.PdfExporter.FlowExport.NONE
-        val frame = FlowLayout(textMeasurer)
+        val frame = themedFlowLayout(doc.flow)
             .layout(doc.flow, doc.pages.map { PageBox(it.width, it.height) }, doc.dpi)
         val index = HashMap<Page, Int>(doc.pages.size * 2)
         doc.pages.forEachIndexed { i, p -> index[p] = i }
@@ -1629,7 +1669,7 @@ class Editor(context: Context) {
         }
         // A closed note's flow is laid out locally (the published snapshot serves the open note only).
         if (!doc.flow.isEmpty) {
-            val frame = FlowLayout(textMeasurer)
+            val frame = themedFlowLayout(doc.flow)
                 .layout(doc.flow, doc.pages.map { PageBox(it.width, it.height) }, doc.dpi)
             FlowPainter.paintPage(r, frame, 0, Rect(0.0, 0.0, page.width, page.height))
         }
@@ -3139,6 +3179,9 @@ class Editor(context: Context) {
     private fun retheme() {
         republishFlow(invalidate = true)
         onRender()
+        // Explorer tiles bake code colours in; drop them all so they re-render themed.
+        synchronized(noteThumbs) { noteThumbs.evictAll() }
+        thumbCache.prune(emptySet())
     }
 
     // --- user fonts (Preferences imports .ttf/.otf; notes reference them by name) ---
