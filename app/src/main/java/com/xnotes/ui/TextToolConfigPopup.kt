@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.core.pal.FontFace
 import com.xnotes.core.text.FlowMargins
+import com.xnotes.platform.FontCatalog
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
 import kotlin.math.roundToInt
@@ -38,6 +39,7 @@ internal fun TextToolConfigPopup(editor: Editor, onDismiss: () -> Unit) {
     val palette = LocalPalette.current
     var margins by remember { mutableStateOf(editor.flowMarginsValue()) }
     var face by remember { mutableStateOf(editor.flowDefaultFace()) }
+    var monoFace by remember { mutableStateOf(editor.flowMonoFace()) }
     var sizePt by remember { mutableStateOf(editor.flowDefaultSizePt()) }
 
     fun update(m: FlowMargins) {
@@ -54,6 +56,13 @@ internal fun TextToolConfigPopup(editor: Editor, onDismiss: () -> Unit) {
                 FaceDropdown(face) {
                     face = it
                     editor.setFlowDefaultFace(it)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Mono font", color = palette.textDim.toComposeColor(), fontSize = 13.sp, modifier = Modifier.width(74.dp))
+                FaceDropdown(monoFace, monoOnly = true) {
+                    monoFace = it
+                    editor.setFlowMonoFace(it)
                 }
             }
             SpinField("Size (pt)", sizePt, min = 6.0, max = 96.0) {
@@ -76,39 +85,22 @@ internal fun TextToolConfigPopup(editor: Editor, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun FaceDropdown(current: FontFace, onPick: (FontFace) -> Unit) {
+private fun FaceDropdown(current: FontFace, monoOnly: Boolean = false, onPick: (FontFace) -> Unit) {
     val palette = LocalPalette.current
     var open by remember { mutableStateOf(false) }
-    val faces = listOf(
-        FontFace.SANS to "Sans",
-        FontFace.SERIF to "Serif",
-        FontFace.MONO to "Mono",
-        FontFace.HAND to "Hand",
-    )
     Box {
         Row(Modifier.clickable { open = true }.padding(vertical = 6.dp, horizontal = 4.dp)) {
             Text(
-                faces.firstOrNull { it.first == current }?.second ?: "Sans",
+                FontCatalog.label(current),
                 color = palette.text.toComposeColor(),
                 style = TextStyle(fontFamily = current.toComposeFamily(), fontSize = 14.sp),
             )
             Text(" ▾", color = palette.textDim.toComposeColor(), fontSize = 11.sp)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            for ((f, label) in faces) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            label,
-                            color = palette.text.toComposeColor(),
-                            style = TextStyle(fontFamily = f.toComposeFamily(), fontSize = 14.sp),
-                        )
-                    },
-                    onClick = {
-                        onPick(f)
-                        open = false
-                    },
-                )
+            FontMenuItems(current = current, monoOnly = monoOnly) {
+                if (it != null) onPick(it)
+                open = false
             }
         }
     }

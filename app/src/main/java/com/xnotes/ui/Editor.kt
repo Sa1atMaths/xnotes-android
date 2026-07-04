@@ -3026,6 +3026,7 @@ class Editor(context: Context) {
     fun flowToggleStrike() = flowToggleStyle({ it.strike }) { s, v -> s.copy(strike = v) }
     fun flowSetCharColor(c: Rgba?) = flowSetChar { it.copy(color = c) }
     fun flowSetCharHighlight(c: Rgba?) = flowSetChar { it.copy(highlight = c) }
+    fun flowSetCharFace(f: FontFace?) = flowSetChar { it.copy(face = f) }
 
     /** Step every selected run's size by [delta] points from its own current size. */
     fun flowAdjustSize(delta: Double) {
@@ -3076,6 +3077,13 @@ class Editor(context: Context) {
 
     fun setFlowDefaultFace(f: FontFace) {
         state.document.flow.defaultFace = f
+        flowConfigChanged()
+    }
+
+    fun flowMonoFace(): FontFace = state.document.flow.monoFace
+
+    fun setFlowMonoFace(f: FontFace) {
+        state.document.flow.monoFace = f
         flowConfigChanged()
     }
 

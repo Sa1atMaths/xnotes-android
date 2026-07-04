@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -95,7 +94,7 @@ fun TextFormatBar(editor: Editor) {
         FontColorButton(editor, style.color)
         HighlightButton(editor, style.highlight)
         BarDivider()
-        FontFaceButton(editor)
+        FontFaceButton(editor, style.face)
         SizeStepper(style.sizePt ?: editor.flowDefaultSizePt()) { editor.flowAdjustSize(it) }
         BarDivider()
         BarIcon(Icons.Filled.FormatBold, "Bold", active = style.bold) { editor.flowToggleBold() }
@@ -239,35 +238,16 @@ private fun HighlightButton(editor: Editor, current: Rgba?) {
 private fun swatchInk(c: Rgba): Color =
     if (0.299 * c.r + 0.587 * c.g + 0.114 * c.b > 150) Color.Black else Color.White
 
-/** Font face: the document default, as in the tool's config popup (live reflow). */
+/** Font face: applies to the selection, or arms for what is typed next (like bold). */
 @Composable
-private fun FontFaceButton(editor: Editor) {
-    val palette = LocalPalette.current
+private fun FontFaceButton(editor: Editor, current: FontFace?) {
     var open by remember { mutableStateOf(false) }
-    val faces = listOf(
-        FontFace.SANS to "Sans",
-        FontFace.SERIF to "Serif",
-        FontFace.MONO to "Mono",
-        FontFace.HAND to "Hand",
-    )
     Box {
         BarIcon(XnotesIcons.fontFace, "Font") { open = true }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            val current = editor.flowDefaultFace()
-            for ((f, label) in faces) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            label,
-                            color = (if (f == current) palette.accent else palette.text).toComposeColor(),
-                            style = TextStyle(fontFamily = f.toComposeFamily(), fontSize = 14.sp),
-                        )
-                    },
-                    onClick = {
-                        editor.setFlowDefaultFace(f)
-                        open = false
-                    },
-                )
+            FontMenuItems(current = current, withDefault = true) {
+                editor.flowSetCharFace(it)
+                open = false
             }
         }
     }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -28,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,11 +37,13 @@ import androidx.compose.ui.unit.sp
 import com.xnotes.core.model.PagePattern
 import com.xnotes.core.model.PageStyle
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.pal.FontFace
 import com.xnotes.core.tools.EraseMode
 import com.xnotes.core.tools.ShapeConfig
 import com.xnotes.core.tools.ShapeKind
 import com.xnotes.core.tools.Tool
 import com.xnotes.core.tools.ToolConversions
+import com.xnotes.platform.FontCatalog
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -453,6 +457,47 @@ private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             fontSize = 12.sp,
+        )
+    }
+}
+
+/**
+ * The items of a font dropdown, shared by the flow format bar, the text tool
+ * config popup and the text box style bar. Each entry previews in its own
+ * family; [monoOnly] restricts the list to monospace families. A null pick
+ * (offered when [withDefault]) means "inherit the document default".
+ */
+@Composable
+fun FontMenuItems(
+    current: FontFace?,
+    monoOnly: Boolean = false,
+    withDefault: Boolean = false,
+    onPick: (FontFace?) -> Unit,
+) {
+    val palette = LocalPalette.current
+    if (withDefault) {
+        DropdownMenuItem(
+            text = {
+                Text(
+                    "Default",
+                    color = (if (current == null) palette.accent else palette.text).toComposeColor(),
+                    fontSize = 14.sp,
+                )
+            },
+            onClick = { onPick(null) },
+        )
+    }
+    for (choice in FontCatalog.choices()) {
+        if (monoOnly && !choice.mono) continue
+        DropdownMenuItem(
+            text = {
+                Text(
+                    choice.label,
+                    color = (if (choice.face == current) palette.accent else palette.text).toComposeColor(),
+                    style = TextStyle(fontFamily = choice.face.toComposeFamily(), fontSize = 14.sp),
+                )
+            },
+            onClick = { onPick(choice.face) },
         )
     }
 }
