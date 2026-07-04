@@ -57,9 +57,10 @@ object FlowXml {
         append(" xnotes:margin-top-mm=\"${flow.margins.topMm}\"")
         append(" xnotes:margin-right-mm=\"${flow.margins.rightMm}\"")
         append(" xnotes:margin-bottom-mm=\"${flow.margins.bottomMm}\"")
-        append(" xnotes:default-face=\"${flow.defaultFace.id}\"")
+        append(" xnotes:default-face=\"${escapeAttr(flow.defaultFace.id)}\"")
         append(" xnotes:default-size-pt=\"${flow.defaultSizePt}\"")
         append(" xnotes:default-color=\"${hex(flow.defaultColor)}\"")
+        if (flow.monoFace != FontFace.MONO) append(" xnotes:mono-face=\"${escapeAttr(flow.monoFace.id)}\"")
         append(">\n")
 
         append(" <office:automatic-styles>\n")
@@ -96,6 +97,7 @@ object FlowXml {
         if (s.underline) append(" style:text-underline-style=\"solid\"")
         if (s.strike) append(" style:text-line-through-style=\"solid\"")
         if (s.code) append(" xnotes:code=\"true\"")
+        s.face?.let { append(" style:font-name=\"${escapeAttr(it.id)}\"") }
         s.color?.let { append(" fo:color=\"${hex(it)}\"") }
         s.highlight?.let { append(" fo:background-color=\"${hex(it)}\"") }
         s.sizePt?.let { append(" fo:font-size=\"${it}pt\"") }
@@ -188,6 +190,7 @@ object FlowXml {
         attr(root, "default-face")?.let { flow.defaultFace = FontFace.fromId(it) }
         flow.defaultSizePt = attrDouble(root, "default-size-pt", TextFlow.DEFAULT_SIZE_PT)
         flow.defaultColor = parseHex(attr(root, "default-color")) ?: TextFlow.DEFAULT_COLOR
+        attr(root, "mono-face")?.let { flow.monoFace = FontFace.fromId(it) }
 
         val charStyles = HashMap<String, CharStyle>()
         val paraStyles = HashMap<String, Pair<ParaAlign, Int>>()
@@ -217,6 +220,7 @@ object FlowXml {
         color = parseHex(attr(props, "color")),
         highlight = parseHex(attr(props, "background-color")),
         sizePt = attr(props, "font-size")?.removeSuffix("pt")?.toDoubleOrNull(),
+        face = attr(props, "font-name")?.takeIf { it.isNotEmpty() }?.let { FontFace(it) },
     )
 
     private fun parseParaProps(props: Element): Pair<ParaAlign, Int> {

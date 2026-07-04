@@ -23,10 +23,10 @@ object AndroidText {
     private val hand: Typeface = Typeface.create("cursive", Typeface.NORMAL)
 
     private fun base(face: FontFace): Typeface = when (face) {
-        FontFace.SANS -> sans
         FontFace.SERIF -> serif
         FontFace.MONO -> mono
         FontFace.HAND -> hand
+        else -> sans
     }
 
     fun textPaint(font: FontSpec, argb: Int = 0xFF000000.toInt()): TextPaint =

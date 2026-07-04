@@ -29,8 +29,9 @@ enum class ListKind(val id: String) {
 
 /**
  * Immutable character style for a run. Nullable fields inherit the flow defaults
- * ([TextFlow.defaultColor]/[TextFlow.defaultSizePt]); [code] renders mono with a
- * subtle background. Equality drives run merging, so keep this a value type.
+ * ([TextFlow.defaultColor]/[TextFlow.defaultSizePt]/[TextFlow.defaultFace]);
+ * [code] renders in [TextFlow.monoFace] with a subtle background. Equality
+ * drives run merging, so keep this a value type.
  */
 data class CharStyle(
     val bold: Boolean = false,
@@ -41,6 +42,7 @@ data class CharStyle(
     val color: Rgba? = null,
     val highlight: Rgba? = null,
     val sizePt: Double? = null,
+    val face: FontFace? = null,
 ) {
     companion object {
         val DEFAULT = CharStyle()
@@ -140,6 +142,9 @@ class TextFlow {
     var defaultSizePt: Double = DEFAULT_SIZE_PT
     var defaultColor: Rgba = DEFAULT_COLOR
 
+    /** The face code paragraphs and inline code render in. */
+    var monoFace: FontFace = FontFace.MONO
+
     /** Bumped when the paragraph list itself changes (insert/remove/reorder). */
     var rev: Int = 0
         internal set
@@ -186,6 +191,7 @@ class TextFlow {
         copy.defaultFace = defaultFace
         copy.defaultSizePt = defaultSizePt
         copy.defaultColor = defaultColor
+        copy.monoFace = monoFace
         copy.rev = rev
         return copy
     }

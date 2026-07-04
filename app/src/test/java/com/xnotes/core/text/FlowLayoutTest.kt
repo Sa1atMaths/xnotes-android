@@ -108,6 +108,22 @@ class FlowLayoutTest {
     }
 
     @Test
+    fun runFaceOverridesTheDefaultAndCodeUsesTheMonoFace() {
+        val flow = TextFlow().apply {
+            defaultFace = FontFace.SERIF
+            monoFace = FontFace("JetBrains Mono")
+        }
+        val plain = Paragraph()
+        assertEquals(FontFace("Inter"), resolveFont(flow, plain, CharStyle(face = FontFace("Inter"))).face)
+        assertEquals(FontFace("JetBrains Mono"), resolveFont(flow, plain, CharStyle(code = true)).face)
+        val codePara = Paragraph(codeLang = "c")
+        assertEquals(
+            FontFace("JetBrains Mono"),
+            resolveFont(flow, codePara, CharStyle(face = FontFace("Inter"))).face,
+        )
+    }
+
+    @Test
     fun editedParagraphsRemeasure() {
         val p = para("short")
         val flow = flowWith(p)

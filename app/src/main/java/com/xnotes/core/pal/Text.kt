@@ -1,18 +1,21 @@
 package com.xnotes.core.pal
 
 /**
- * The selectable text typefaces. The core picks one of these abstract faces; the
- * host resolves each to a concrete platform font. [MONO] is the historical default
- * (and what files without a face stored fall back to), so older notes are unchanged.
+ * A font family reference. [id] is the stable serialized token: one of the four
+ * generic tokens ([SANS]/[SERIF]/[MONO]/[HAND], resolved to system typefaces) or
+ * a family name such as "Inter" naming a bundled or user-imported font. Hosts
+ * resolve ids they do not know to the sans face, so a note referencing a missing
+ * font still renders. [MONO] is the historical default (and what files without a
+ * face stored fall back to), so older notes are unchanged.
  */
-enum class FontFace(val id: String) {
-    SANS("sans"),
-    SERIF("serif"),
-    MONO("mono"),
-    HAND("hand");
-
+data class FontFace(val id: String) {
     companion object {
-        fun fromId(id: String?): FontFace = entries.firstOrNull { it.id == id } ?: MONO
+        val SANS = FontFace("sans")
+        val SERIF = FontFace("serif")
+        val MONO = FontFace("mono")
+        val HAND = FontFace("hand")
+
+        fun fromId(id: String?): FontFace = if (id.isNullOrEmpty()) MONO else FontFace(id)
     }
 }
 

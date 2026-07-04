@@ -3,7 +3,6 @@ package com.xnotes.core.text
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.Rgba
-import com.xnotes.core.pal.FontFace
 import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.LineMetrics
 import com.xnotes.core.pal.TextMeasurer
@@ -11,7 +10,7 @@ import com.xnotes.core.pal.TextMeasurer
 /** The concrete font a run resolves to: style overrides over the flow defaults; code is mono. */
 fun resolveFont(flow: TextFlow, para: Paragraph, style: CharStyle): FontSpec = FontSpec(
     pointSize = style.sizePt ?: flow.defaultSizePt,
-    face = if (para.codeLang != null || style.code) FontFace.MONO else flow.defaultFace,
+    face = if (para.codeLang != null || style.code) flow.monoFace else style.face ?: flow.defaultFace,
     bold = style.bold,
     italic = style.italic,
 )
@@ -70,7 +69,9 @@ class FlowLayout(private val measurer: TextMeasurer) {
     private val breaks = HashMap<Paragraph, BreakEntry>()
 
     private fun defaultsKey(flow: TextFlow): Long =
-        (flow.defaultFace.ordinal.toLong() shl 32) xor flow.defaultSizePt.toRawBits()
+        (flow.defaultFace.id.hashCode().toLong() shl 32) xor
+            (flow.monoFace.id.hashCode().toLong() shl 16) xor
+            flow.defaultSizePt.toRawBits()
 
     private fun shapeOf(flow: TextFlow, para: Paragraph): ParaShape {
         val key = defaultsKey(flow)

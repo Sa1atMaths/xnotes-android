@@ -34,12 +34,14 @@ class FlowXmlTest {
             defaultFace = FontFace.SERIF
             defaultSizePt = 14.0
             defaultColor = Rgba(10, 20, 30, 255)
+            monoFace = FontFace("JetBrains Mono")
             paragraphs.add(
                 Paragraph(
                     mutableListOf(
                         Run("plain "),
                         Run("bold red", CharStyle(bold = true, color = Rgba(255, 0, 0, 255))),
                         Run(" tail", CharStyle(italic = true, underline = true, strike = true, sizePt = 18.0)),
+                        Run(" named", CharStyle(face = FontFace("Playfair Display"))),
                     ),
                     align = ParaAlign.JUSTIFY,
                 ),
@@ -60,6 +62,7 @@ class FlowXmlTest {
         val back = roundTrip(flow)
         assertEquals(flow.margins, back.margins)
         assertEquals(FontFace.SERIF, back.defaultFace)
+        assertEquals(FontFace("JetBrains Mono"), back.monoFace)
         assertEquals(14.0, back.defaultSizePt, 1e-9)
         assertEquals(Rgba(10, 20, 30, 255), back.defaultColor)
         assertEquals(flow.plainText(), back.plainText())

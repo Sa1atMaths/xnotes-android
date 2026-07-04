@@ -44,10 +44,10 @@ import kotlin.math.roundToInt
 
 /** Maps an abstract [FontFace] to the matching Compose generic family (shared with the style bar). */
 internal fun FontFace.toComposeFamily(): FontFamily = when (this) {
-    FontFace.SANS -> FontFamily.SansSerif
     FontFace.SERIF -> FontFamily.Serif
     FontFace.MONO -> FontFamily.Monospace
     FontFace.HAND -> FontFamily.Cursive
+    else -> FontFamily.SansSerif
 }
 
 /**
