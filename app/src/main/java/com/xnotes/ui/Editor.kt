@@ -852,6 +852,7 @@ class Editor(context: Context) {
             }
         }
         flowLayout.codeBackground = { activeCodeTheme().background }
+        flowLayout.defaultColorOverride = { defaultTextColor() }
     }
 
     /**
@@ -1059,6 +1060,7 @@ class Editor(context: Context) {
         val layout = FlowLayout(textMeasurer)
         val theme = activeCodeTheme()
         layout.codeBackground = { theme.background }
+        layout.defaultColorOverride = { defaultTextColor() }
         val hl = highlighter ?: return layout
         val spans = HashMap<Paragraph, List<com.xnotes.core.text.CodeSpan>>()
         var i = 0
@@ -1200,6 +1202,7 @@ class Editor(context: Context) {
         settings = settings.copy(prefs = p)
         fullscreen = p.startFullscreen ?: !deviceHasDisplayCutout // keep in sync (e.g. Reset to defaults)
         applyPagePrefsToState(p)
+        republishFlow(invalidate = true) // re-bake flow colours (default text, code) for the new appearance
         state.invalidateAllCaches()
         startPdfRefine() // re-sweep / clear the hint if the dark-mode or keep-images preference toggled
         if (marginChanged) {
@@ -3036,7 +3039,14 @@ class Editor(context: Context) {
         state.document.flow.paragraphs.getOrNull(flowText.selection.normalized().start.para)
 
     fun flowDefaultSizePt(): Double = state.document.flow.defaultSizePt
-    fun flowDefaultColor(): Rgba = state.document.flow.defaultColor
+    /**
+     * The flow's base text colour for the active paper: the near-white default on
+     * dark/OLED paper, a near-black on light paper (where near-white would vanish).
+     */
+    private fun defaultTextColor(): Rgba =
+        if (palette.isDark) com.xnotes.core.text.TextFlow.DEFAULT_COLOR else Rgba(28, 28, 28, 255)
+
+    fun flowDefaultColor(): Rgba = defaultTextColor()
     fun flowDefaultFace(): FontFace = state.document.flow.defaultFace
     fun flowMarginsValue(): FlowMargins = state.document.flow.margins
 
