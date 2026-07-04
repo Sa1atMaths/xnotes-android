@@ -37,8 +37,8 @@ enum class Tool(val id: String) {
     companion object {
         fun fromId(id: String?): Tool? = entries.firstOrNull { it.id == id }
 
-        /** Armed at startup (reference default, spec 04 §1). */
-        val DEFAULT = CALLIGRAPHY
+        /** Armed at startup. */
+        val DEFAULT = PAN
 
         /** Quick-tool-wheel order (spec 06 §11 / 10 §7). */
         val wheelOrder = listOf(PEN, DASHED, CALLIGRAPHY, SPEED, TAPER, HIGHLIGHTER, ERASER, SELECT, LASSO, SCREENSHOT, SHAPE, TEXT, PAN)
