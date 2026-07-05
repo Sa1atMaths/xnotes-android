@@ -100,6 +100,7 @@ class FlowTextController(
     private enum class Handle { START, END }
     private var draggingHandle: Handle? = null
     private var handleFixed: FlowPos? = null
+    private var handleGrabOffset = Pt(0.0, 0.0)
     private var lastDragViewport: Pt? = null
     private var autoscrollVel = 0.0
     private val autoscrollRun = object : Runnable {
@@ -164,6 +165,9 @@ class FlowTextController(
                 val r = selection.normalized()
                 draggingHandle = h
                 handleFixed = if (h == Handle.START) r.end else r.start
+                val moving = if (h == Handle.START) r.start else r.end
+                handleGrabOffset = caretAnchorViewport(moving)
+                    ?.let { Pt(it.x - viewport.x, it.y - viewport.y) } ?: Pt(0.0, 0.0)
                 return
             }
         }
@@ -222,12 +226,15 @@ class FlowTextController(
 
     /** Re-derive the moving selection end from the finger's viewport point. */
     private fun updateDragSelection(viewport: Pt) {
-        val pos = caretPosAt(state.viewportToContent(viewport)) ?: return
-        val handle = draggingHandle
-        if (handle != null) {
+        if (draggingHandle != null) {
+            // The teardrop hangs below its line: keep the grip offset from the grab, so
+            // the caret follows the line the handle marks, not the line under the finger.
+            val at = Pt(viewport.x + handleGrabOffset.x, viewport.y + handleGrabOffset.y)
+            val pos = caretPosAt(state.viewportToContent(at)) ?: return
             selection = FlowRange(handleFixed ?: return, pos)
             return
         }
+        val pos = caretPosAt(state.viewportToContent(viewport)) ?: return
         val a = armedAnchor ?: FlowRange.caret(pressAnchor ?: return)
         selection = if (pos < a.start) FlowRange(a.end, pos) else FlowRange(a.start, pos)
     }
@@ -269,6 +276,7 @@ class FlowTextController(
             handleFixed = null
             imeSync()
             requestRender()
+            onContextMenu(viewport)
             return
         }
         if (selectionArmed) {
@@ -538,6 +546,14 @@ class FlowTextController(
         val tipX = if (isStart) center.x + radius else center.x - radius
         r.fillCircle(center, radius, color)
         r.fillRect(Rect(minOf(tipX, center.x), center.y - radius, radius, radius), color)
+    }
+
+    /** Viewport point of the line middle at [pos]: the spot a handle drag really targets. */
+    private fun caretAnchorViewport(pos: FlowPos): Pt? {
+        val f = frame() ?: return null
+        val (pi, cr) = f.caretRect(pos) ?: return null
+        val pr = state.pageRects.getOrNull(pi) ?: return null
+        return state.contentToViewport(Pt(pr.left + cr.left, pr.top + (cr.top + cr.bottom) / 2.0))
     }
 
     /** Content-space centre of the teardrop handle for the caret at [pos]. */
