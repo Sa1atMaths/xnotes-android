@@ -1,0 +1,4 @@
+- Fix the F-Droid build verification
+- Add Ctrl word navigation and deletion in text
+- Fix text selection handle drags landing on the line below
+- Slim down the text edit menu into an action bar
