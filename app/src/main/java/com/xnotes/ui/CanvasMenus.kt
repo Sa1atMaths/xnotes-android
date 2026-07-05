@@ -15,6 +15,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -22,6 +26,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -111,10 +116,11 @@ fun ScreenshotMenu(editor: Editor) {
 }
 
 @Composable
-private fun ActionIcon(icon: ImageVector, desc: String, onClick: () -> Unit) {
+private fun ActionIcon(icon: ImageVector, desc: String, enabled: Boolean = true, onClick: () -> Unit) {
     val palette = LocalPalette.current
-    IconButton(onClick = onClick, modifier = Modifier.size(46.dp)) {
-        Icon(icon, contentDescription = desc, tint = palette.text.toComposeColor(), modifier = Modifier.size(22.dp))
+    val tint = palette.text.toComposeColor().let { if (enabled) it else it.copy(alpha = 0.35f) }
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(46.dp)) {
+        Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -149,39 +155,67 @@ fun LongPressMenu(editor: Editor, onInsertImageAt: (com.xnotes.core.geometry.Pt)
 }
 
 /**
- * The flow-editing context menu (long press with the text tool, after the word
- * selection lands): cut/copy, the explicit paste modes (no auto-detection
- * anywhere), then delete.
+ * The flow-editing action bar (long press with the text tool, after the word
+ * selection lands): a thin icon row like [SelectionMenu], anchored above the
+ * selection so the drag handles stay visible. Not a popup: it never steals
+ * focus (the keyboard stays up) and any canvas touch quietly retires it. The
+ * paste icon expands the explicit paste modes (no auto-detection anywhere).
  */
 @Composable
 fun FlowEditMenu(editor: Editor) {
-    val at = editor.flowContextMenu ?: return
+    val rect = editor.flowContextMenu ?: return
+    val palette = LocalPalette.current
     val density = LocalDensity.current
-    val xDp = with(density) { at.x.toFloat().toDp() }
-    val yDp = with(density) { at.y.toFloat().toDp() }
     val hasClip = editor.clipboardHasText()
     val hasSelection = editor.flowHasSelection
+    var pasteOpen by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.offset(xDp, yDp).size(1.dp)) {
-        DropdownMenu(expanded = true, onDismissRequest = { editor.dismissFlowContextMenu() }) {
-            DropdownMenuItem(text = { Text("Cut") }, enabled = hasSelection, onClick = {
-                editor.flowCut(); editor.dismissFlowContextMenu()
-            })
-            DropdownMenuItem(text = { Text("Copy") }, enabled = hasSelection, onClick = {
-                editor.flowCopy(); editor.dismissFlowContextMenu()
-            })
-            DropdownMenuItem(text = { Text("Paste") }, enabled = hasClip, onClick = {
-                editor.pastePlainAtCaret(); editor.dismissFlowContextMenu()
-            })
-            DropdownMenuItem(text = { Text("Paste as Markdown") }, enabled = hasClip, onClick = {
-                editor.pasteMarkdownAtCaret(); editor.dismissFlowContextMenu()
-            })
-            DropdownMenuItem(text = { Text("Paste as Code") }, enabled = hasClip, onClick = {
-                editor.pasteAsCodeAtCaret(); editor.dismissFlowContextMenu()
-            })
-            DropdownMenuItem(text = { Text("Delete") }, enabled = hasSelection, onClick = {
-                editor.flowDeleteSelection(); editor.dismissFlowContextMenu()
-            })
+    val barHeightPx = with(density) { 48.dp.toPx() }
+    val barWidthPx = with(density) { (4 * 46).dp.toPx() }
+    val gap = with(density) { 10.dp.toPx() }
+    // When pushed below the selection, also clear the teardrop handles hanging there.
+    val handleClearance = with(density) { (2 * com.xnotes.canvas.FlowTextController.HANDLE_RADIUS_DP).dp.toPx() }
+    val centerX = ((rect.left + rect.right) / 2.0).toFloat()
+    val xPx = (centerX - barWidthPx / 2f).coerceAtLeast(with(density) { 8.dp.toPx() })
+    val yPx = if (rect.top.toFloat() - barHeightPx - gap > 0f) {
+        rect.top.toFloat() - barHeightPx - gap
+    } else {
+        rect.bottom.toFloat() + handleClearance + gap
+    }
+
+    Row(
+        modifier = Modifier
+            .offset(with(density) { xPx.toDp() }, with(density) { yPx.toDp() })
+            .clip(RoundedCornerShape(10.dp))
+            .background(palette.menuBg.toComposeColor())
+            .border(1.dp, palette.border.toComposeColor(), RoundedCornerShape(10.dp)),
+    ) {
+        ActionIcon(XnotesIcons.cut, "Cut", enabled = hasSelection) {
+            editor.flowCut(); editor.dismissFlowContextMenu()
+        }
+        ActionIcon(XnotesIcons.copy, "Copy", enabled = hasSelection) {
+            editor.flowCopy(); editor.dismissFlowContextMenu()
+        }
+        Box {
+            ActionIcon(XnotesIcons.paste, "Paste", enabled = hasClip) { pasteOpen = true }
+            DropdownMenu(
+                expanded = pasteOpen,
+                onDismissRequest = { pasteOpen = false },
+                properties = PopupProperties(focusable = false),
+            ) {
+                DropdownMenuItem(text = { Text("Paste") }, onClick = {
+                    pasteOpen = false; editor.pastePlainAtCaret(); editor.dismissFlowContextMenu()
+                })
+                DropdownMenuItem(text = { Text("Paste as Markdown") }, onClick = {
+                    pasteOpen = false; editor.pasteMarkdownAtCaret(); editor.dismissFlowContextMenu()
+                })
+                DropdownMenuItem(text = { Text("Paste as Code") }, onClick = {
+                    pasteOpen = false; editor.pasteAsCodeAtCaret(); editor.dismissFlowContextMenu()
+                })
+            }
+        }
+        ActionIcon(XnotesIcons.trash, "Delete", enabled = hasSelection) {
+            editor.flowDeleteSelection(); editor.dismissFlowContextMenu()
         }
     }
 }

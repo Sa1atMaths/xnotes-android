@@ -16,6 +16,7 @@ import com.xnotes.canvas.FlowTextController
 import com.xnotes.canvas.InitialView
 import com.xnotes.canvas.InteractionController
 import com.xnotes.canvas.TextBar
+import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.history.AddItem
 import com.xnotes.core.history.AddPage
@@ -419,7 +420,7 @@ class Editor(context: Context) {
             flowSelTick++
             flowContextMenu = null
         }
-        ctrl.onContextMenu = { viewport -> flowContextMenu = viewport }
+        ctrl.onContextMenu = { viewport -> flowContextMenu = flowMenuAnchor(viewport) }
         ctrl.caretMetricsFor = { style ->
             val flow = state.document.flow
             val para = flow.paragraphs.getOrNull(ctrl.selection.normalized().start.para) ?: Paragraph()
@@ -453,12 +454,27 @@ class Editor(context: Context) {
 
     fun clipboardHasText(): Boolean = clipboardText() != null
 
-    /** Where the flow-editing context menu is anchored (viewport px), or null when closed. */
-    var flowContextMenu by mutableStateOf<com.xnotes.core.geometry.Pt?>(null)
+    /** Viewport bounds the flow-editing action bar anchors to, or null when closed. */
+    var flowContextMenu by mutableStateOf<Rect?>(null)
         private set
 
     fun dismissFlowContextMenu() {
         flowContextMenu = null
+    }
+
+    /** The flow selection's viewport bounds (the caret's rect when collapsed). */
+    private fun flowMenuAnchor(fallback: Pt): Rect {
+        val sel = flowText.selection.normalized()
+        val rects = publishedFlow?.frame?.let { f ->
+            val local = if (sel.collapsed) listOfNotNull(f.caretRect(sel.end)) else f.selectionRects(sel)
+            local.mapNotNull { (pi, r) ->
+                state.pageRects.getOrNull(pi)?.let { pr -> r.translate(pr.left, pr.top) }
+            }
+        }.orEmpty()
+        if (rects.isEmpty()) return Rect(fallback.x, fallback.y, 0.0, 0.0)
+        val tl = state.contentToViewport(Pt(rects.minOf { it.left }, rects.minOf { it.top }))
+        val br = state.contentToViewport(Pt(rects.maxOf { it.right }, rects.maxOf { it.bottom }))
+        return Rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y)
     }
 
     /** Paste the clipboard's text verbatim at the flow caret. */
@@ -594,7 +610,11 @@ class Editor(context: Context) {
     }
 
     init {
-        view.input = { controller.onTouch(it) }
+        view.input = { ev ->
+            // Any fresh canvas touch quietly retires the flow action bar and still does its job.
+            if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) flowContextMenu = null
+            controller.onTouch(ev)
+        }
         view.onTwoFingerTap = { dispatchTapGesture(preferences.twoFingerTap) }
         view.onThreeFingerTap = { dispatchTapGesture(preferences.threeFingerTap) }
         view.hover = { controller.onHover(it) }
