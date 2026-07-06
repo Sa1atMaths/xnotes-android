@@ -44,4 +44,6 @@ foreach(src ${GRAMMAR_SOURCES})
         INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/${dir}")
 endforeach()
 
-target_link_options(xnotests PRIVATE -Wl,--gc-sections)
+# No build-id note: it hashes the pre-strip output (build paths included), so it
+# varies across build hosts and breaks F-Droid's reproducible-build verification.
+target_link_options(xnotests PRIVATE -Wl,--gc-sections -Wl,--build-id=none)
