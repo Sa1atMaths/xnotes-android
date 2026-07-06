@@ -1,0 +1,1 @@
+- Fix the F-Droid build verification
