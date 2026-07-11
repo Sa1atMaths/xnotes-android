@@ -1,5 +1,6 @@
 package com.xnotes.canvas
 
+import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.CanvasItem
@@ -183,6 +184,33 @@ class CanvasState(
             180 -> { r.translate(page.width, page.height); r.rotate(180.0) }
             270 -> { r.translate(0.0, page.width); r.rotate(270.0) }
         }
+    }
+
+    /** [pageToDisplay] as an affine (page space → page-local display coords). */
+    private fun displayAffine(page: Page): Affine = when (rotationDeg) {
+        90 -> Affine(0.0, 1.0, -1.0, 0.0, page.height, 0.0)
+        180 -> Affine(-1.0, 0.0, 0.0, -1.0, page.width, page.height)
+        270 -> Affine(0.0, -1.0, 1.0, 0.0, 0.0, page.width)
+        else -> Affine.IDENTITY
+    }
+
+    /** [displayToPage] as an affine (page-local display coords → page space). */
+    private fun pageAffine(page: Page): Affine = when (rotationDeg) {
+        90 -> Affine(0.0, -1.0, 1.0, 0.0, 0.0, page.height)
+        180 -> Affine(-1.0, 0.0, 0.0, -1.0, page.width, page.height)
+        270 -> Affine(0.0, 1.0, -1.0, 0.0, page.width, 0.0)
+        else -> Affine.IDENTITY
+    }
+
+    /**
+     * Express a content-space affine [world] in page [i]'s page space, so it can be baked
+     * into item geometry: conjugates by the page's display map (translation + rotation).
+     */
+    fun affineToPageSpace(i: Int, world: Affine): Affine {
+        val local = world.translatedFrame(pageRects[i].topLeft)
+        if (rotationDeg == 0) return local
+        val page = document.pages[i]
+        return pageAffine(page).compose(local.compose(displayAffine(page)))
     }
 
     /** While true (during a pinch/zoom drag) caches are blitted stale-scaled

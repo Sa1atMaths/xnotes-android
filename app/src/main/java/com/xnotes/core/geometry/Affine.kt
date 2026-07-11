@@ -22,6 +22,16 @@ data class Affine(
 ) {
     fun apply(p: Pt): Pt = Pt(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
 
+    /** this ∘ [inner]: the transform that applies [inner] first, then this. */
+    fun compose(inner: Affine): Affine = Affine(
+        a * inner.a + c * inner.b,
+        b * inner.a + d * inner.b,
+        a * inner.c + c * inner.d,
+        b * inner.c + d * inner.d,
+        a * inner.e + c * inner.f + e,
+        b * inner.e + d * inner.f + f,
+    )
+
     /**
      * This content-space transform expressed in a frame translated by [offset], so it can be
      * applied to page-local geometry on a page whose origin is [offset]. The linear part is

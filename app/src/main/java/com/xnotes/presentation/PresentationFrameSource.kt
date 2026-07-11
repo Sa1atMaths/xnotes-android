@@ -54,6 +54,8 @@ class PresentationFrameSource(
         val originX: Double,
         val originY: Double,
         val zoom: Double,
+        /** The presenter's page rotation (deg cw); the stream mirrors it. */
+        val rotation: Int,
         val draws: List<PageDraw>,
     )
 
@@ -62,14 +64,14 @@ class PresentationFrameSource(
         val index = state.currentPageIndex().coerceIn(0, state.document.pages.lastIndex.coerceAtLeast(0))
         val page = state.document.pages.getOrNull(index) ?: return null
         val scale = longEdgeCap / max(page.width, page.height)
-        val w = ceil(page.width * scale).toInt().coerceAtLeast(1)
-        val h = ceil(page.height * scale).toInt().coerceAtLeast(1)
+        val w = ceil(state.displayW(page) * scale).toInt().coerceAtLeast(1)
+        val h = ceil(state.displayH(page) * scale).toInt().coerceAtLeast(1)
         val draw = PageDraw(
             0.0, 0.0, page.width, page.height, state.paperColor(page),
             state.presBackgroundFor(page)?.surface, state.presCacheFor(page).surface, highlightsFor(page), liveSnapshotFor(index),
         )
         state.dropPresCachesExcept(setOf(page))
-        return FramePlan(w, h, state.paperColor(page), follow = false, outerScale = scale, 0.0, 0.0, 1.0, listOf(draw))
+        return FramePlan(w, h, state.paperColor(page), follow = false, outerScale = scale, 0.0, 0.0, 1.0, state.rotationDeg, listOf(draw))
     }
 
     /** Plan a viewport-mirroring frame fit within [longEdgeCap] (main thread). */
@@ -97,7 +99,7 @@ class PresentationFrameSource(
             )
         }
         state.dropPresCachesExcept(presented)
-        return FramePlan(w, h, state.palette.bg, follow = true, outerScale = s, origin.x, origin.y, state.zoom, draws)
+        return FramePlan(w, h, state.palette.bg, follow = true, outerScale = s, origin.x, origin.y, state.zoom, state.rotationDeg, draws)
     }
 
     /** Render [plan] into a JPEG-ready surface (background thread; touches no live state). */
@@ -113,6 +115,12 @@ class PresentationFrameSource(
         for (d in plan.draws) {
             r.withSave {
                 r.translate(d.left, d.top)
+                // Spin the page-space draw into its display footprint (mirrors the canvas).
+                when (plan.rotation) {
+                    90 -> { r.translate(d.height, 0.0); r.rotate(90.0) }
+                    180 -> { r.translate(d.width, d.height); r.rotate(180.0) }
+                    270 -> { r.translate(0.0, d.width); r.rotate(270.0) }
+                }
                 if (plan.follow) r.fillRect(Rect(0.0, 0.0, d.width, d.height), d.paper)
                 d.background?.let { r.drawRaster(it, Rect(0.0, 0.0, d.width, d.height)) }
                 r.drawRaster(d.cache, Rect(0.0, 0.0, d.width, d.height))

@@ -476,9 +476,10 @@ class FlowTextController(
         if (!active) return
         val f = frame() ?: return
         val (pi, rect) = f.caretRect(selection.end) ?: return
-        val pr = state.pageRects.getOrNull(pi) ?: return
-        val topV = state.contentToViewport(Pt(0.0, pr.top + rect.top)).y
-        val bottomV = state.contentToViewport(Pt(0.0, pr.top + rect.bottom)).y
+        if (state.pageRects.getOrNull(pi) == null) return
+        val cr = state.fromPageSpaceRect(pi, rect)
+        val topV = state.contentToViewport(Pt(0.0, cr.top)).y
+        val bottomV = state.contentToViewport(Pt(0.0, cr.bottom)).y
         val margin = CARET_MARGIN * state.devicePxPerDp
         val top = margin
         val bottom = state.viewportH - margin
@@ -498,9 +499,10 @@ class FlowTextController(
     fun caretViewportRect(): Rect? {
         val f = frame() ?: return null
         val (pi, rect) = f.caretRect(selection.end) ?: return null
-        val pr = state.pageRects.getOrNull(pi) ?: return null
-        val tl = state.contentToViewport(Pt(pr.left + rect.left, pr.top + rect.top))
-        return Rect(tl.x, tl.y, rect.w * state.zoom, rect.h * state.zoom)
+        if (state.pageRects.getOrNull(pi) == null) return null
+        val cr = state.fromPageSpaceRect(pi, rect)
+        val tl = state.contentToViewport(Pt(cr.left, cr.top))
+        return Rect(tl.x, tl.y, cr.w * state.zoom, cr.h * state.zoom)
     }
 
     /** Selection highlight + caret + drag handles, drawn in the interaction overlay (content space). */
@@ -510,15 +512,15 @@ class FlowTextController(
         val accent = state.palette.accent
         if (!selection.collapsed) {
             for ((pi, rect) in f.selectionRects(selection)) {
-                val pr = state.pageRects.getOrNull(pi) ?: continue
-                r.fillRect(rect.translate(pr.left, pr.top), accent.withAlpha(70))
+                if (state.pageRects.getOrNull(pi) == null) continue
+                r.fillRect(state.fromPageSpaceRect(pi, rect), accent.withAlpha(70))
             }
             val norm = selection.normalized()
             drawHandle(r, norm.start, isStart = true, accent)
             drawHandle(r, norm.end, isStart = false, accent)
         } else {
             val (pi, cr) = f.caretRect(selection.end) ?: return
-            val pr = state.pageRects.getOrNull(pi) ?: return
+            if (state.pageRects.getOrNull(pi) == null) return
             var top = cr.top
             var height = cr.h
             // A pending style (size bumped before typing) previews on the caret itself,
@@ -531,7 +533,7 @@ class FlowTextController(
                 }
             }
             val w = (FlowFrame.CARET_WIDTH / state.zoom).coerceAtLeast(0.75)
-            r.fillRect(Rect(pr.left + cr.left - w / 2.0, pr.top + top, w, height), accent)
+            r.fillRect(state.fromPageSpaceRect(pi, Rect(cr.left - w / 2.0, top, w, height)), accent)
         }
     }
 
@@ -552,18 +554,21 @@ class FlowTextController(
     private fun caretAnchorViewport(pos: FlowPos): Pt? {
         val f = frame() ?: return null
         val (pi, cr) = f.caretRect(pos) ?: return null
-        val pr = state.pageRects.getOrNull(pi) ?: return null
-        return state.contentToViewport(Pt(pr.left + cr.left, pr.top + (cr.top + cr.bottom) / 2.0))
+        if (state.pageRects.getOrNull(pi) == null) return null
+        return state.contentToViewport(state.fromPageSpace(pi, Pt(cr.left, (cr.top + cr.bottom) / 2.0)))
     }
 
     /** Content-space centre of the teardrop handle for the caret at [pos]. */
     private fun handleCenter(pos: FlowPos, isStart: Boolean): Pt? {
         val f = frame() ?: return null
         val (pi, cr) = f.caretRect(pos) ?: return null
-        val pr = state.pageRects.getOrNull(pi) ?: return null
+        if (state.pageRects.getOrNull(pi) == null) return null
+        // Hang the handle below the caret's *display* rect, so it reads screen-down even
+        // when the page is rotated.
+        val crC = state.fromPageSpaceRect(pi, cr)
         val radius = HANDLE_RADIUS_DP * state.devicePxPerDp / state.zoom
-        val cx = if (isStart) pr.left + cr.left - radius else pr.left + cr.left + radius
-        return Pt(cx, pr.top + cr.bottom + radius)
+        val cx = if (isStart) crC.left - radius else crC.left + radius
+        return Pt(cx, crC.bottom + radius)
     }
 
     /** The handle a press at [viewport] grabs, preferring the nearer of the two. */
@@ -604,8 +609,10 @@ class FlowTextController(
             }
         }
         val index = pi ?: return null
-        val pr = state.pageRects.getOrNull(index) ?: return null
-        return index to Pt((content.x - pr.left).coerceIn(0.0, pr.w), (content.y - pr.top).coerceIn(0.0, pr.h))
+        if (state.pageRects.getOrNull(index) == null) return null
+        val page = state.document.pages.getOrNull(index) ?: return null
+        val p = state.toPageSpace(index, content)
+        return index to Pt(p.x.coerceIn(0.0, page.width), p.y.coerceIn(0.0, page.height))
     }
 
     companion object {

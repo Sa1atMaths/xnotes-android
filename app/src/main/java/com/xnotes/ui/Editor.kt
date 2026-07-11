@@ -1467,11 +1467,12 @@ class Editor(context: Context) {
     fun pageAt(index: Int): Page? = state.document.pages.getOrNull(index)
 
     /**
-     * A page's height/width ratio. The side panel reserves each thumbnail row's height from this
-     * so rows don't grow when their bitmap finishes loading — that resizing was what made the
-     * scrollbar thumb wobble while scrolling (its size is derived from the visible rows' heights).
+     * A page's display height/width ratio (rotation-aware). The side panel reserves each thumbnail
+     * row's height from this so rows don't grow when their bitmap finishes loading — that resizing
+     * was what made the scrollbar thumb wobble while scrolling (its size is derived from the
+     * visible rows' heights).
      */
-    fun pageAspectRatio(page: Page): Float = (page.height / page.width).toFloat()
+    fun pageAspectRatio(page: Page): Float = (state.displayH(page) / state.displayW(page)).toFloat()
 
     /**
      * Renders a page to a thumbnail bitmap (paper + PDF/template background + items). [active] is
@@ -1544,10 +1545,21 @@ class Editor(context: Context) {
         cachedPageThumbnail(page)?.let { return it }
         return withContext(Dispatchers.Default) {
             cachedPageThumbnail(page)?.let { return@withContext it }
-            val bmp = renderThumbnail(page, widthPx, active = { isActive })?.asImageBitmap() ?: return@withContext null
+            // Render in page space sized so the rotated result lands at [widthPx] wide.
+            val renderW = (page.width * (widthPx / state.displayW(page))).roundToInt().coerceAtLeast(1)
+            val bmp = renderThumbnail(page, renderW, active = { isActive })
+                ?.let { rotateForView(it) }?.asImageBitmap() ?: return@withContext null
             synchronized(pageThumbs) { pageThumbs.put(page, bmp) }
             bmp
         }
+    }
+
+    /** Rotate a page-space bitmap by the view rotation, for thumbnails that mirror the canvas. */
+    private fun rotateForView(bmp: android.graphics.Bitmap): android.graphics.Bitmap {
+        val deg = viewSettings.rotation
+        if (deg == 0) return bmp
+        val m = android.graphics.Matrix().apply { postRotate(deg.toFloat()) }
+        return android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
 
     /** Drop any cached side-panel thumbnails backed by PDF page [pdfPageIndex] (its colours just
@@ -1677,9 +1689,9 @@ class Editor(context: Context) {
 
     /** The first page of a loaded document rendered to a [sidePx]×[sidePx] tile, cropped to the page
      *  top (the square surface clips the overflow). Uses [itemsSnapshot] because the close-hook renders
-     *  the live document off-thread, which a main-thread edit can mutate underneath it. [filter] is the
-     *  note's own PDF colour filter (its per-note View settings resolved against the global defaults). */
-    private fun renderDocThumbnailSquare(doc: Document, sidePx: Int, filter: com.xnotes.canvas.PdfPageFilter): android.graphics.Bitmap? {
+     *  the live document off-thread, which a main-thread edit can mutate underneath it. [filter] and
+     *  [rotation] are the note's own View settings resolved against the global defaults. */
+    private fun renderDocThumbnailSquare(doc: Document, sidePx: Int, filter: com.xnotes.canvas.PdfPageFilter, rotation: Int = 0): android.graphics.Bitmap? {
         val page = doc.pages.firstOrNull() ?: return null
         val side = sidePx.coerceAtLeast(1)
         val scale = side.toDouble() / page.width
@@ -1709,7 +1721,10 @@ class Editor(context: Context) {
             FlowPainter.paintPage(r, frame, 0, Rect(0.0, 0.0, page.width, page.height))
         }
         for (item in itemsSnapshot(page)) item.paint(r)
-        return surface.bitmap
+        val bmp = surface.bitmap
+        if (rotation == 0) return bmp
+        val m = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+        return android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
 
     /** The square side (px) explorer tiles render at — fixed so rotation/column changes don't re-render. */
@@ -1736,7 +1751,8 @@ class Editor(context: Context) {
                     appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir, imageDir) }
                 }.getOrNull() ?: return@withContext null
                 try {
-                    renderDocThumbnailSquare(doc, tilePx, pdfPageFilterFor(viewSettingsFor(uri)))?.also { thumbCache.store(uri, it) } ?: return@withContext null
+                    val vs = viewSettingsFor(uri)
+                    renderDocThumbnailSquare(doc, tilePx, pdfPageFilterFor(vs), vs.rotation)?.also { thumbCache.store(uri, it) } ?: return@withContext null
                 } finally {
                     doc.pdfFile?.delete() // transient doc loaded just for a thumbnail; drop its extracts
                     deleteImageTemps(doc)
@@ -1770,10 +1786,12 @@ class Editor(context: Context) {
      */
     private suspend fun regenerateClosedNoteThumb(uri: String) {
         val doc = state.document
-        val filter = pdfPageFilter() // the closing note's own filter, captured before any swap
+        // The closing note's own filter + rotation, captured before any swap.
+        val filter = pdfPageFilter()
+        val rotation = viewSettings.rotation
         withContext(thumbDispatcher) {
             if (state.document !== doc) return@withContext // a new note was opened; don't cache stale pixels
-            val bmp = runCatching { renderDocThumbnailSquare(doc, tilePx, filter) }.getOrNull() ?: return@withContext
+            val bmp = runCatching { renderDocThumbnailSquare(doc, tilePx, filter, rotation) }.getOrNull() ?: return@withContext
             thumbCache.store(uri, bmp)
             val img = bmp.asImageBitmap()
             synchronized(noteThumbs) { noteThumbs.put(uri, img) }
@@ -2321,20 +2339,27 @@ class Editor(context: Context) {
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
-        if (prev.mode != new.mode) {
-            // Re-group the pages, keep the reader on the same page, and re-fit a fit-width
-            // view to the new row width (a Double spread is about twice as wide).
+        if (prev.mode != new.mode || prev.rotation != new.rotation) {
+            // Re-group / re-orient the pages, keep the reader on the same page, and re-fit a
+            // fit-width view to the new row width (a Double spread is about twice as wide;
+            // a 90 degree turn swaps every page's footprint).
             val cur = if (state.didInitialFit) state.currentPageIndex() else 0
             state.viewingMode = new.mode
+            state.rotationDeg = new.rotation
             state.relayout()
             if (state.didInitialFit) {
-                if (state.fitWidthActive) {
-                    state.zoom = state.fitWidthZoom()
-                    state.invalidateCachesForZoom()
-                }
+                if (state.fitWidthActive) state.zoom = state.fitWidthZoom()
+                state.invalidateCachesForZoom()
                 state.goToPage(cur)
                 refreshView()
             }
+        }
+        if (prev.rotation != new.rotation) {
+            // Every thumbnail mirrors the canvas orientation: drop them all to re-render.
+            synchronized(pageThumbs) { pageThumbs.evictAll() }
+            pdfThumbTick++
+            currentUri?.let { invalidateThumb(it) }
+            presentation.notifyChanged()
         }
         val filterChanged = prev.contrast != new.contrast || prev.invert != new.invert ||
             prev.brightness != new.brightness || prev.sepia != new.sepia

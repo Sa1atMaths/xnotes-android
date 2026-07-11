@@ -129,7 +129,14 @@ fun TextEditorOverlay(editor: Editor, field: EditingField) {
             },
             modifier = Modifier
                 .then(NoBringIntoViewElement)
-                .graphicsLayer(scaleX = z, scaleY = z, transformOrigin = TransformOrigin(0f, 0f))
+                // Zoom (and the view's page rotation) applied at draw time about the box's
+                // page-space top-left, exactly like the canvas paints the baked text.
+                .graphicsLayer(
+                    scaleX = z,
+                    scaleY = z,
+                    rotationZ = field.rotation.toFloat(),
+                    transformOrigin = TransformOrigin(0f, 0f),
+                )
                 .widthIn(min = widthDp, max = widthDp)
                 .heightIn(min = heightDp)
                 // No fill: the edited box is lifted out of the ink cache, so a transparent field lets the

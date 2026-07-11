@@ -85,6 +85,8 @@ data class EditingField(
     val face: FontFace,
     val rgba: Rgba,
     val text: String,
+    /** The view's page rotation (deg cw); the overlay spins by this around (x, y). */
+    val rotation: Int = 0,
 )
 
 /** The floating text style bar's target: the active box's viewport rect + its style. */
@@ -744,19 +746,17 @@ class InteractionController(
         }
     }
 
-    /** Map a finger tap's content point to its page + page-local point and offer it to [onLinkTap]. */
+    /** Map a finger tap's content point to its page + page-space point and offer it to [onLinkTap]. */
     private fun tryLinkTap(content: Pt): Boolean {
         val cb = onLinkTap ?: return false
         val pageIndex = state.pageIndexAtContent(content) ?: return false
-        val pr = state.pageRects[pageIndex]
-        return cb(pageIndex, Pt(content.x - pr.left, content.y - pr.top))
+        return cb(pageIndex, state.toPageSpace(pageIndex, content))
     }
 
     // --- DRAW ---
 
     private fun beginDraw(content: Pt, pressure: Double, drawTool: Tool, timeMs: Long, downViewport: Pt) {
         val pageIndex = state.pageIndexAtContent(content) ?: return
-        val pr = state.pageRects[pageIndex]
         // Reaching here with a live selection means the press landed off it (on it the stylus would
         // have grabbed it): dismiss it. A bare tap that only dismissed is dropped in endDraw.
         strokeDismissedSelection = hasSelection
@@ -792,8 +792,8 @@ class InteractionController(
         snapRunStartEdge = null
         snapCurrentEdge = null
         snapPenViewport = null
-        val firstContent = state.viewportToContent(magnetize(downViewport))
-        stroke.addSample(Sample(firstContent.x - pr.left, firstContent.y - pr.top, pressure)) // first sample: t = 0
+        val first = state.toPageSpace(pageIndex, state.viewportToContent(magnetize(downViewport)))
+        stroke.addSample(Sample(first.x, first.y, pressure)) // first sample: t = 0
         liveStroke = stroke
         strokePageIndex = pageIndex
         mode = PointerMode.DRAW
@@ -829,10 +829,10 @@ class InteractionController(
     private fun addStrokePoint(vx: Double, vy: Double, pressure: Double, timeMs: Long, force: Boolean) {
         val stroke = liveStroke ?: return
         val pi = strokePageIndex ?: return
-        val pr = state.pageRects.getOrNull(pi) ?: return
+        if (state.pageRects.getOrNull(pi) == null) return
         val vp = magnetize(Pt(vx, vy))
         val content = state.viewportToContent(vp)
-        val local = Pt(content.x - pr.left, content.y - pr.top)
+        val local = state.toPageSpace(pi, content)
         if (stroke.straight) {
             // Straight-line mode: the stroke is always pen-down → current point, so the moving
             // endpoint just tracks the pointer (decimation/spacing gates don't apply). Near an axis
@@ -1003,8 +1003,9 @@ class InteractionController(
             val pr = state.pageRects.getOrNull(pi) ?: continue
             if (!pr.intersects(eraserBox)) continue // skip pages the eraser isn't over
             val page = state.document.pages[pi]
-            val cx = content.x - pr.left
-            val cy = content.y - pr.top
+            val local = state.toPageSpace(pi, content)
+            val cx = local.x
+            val cy = local.y
             val dirty = if (area) eraseAreaFromPage(page, cx, cy, radius)
             else eraseStrokesFromPage(page, cx, cy, radius)
             if (dirty != null) {
@@ -1125,11 +1126,18 @@ class InteractionController(
      *  endpoint handles, else the eight handles of the oriented selection box. */
     private fun selectionResizeHandles(): List<ResizeHandle> {
         val endpoint = singleEndpointShape()
-        if (endpoint != null) {
-            val pr = state.pageRects.getOrNull(endpoint.pageIndex) ?: return emptyList()
-            return ResizeMath.handles(endpoint.item, pr.topLeft)
-        }
+        if (endpoint != null) return endpointHandles(endpoint)
         return selObb?.let { ResizeMath.obbHandles(it) } ?: emptyList()
+    }
+
+    /** A line/arrow's two endpoint handles, mapped from page space into content space. */
+    private fun endpointHandles(sel: Selected): List<ResizeHandle> {
+        val item = sel.item as? ShapeItem ?: return emptyList()
+        if (state.pageRects.getOrNull(sel.pageIndex) == null) return emptyList()
+        return listOf(
+            ResizeHandle(HandleId.START, state.fromPageSpace(sel.pageIndex, item.start)),
+            ResizeHandle(HandleId.END, state.fromPageSpace(sel.pageIndex, item.end)),
+        )
     }
 
     /** Strokes and shapes rotate; images and text don't. A mixed selection rotates only when every
@@ -1170,8 +1178,7 @@ class InteractionController(
         }
         val endpoint = singleEndpointShape()
         if (endpoint != null) {
-            val pr = state.pageRects.getOrNull(endpoint.pageIndex) ?: return false
-            val id = ResizeMath.hitHandle(ResizeMath.handles(endpoint.item, pr.topLeft), content, tol) ?: return false
+            val id = ResizeMath.hitHandle(endpointHandles(endpoint), content, tol) ?: return false
             beginResize(endpoint, id)
             return true
         }
@@ -1185,8 +1192,7 @@ class InteractionController(
         if (tryGrabSelectionHandle(content)) return
         val pageIndex = state.pageIndexAtContent(content)
         if (pageIndex != null) {
-            val pr = state.pageRects[pageIndex]
-            val local = Pt(content.x - pr.left, content.y - pr.top)
+            val local = state.toPageSpace(pageIndex, content)
             val hit = state.document.pages[pageIndex].items.lastOrNull { it.contains(local) }
             if (hit != null) {
                 if (selection.none { it.item === hit }) setSelection(listOf(Selected(pageIndex, hit)))
@@ -1210,7 +1216,13 @@ class InteractionController(
     }
 
     private fun endBand() {
-        bandRect?.let { setSelection(SelectionMath.bandMembers(state.document.pages, state.pageRects, it)) }
+        bandRect?.let { band ->
+            setSelection(
+                SelectionMath.bandMembers(state.document.pages, state.pageRects, band) { i, r ->
+                    state.fromPageSpaceRect(i, r)
+                },
+            )
+        }
         bandRect = null
         mode = PointerMode.IDLE
         refreshSelectionMenu()
@@ -1240,7 +1252,9 @@ class InteractionController(
 
     private fun endLasso() {
         if (lassoPoints.size >= 3) {
-            val members = SelectionMath.lassoMembers(state.document.pages, state.pageRects, lassoPoints)
+            val members = SelectionMath.lassoMembers(state.document.pages, state.pageRects, lassoPoints) { i, p ->
+                state.fromPageSpace(i, p)
+            }
             if (members.isEmpty()) {
                 clearSelection()
             } else {
@@ -1323,9 +1337,11 @@ class InteractionController(
         val moved = abs(moveOffset.x) > MOVE_EPS || abs(moveOffset.y) > MOVE_EPS
         if (moved) {
             val items = selection.map { it.item }
-            for (item in items) item.translate(moveOffset.x, moveOffset.y)
+            // Items hold page-space geometry: rotate the on-screen offset into page space.
+            val local = state.vectorToPageSpace(moveOffset)
+            for (item in items) item.translate(local.x, local.y)
             selObb = selObb?.translate(moveOffset.x, moveOffset.y)
-            history.push(MoveItems(items, moveOffset.x, moveOffset.y))
+            history.push(MoveItems(items, local.x, local.y))
             state.document.dirty = true
             // Moved items stay lifted (drawn live in the overlay), so the ink cache — which
             // already excludes them — needs no repair; it is repainted at their final spot
@@ -1353,8 +1369,8 @@ class InteractionController(
     private fun extendResize(content: Pt) {
         val item = resizeItem ?: return
         val handle = resizeHandle ?: return
-        val pr = state.pageRects.getOrNull(resizePageIndex) ?: return
-        val local = Pt(content.x - pr.left, content.y - pr.top)
+        if (state.pageRects.getOrNull(resizePageIndex) == null) return
+        val local = state.toPageSpace(resizePageIndex, content)
         when (item) {
             is ImageItem -> item.setGeometry(RectHandle(ResizeMath.resizeImage(item.rect, handle, local)))
             is TextItem -> {
@@ -1435,10 +1451,11 @@ class InteractionController(
             selObb = obb0.copy(angle = txStartAngle + theta)
             world = Affine.rotateAbout(txCenter, theta)
         }
-        // Items hold page-local geometry, so express the content-space transform per page.
+        // Items hold page-space geometry, so express the content-space transform per page
+        // (a translation shift, plus the display rotation when the view is rotated).
         for (sel in txItems) {
-            val pr = state.pageRects.getOrNull(sel.pageIndex) ?: continue
-            sel.item.applyTransform(world.translatedFrame(pr.topLeft))
+            if (state.pageRects.getOrNull(sel.pageIndex) == null) continue
+            sel.item.applyTransform(state.affineToPageSpace(sel.pageIndex, world))
         }
         requestRender()
     }
@@ -1471,11 +1488,10 @@ class InteractionController(
 
     private fun beginShape(content: Pt) {
         val pageIndex = state.pageIndexAtContent(content) ?: return
-        val pr = state.pageRects[pageIndex]
         // Off-selection press with the shape tool: dismiss first (a tap makes no shape; endShape's
         // min-drag gate drops it), so dragging out a new shape also clears the old selection.
         clearSelection()
-        val startLocal = Pt(content.x - pr.left, content.y - pr.top)
+        val startLocal = state.toPageSpace(pageIndex, content)
         val kind = shapeConfig.shape
         val fill = if (shapeConfig.fill && kind.isClosed) inkColor.scaleAlpha(ShapeConfig.FILL_ALPHA) else null
         pendingShape = ShapeItem(kind, startLocal, startLocal, inkColor, shapeConfig.strokeWidth * SHAPE_PEN_PARITY, fill, shapeConfig.neon, shapeConfig.neonStrength)
@@ -1486,8 +1502,9 @@ class InteractionController(
 
     private fun extendShape(content: Pt) {
         val shape = pendingShape ?: return
-        val pr = state.pageRects.getOrNull(shapePageIndex ?: -1) ?: return
-        val raw = Pt(content.x - pr.left, content.y - pr.top)
+        val pi = shapePageIndex ?: return
+        if (state.pageRects.getOrNull(pi) == null) return
+        val raw = state.toPageSpace(pi, content)
         shape.end = when {
             // Line/arrow: pin the dragged end flat when it lands near an axis.
             shape.shape.isEndpointShape -> snapAxisEndpoint(shape.start, raw)
@@ -1559,8 +1576,7 @@ class InteractionController(
      */
     private fun beginTextBoxGesture(content: Pt) {
         val pi = state.pageIndexAtContent(content) ?: return
-        val pr = state.pageRects[pi]
-        val local = Pt(content.x - pr.left, content.y - pr.top)
+        val local = state.toPageSpace(pi, content)
         val page = state.document.pages[pi]
         val existing = page.items.lastOrNull { it is TextItem && it.contains(local) } as? TextItem
         if (existing != null) {
@@ -1585,10 +1601,10 @@ class InteractionController(
         val pi = textDragPageIndex
         textDragRect = null
         mode = PointerMode.IDLE
-        val pr = state.pageRects.getOrNull(pi) ?: return
+        if (state.pageRects.getOrNull(pi) == null) return
         val page = state.document.pages[pi]
-        val startLocal = Pt(textDragStart.x - pr.left, textDragStart.y - pr.top)
-        val rect = Rect.fromPoints(startLocal, Pt(content.x - pr.left, content.y - pr.top))
+        val startLocal = state.toPageSpace(pi, textDragStart)
+        val rect = Rect.fromPoints(startLocal, state.toPageSpace(pi, content))
         val draggedX = rect.w * state.zoom >= TEXT_DRAG_SLOP
         val draggedY = rect.h * state.zoom >= TEXT_DRAG_SLOP
         val item = if (draggedX || draggedY) {
@@ -1647,8 +1663,10 @@ class InteractionController(
     /** Current on-screen geometry of the editor field, or null when not editing. */
     fun editingField(): EditingField? {
         val item = editingText ?: return null
-        val pr = state.pageRects.getOrNull(editingPageIndex) ?: return null
-        val topLeft = state.contentToViewport(Pt(pr.left + item.pos.x, pr.top + item.pos.y))
+        if (state.pageRects.getOrNull(editingPageIndex) == null) return null
+        // Anchor at the box's page-space top-left corner; a rotated view spins the overlay
+        // around that anchor (EditingField.rotation) so it stays glued to the baked text.
+        val topLeft = state.contentToViewport(state.fromPageSpace(editingPageIndex, item.pos))
         return EditingField(
             x = topLeft.x,
             y = topLeft.y,
@@ -1659,6 +1677,7 @@ class InteractionController(
             face = item.face,
             rgba = item.rgba,
             text = item.text,
+            rotation = state.rotationDeg,
         )
     }
 
@@ -1791,8 +1810,7 @@ class InteractionController(
             tool == Tool.LASSO || tool == Tool.SHAPE || tool == Tool.TEXT || tool == Tool.TEXT_BOX
         val pageIndex = state.pageIndexAtContent(content)
         val hit = if (pageIndex != null) {
-            val pr = state.pageRects[pageIndex]
-            val local = Pt(content.x - pr.left, content.y - pr.top)
+            val local = state.toPageSpace(pageIndex, content)
             state.document.pages[pageIndex].items.lastOrNull { it.contains(local) }
         } else {
             null
@@ -1909,8 +1927,8 @@ class InteractionController(
         if (selection.isEmpty()) return null
         var acc: Rect? = null
         for (sel in selection) {
-            val pr = state.pageRects.getOrNull(sel.pageIndex) ?: continue
-            val b = sel.item.bounds().translate(pr.left, pr.top)
+            if (state.pageRects.getOrNull(sel.pageIndex) == null) continue
+            val b = state.fromPageSpaceRect(sel.pageIndex, sel.item.bounds())
             acc = acc?.union(b) ?: b
         }
         return acc
@@ -2036,13 +2054,13 @@ class InteractionController(
     private fun pasteClonesOnPage(pageIndex: Int, target: Pt, offsetFromBoundsTopLeft: Boolean, nudge: Double) {
         if (itemClipboard.isEmpty()) return
         val page = state.document.pages.getOrNull(pageIndex) ?: return
-        val pr = state.pageRects.getOrNull(pageIndex) ?: return
+        if (state.pageRects.getOrNull(pageIndex) == null) return
         val clones = itemClipboard.map { cloneItem(it) }
         // Collective bounds (page-local) of the clones.
         var box: Rect? = null
         for (c in clones) box = box?.union(c.bounds()) ?: c.bounds()
         val b = box ?: return
-        val targetLocal = Pt(target.x - pr.left, target.y - pr.top)
+        val targetLocal = state.toPageSpace(pageIndex, target)
         val dx = if (offsetFromBoundsTopLeft) targetLocal.x - b.left + nudge else nudge
         val dy = if (offsetFromBoundsTopLeft) targetLocal.y - b.top + nudge else nudge
         for (c in clones) c.translate(dx, dy)
@@ -2394,6 +2412,7 @@ class InteractionController(
                 val pr = state.pageRects.getOrNull(sel.pageIndex) ?: continue
                 r.withSave {
                     r.translate(pr.left + moveOffset.x, pr.top + moveOffset.y)
+                    state.applyPageRotation(r, state.document.pages[sel.pageIndex])
                     sel.item.paint(r)
                 }
             }
@@ -2463,10 +2482,12 @@ class InteractionController(
     }
 
     private inline fun paintClippedToPage(r: Renderer, pageIndex: Int?, crossinline paint: () -> Unit) {
-        val pr = state.pageRects.getOrNull(pageIndex ?: -1) ?: return
+        val pi = pageIndex ?: -1
+        val pr = state.pageRects.getOrNull(pi) ?: return
         r.withSave {
             r.clipRect(pr)
             r.translate(pr.left, pr.top)
+            state.applyPageRotation(r, state.document.pages[pi])
             paint()
         }
     }
