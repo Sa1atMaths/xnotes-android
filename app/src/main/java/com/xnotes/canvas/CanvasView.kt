@@ -160,22 +160,41 @@ class CanvasView @JvmOverloads constructor(
     }
 
     // --- canvas scrollbar (View menu toggle; drawn in [onDraw], dragged like the sidebar's) ---
+    // Continuous mode: a vertical bar at the right edge mapping the scroll. Paginated mode: a
+    // horizontal scrubber along the bottom whose thumb is the current row; dragging snaps per row.
 
     /** True when the scrollbar has anything to scroll for the current view. */
-    private fun scrollbarActive(st: CanvasState): Boolean = scrollbarEnabled && st.maxScrollY() > 0.0
+    private fun scrollbarActive(st: CanvasState): Boolean = scrollbarEnabled &&
+        if (st.verticalScroll) st.maxScrollY() > 0.0 else st.rowRanges().size > 1
 
     /** Thumb length (viewport px): the viewport's share of the content, floored for grabbability. */
     private fun scrollbarThumb(st: CanvasState): Float {
+        val minThumb = SCROLLBAR_MIN_THUMB_DP * resources.displayMetrics.density
+        if (!st.verticalScroll) {
+            val track = st.viewportW.toFloat()
+            val rows = st.rowRanges().size.coerceAtLeast(1)
+            return (track / rows).coerceAtLeast(minThumb).coerceAtMost(track)
+        }
         val track = st.viewportH.toFloat()
         val share = (st.viewportH / (st.contentH * st.zoom)).toFloat().coerceAtMost(1f)
-        return (track * share).coerceAtLeast(SCROLLBAR_MIN_THUMB_DP * resources.displayMetrics.density).coerceAtMost(track)
+        return (track * share).coerceAtLeast(minThumb).coerceAtMost(track)
     }
 
+    /** The thumb's 0..1 position for the current view. */
+    private fun scrollbarFraction(st: CanvasState): Double =
+        if (st.verticalScroll) {
+            (st.scrollY / st.maxScrollY()).coerceIn(0.0, 1.0)
+        } else {
+            val last = (st.rowRanges().size - 1).coerceAtLeast(1)
+            st.currentRow.toDouble() / last
+        }
+
     /**
-     * Capture and drive a drag that starts on the scrollbar's band at the right edge. Deltas
-     * accumulate into a locally tracked fraction (seeded from the current scroll) and map back
-     * onto [CanvasState.scrollY], exactly like the side panel's scrollbar; once a drag is live
-     * every event is consumed until the finger lifts so no ink is drawn under the bar.
+     * Capture and drive a drag that starts on the scrollbar's band (right edge, or the bottom
+     * edge in paginated mode). Deltas accumulate into a locally tracked fraction (seeded from
+     * the current position) and map back onto the scroll — or snap per row in paginated mode —
+     * exactly like the side panel's scrollbar; once a drag is live every event is consumed
+     * until the finger lifts so no ink is drawn under the bar.
      */
     private fun trackScrollbar(e: MotionEvent): Boolean {
         val st = state ?: return false
@@ -183,22 +202,34 @@ class CanvasView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 if (!scrollbarActive(st)) return false
                 val band = SCROLLBAR_TOUCH_DP * resources.displayMetrics.density
-                if (e.x < st.viewportW - band) return false
+                val onBand = if (st.verticalScroll) e.x >= st.viewportW - band else e.y >= st.viewportH - band
+                if (!onBand) return false
                 scrollbarDragging = true
-                scrollbarLastY = e.y
-                scrollbarFrac = st.scrollY / st.maxScrollY()
+                scrollbarLastY = if (st.verticalScroll) e.y else e.x
+                scrollbarFrac = scrollbarFraction(st)
                 requestRender()
                 return true
             }
             MotionEvent.ACTION_MOVE -> if (scrollbarDragging) {
-                val dy = e.y - scrollbarLastY
-                scrollbarLastY = e.y
-                val travel = st.viewportH - scrollbarThumb(st)
-                if (dy != 0f && travel > 0f) {
-                    scrollbarFrac = (scrollbarFrac + dy / travel).coerceIn(0.0, 1.0)
-                    st.scrollY = scrollbarFrac * st.maxScrollY()
-                    st.clampScroll()
-                    onScrollbarScrolled?.invoke()
+                val pos = if (st.verticalScroll) e.y else e.x
+                val delta = pos - scrollbarLastY
+                scrollbarLastY = pos
+                val track = if (st.verticalScroll) st.viewportH else st.viewportW
+                val travel = track - scrollbarThumb(st)
+                if (delta != 0f && travel > 0f) {
+                    scrollbarFrac = (scrollbarFrac + delta / travel).coerceIn(0.0, 1.0)
+                    if (st.verticalScroll) {
+                        st.scrollY = scrollbarFrac * st.maxScrollY()
+                        st.clampScroll()
+                        onScrollbarScrolled?.invoke()
+                    } else {
+                        val rows = st.rowRanges()
+                        val target = (scrollbarFrac * (rows.size - 1)).toInt().coerceIn(0, rows.lastIndex)
+                        if (target != st.currentRow) {
+                            st.goToPage(rows[target].first)
+                            onScrollbarScrolled?.invoke()
+                        }
+                    }
                     requestRender()
                 }
                 return true
@@ -214,15 +245,21 @@ class CanvasView @JvmOverloads constructor(
         return false
     }
 
-    /** Draw the scrollbar thumb at the right edge (square, dim; accent while dragged). */
+    /** Draw the scrollbar thumb (square, dim; accent while dragged). */
     private fun drawScrollbar(canvas: Canvas, st: CanvasState) {
         if (!scrollbarActive(st)) return
         val d = resources.displayMetrics.density
         val barW = SCROLLBAR_WIDTH_DP * d
         val thumb = scrollbarThumb(st)
-        val top = ((st.viewportH - thumb) * (st.scrollY / st.maxScrollY())).toFloat()
+        val frac = scrollbarFraction(st).toFloat()
         scrollbarPaint.color = (if (scrollbarDragging) st.palette.accent else st.palette.textDim).toArgb()
-        canvas.drawRect(st.viewportW - barW, top, st.viewportW.toFloat(), top + thumb, scrollbarPaint)
+        if (st.verticalScroll) {
+            val top = (st.viewportH - thumb) * frac
+            canvas.drawRect(st.viewportW - barW, top, st.viewportW.toFloat(), top + thumb, scrollbarPaint)
+        } else {
+            val left = (st.viewportW - thumb) * frac
+            canvas.drawRect(left, st.viewportH - barW, left + thumb, st.viewportH.toFloat(), scrollbarPaint)
+        }
     }
 
     /**

@@ -2339,15 +2339,18 @@ class Editor(context: Context) {
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
-        if (prev.mode != new.mode || prev.rotation != new.rotation) {
-            // Re-group / re-orient the pages, keep the reader on the same page, and re-fit a
-            // fit-width view to the new row width (a Double spread is about twice as wide;
-            // a 90 degree turn swaps every page's footprint).
+        if (prev.mode != new.mode || prev.rotation != new.rotation || prev.verticalScroll != new.verticalScroll) {
+            // Re-group / re-orient / re-flow the pages, keep the reader on the same page, and
+            // re-fit a fit-width view to the new row width (a Double spread is about twice as
+            // wide; a 90 degree turn swaps every page's footprint).
             val cur = if (state.didInitialFit) state.currentPageIndex() else 0
             state.viewingMode = new.mode
             state.rotationDeg = new.rotation
+            state.verticalScroll = new.verticalScroll
+            state.flipOffsetX = 0.0
             state.relayout()
             if (state.didInitialFit) {
+                state.currentRow = state.rowIndexOf(cur) // paginated fit-width reads the row
                 if (state.fitWidthActive) state.zoom = state.fitWidthZoom()
                 state.invalidateCachesForZoom()
                 state.goToPage(cur)

@@ -111,6 +111,23 @@ class CanvasState(
     var viewingMode: ViewingMode = ViewingMode.SINGLE
 
     /**
+     * True = continuous vertical scrolling (rows stack top-down). False = paginated: rows
+     * lay out as a horizontal strip, the scroll window is clamped to [currentRow]'s span,
+     * and the interaction layer flips between rows (edge-swipe with a slide animation).
+     */
+    var verticalScroll: Boolean = true
+
+    /** The row the paginated view is on (its scroll window); moved by flips and [goToPage]. */
+    var currentRow: Int = 0
+
+    /**
+     * Paginated edge-pull (viewport px, signed; positive pulls toward the next row). Like
+     * [overscrollY] it is purely visual — [origin] shifts by it so the neighbouring row
+     * slides into view under the finger — and the interaction layer springs or flips it.
+     */
+    var flipOffsetX: Double = 0.0
+
+    /**
      * Whole-file clockwise page rotation (0/90/180/270), applied by the view: pages lay
      * out with their rotated footprints ([displayW]/[displayH]) and their page-space
      * content is painted through [applyPageRotation]. Model/page space never rotates —
@@ -406,29 +423,104 @@ class CanvasState(
             pageRects = emptyList()
             contentW = 2 * sideMargin
             contentH = 2 * MARGIN
+            currentRow = 0
             return
         }
-        // Rows stack top-down; a row's pages sit side by side (centred against the widest
-        // row, and vertically centred within their row so facing pages align). Rects hold
-        // the pages' display footprints — rotation swaps their width/height.
+        // Rects hold the pages' display footprints — rotation swaps their width/height. A row's
+        // pages sit side by side, vertically centred within their row so facing pages align.
         val rows = rowRanges()
         val rowWidths = rows.map { r -> r.sumOf { displayW(pages[it]) } + (r.last - r.first) * GAP }
         val rowHeights = rows.map { r -> r.maxOf { displayH(pages[it]) } }
-        val maxW = rowWidths.max()
         val rects = arrayOfNulls<Rect>(pages.size)
-        var y = MARGIN // vertical top margin (keeps the page below the toolbar)
-        for ((ri, row) in rows.withIndex()) {
-            var x = sideMargin + (maxW - rowWidths[ri]) / 2.0
-            for (i in row) {
-                rects[i] = Rect(x, y + (rowHeights[ri] - displayH(pages[i])) / 2.0, displayW(pages[i]), displayH(pages[i]))
-                x += displayW(pages[i]) + GAP
+        if (verticalScroll) {
+            // Rows stack top-down, centred against the widest row.
+            val maxW = rowWidths.max()
+            var y = MARGIN // vertical top margin (keeps the page below the toolbar)
+            for ((ri, row) in rows.withIndex()) {
+                var x = sideMargin + (maxW - rowWidths[ri]) / 2.0
+                for (i in row) {
+                    rects[i] = Rect(x, y + (rowHeights[ri] - displayH(pages[i])) / 2.0, displayW(pages[i]), displayH(pages[i]))
+                    x += displayW(pages[i]) + GAP
+                }
+                y += rowHeights[ri] + GAP
             }
-            y += rowHeights[ri] + GAP
+            contentW = maxW + 2 * sideMargin
+            contentH = (y - GAP) + MARGIN
+        } else {
+            // Paginated: rows run left-to-right in one strip, each top-aligned below the margin.
+            val maxH = rowHeights.max()
+            var x = sideMargin
+            for ((ri, row) in rows.withIndex()) {
+                var rx = x
+                for (i in row) {
+                    rects[i] = Rect(rx, MARGIN + (rowHeights[ri] - displayH(pages[i])) / 2.0, displayW(pages[i]), displayH(pages[i]))
+                    rx += displayW(pages[i]) + GAP
+                }
+                x += rowWidths[ri] + ROW_FLIP_GAP
+            }
+            contentW = (x - ROW_FLIP_GAP) + sideMargin
+            contentH = maxH + 2 * MARGIN
         }
         pageRects = rects.map { it!! }
-        contentW = maxW + 2 * sideMargin
-        contentH = (y - GAP) + MARGIN
+        currentRow = currentRow.coerceIn(0, rows.lastIndex)
         clampScroll()
+    }
+
+    /** Index (into [rowRanges]) of the row containing [pageIndex]. */
+    fun rowIndexOf(pageIndex: Int): Int {
+        val first = rowOf(pageIndex).first
+        return rowRanges().indexOfFirst { it.first == first }.coerceAtLeast(0)
+    }
+
+    /** The union of a row's page rects (content space). */
+    fun rowBounds(row: IntRange): Rect {
+        var acc: Rect? = null
+        for (i in row) pageRects.getOrNull(i)?.let { acc = acc?.union(it) ?: it }
+        return acc ?: Rect(0.0, 0.0, 1.0, 1.0)
+    }
+
+    /** The paginated scroll target for [rowIndex]: keep the zoom, land at the row's top. */
+    fun rowTargetScroll(rowIndex: Int): Pt {
+        val rows = rowRanges()
+        if (rows.isEmpty()) return Pt(0.0, 0.0)
+        val rb = rowBounds(rows[rowIndex.coerceIn(0, rows.lastIndex)])
+        val minX = (rb.left - sideMargin) * zoom
+        val maxX = (rb.right + sideMargin) * zoom - viewportW
+        val sx = if (maxX < minX) (minX + maxX) / 2.0 else minX
+        val sy = ((rb.top - PAGE_LABEL_OFFSET) * zoom - TOP_GAP).coerceAtLeast(0.0)
+        return Pt(sx, sy)
+    }
+
+    /** True when the paginated view rests against its row's [next]-side edge (a flip is armed). */
+    fun atRowEdge(next: Boolean): Boolean {
+        val rows = rowRanges()
+        if (rows.isEmpty()) return false
+        val rb = rowBounds(rows[currentRow.coerceIn(0, rows.lastIndex)])
+        val minX = (rb.left - sideMargin) * zoom
+        val maxX = (rb.right + sideMargin) * zoom - viewportW
+        if (maxX < minX) return true // the row fits: both edges at once
+        return if (next) scrollX >= maxX - 1.0 else scrollX <= minX + 1.0
+    }
+
+    /** Re-derive [currentRow] from the scroll position (a restored view / fresh layout). */
+    fun syncCurrentRowToScroll() {
+        if (verticalScroll) return
+        val rows = rowRanges()
+        if (rows.isEmpty()) {
+            currentRow = 0
+            return
+        }
+        val cx = (scrollX + viewportW / 2.0) / zoom
+        var best = 0
+        var bestD = Double.MAX_VALUE
+        rows.forEachIndexed { i, row ->
+            val d = abs(rowBounds(row).centerX - cx)
+            if (d < bestD) {
+                bestD = d
+                best = i
+            }
+        }
+        currentRow = best
     }
 
     // --- transforms ---
@@ -436,7 +528,7 @@ class CanvasState(
     fun origin(): Pt {
         val cw = contentW * zoom
         val ch = contentH * zoom
-        val ox = if (cw < viewportW) (viewportW - cw) / 2.0 else -scrollX
+        val ox = (if (cw < viewportW) (viewportW - cw) / 2.0 else -scrollX) - flipOffsetX
         val oy = (if (ch < viewportH) (viewportH - ch) / 2.0 else -scrollY) - overscrollY
         return Pt(ox, oy)
     }
@@ -458,8 +550,28 @@ class CanvasState(
     fun maxScrollY(): Double = max(0.0, ceil(contentH * zoom - viewportH))
 
     fun clampScroll() {
+        if (!verticalScroll && pageRects.isNotEmpty()) {
+            // Paginated: the scroll window is the current row's span (plus the side margins);
+            // a row narrower/shorter than the viewport pins centred/top instead of drifting.
+            val c = rowClampedScroll(currentRow, scrollX, scrollY)
+            scrollX = c.x
+            scrollY = c.y
+            return
+        }
         scrollX = scrollX.coerceIn(0.0, maxScrollX())
         scrollY = scrollY.coerceIn(0.0, maxScrollY())
+    }
+
+    /** ([sx], [sy]) clamped into [rowIndex]'s paginated scroll window, without mutating state. */
+    fun rowClampedScroll(rowIndex: Int, sx: Double, sy: Double): Pt {
+        val rows = rowRanges()
+        if (rows.isEmpty()) return Pt(sx, sy)
+        val rb = rowBounds(rows[rowIndex.coerceIn(0, rows.lastIndex)])
+        val minX = (rb.left - sideMargin) * zoom
+        val maxX = (rb.right + sideMargin) * zoom - viewportW
+        val cx = if (maxX < minX) (minX + maxX) / 2.0 else sx.coerceIn(minX, maxX)
+        val maxY = ((rb.bottom + MARGIN) * zoom - viewportH).coerceAtLeast(0.0)
+        return Pt(cx, sy.coerceIn(0.0, maxY))
     }
 
     fun scrollBy(dx: Double, dy: Double) {
@@ -490,9 +602,17 @@ class CanvasState(
         return null
     }
 
-    /** The current page (spec 05 §4): contains the viewport vertical centre, biased by half a gap. */
+    /** The current page (spec 05 §4): contains the viewport vertical centre, biased by half a gap.
+     *  Paginated mode reads it from [currentRow] instead (the page under the viewport centre). */
     fun currentPageIndex(): Int {
         if (pageRects.isEmpty()) return 0
+        if (!verticalScroll) {
+            val rows = rowRanges()
+            val row = rows[currentRow.coerceIn(0, rows.lastIndex)]
+            val cx = viewportToContent(Pt(viewportW / 2.0, viewportH / 2.0)).x
+            for (i in row) if (pageRects[i].right + GAP / 2.0 > cx) return i
+            return row.last
+        }
         val centerY = viewportToContent(Pt(viewportW / 2.0, viewportH / 2.0)).y
         for (i in pageRects.indices) {
             if (pageRects[i].bottom + GAP / 2.0 > centerY) return i
@@ -523,6 +643,16 @@ class CanvasState(
     fun goToPage(index: Int) {
         if (pageRects.isEmpty()) return
         val i = index.coerceIn(0, pageRects.size - 1)
+        if (!verticalScroll) {
+            // Paginated: jump the scroll window to the page's row and land at its top.
+            currentRow = rowIndexOf(i)
+            flipOffsetX = 0.0
+            val t = rowTargetScroll(currentRow)
+            scrollX = t.x
+            scrollY = t.y
+            clampScroll()
+            return
+        }
         // Navigate to the page's whole layout row, so a Double/Cover spread centres as one.
         val row = rowOf(i)
         val top = row.minOf { pageRects[it].top }
@@ -586,10 +716,19 @@ class CanvasState(
 
     // --- fit-to-width snapping (spec 05) ---
 
-    /** The zoom at which the page column exactly fills the viewport width, or 0 if not measurable. */
-    fun fitWidthZoom(): Double =
-        if (contentW <= 0.0 || viewportW == 0) 0.0
-        else (viewportW / contentW).coerceIn(MIN_ZOOM, MAX_ZOOM)
+    /** The zoom at which the page column exactly fills the viewport width, or 0 if not measurable.
+     *  Paginated mode fits the current row (the strip as a whole is never the fit target). */
+    fun fitWidthZoom(): Double {
+        if (viewportW == 0) return 0.0
+        if (!verticalScroll) {
+            val rows = rowRanges()
+            if (rows.isEmpty()) return 0.0
+            val w = rowBounds(rows[currentRow.coerceIn(0, rows.lastIndex)]).w + 2 * sideMargin
+            return if (w <= 0.0) 0.0 else (viewportW / w).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        }
+        if (contentW <= 0.0) return 0.0
+        return (viewportW / contentW).coerceIn(MIN_ZOOM, MAX_ZOOM)
+    }
 
     /**
      * Live magnetic fit-to-width for a pinch: if [raw] (the gesture's unconstrained zoom) is within
@@ -636,6 +775,7 @@ class CanvasState(
         zoom = newZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
         scrollX = sx
         scrollY = sy
+        syncCurrentRowToScroll() // paginated: land on the restored row before the clamp
         // A restored view that lands at fit-width should still auto-refit on resize.
         val target = fitWidthZoom()
         fitWidthActive = target > 0.0 && abs(zoom - target) <= target * SNAP_TO_FIT_WIDTH
@@ -646,6 +786,7 @@ class CanvasState(
     /** Fit page width and scroll to the first page, ignoring the zoom lock (document open). */
     fun resetViewToFitWidth() {
         if (contentW <= 0.0 || viewportW == 0) return
+        currentRow = 0 // paginated fit-width targets the first row
         zoom = fitWidthZoom()
         fitWidthActive = true
         invalidateCachesForZoom()
@@ -1312,6 +1453,9 @@ class CanvasState(
     companion object {
         const val MARGIN = 48.0
         const val GAP = 38.0
+
+        /** Gap (content px) between paginated rows, so a neighbour barely peeks mid-flip. */
+        const val ROW_FLIP_GAP = 96.0
         const val MIN_ZOOM = 0.12
         const val MAX_ZOOM = 16.0
         const val ZOOM_STEP = 1.25

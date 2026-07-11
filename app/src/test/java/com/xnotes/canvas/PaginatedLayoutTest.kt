@@ -1,0 +1,100 @@
+package com.xnotes.canvas
+
+import com.xnotes.core.FakeSurfaceFactory
+import com.xnotes.core.model.Document
+import com.xnotes.core.model.Rgba
+import com.xnotes.ui.theme.Palette
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** Guards the paginated (horizontal page-flip) layout, clamping and navigation. */
+class PaginatedLayoutTest {
+
+    private fun state(pages: Int, mode: ViewingMode = ViewingMode.SINGLE): CanvasState =
+        CanvasState(Document.blank(pages), FakeSurfaceFactory(), Palette.forAppearance("dark", Rgba(0, 230, 118))).apply {
+            viewingMode = mode
+            verticalScroll = false
+            viewportW = 1000
+            viewportH = 1400
+            relayout()
+        }
+
+    @Test fun rowsRunLeftToRight() {
+        val st = state(3)
+        assertEquals(st.pageRects[0].top, st.pageRects[1].top, 1e-9)
+        assertTrue(st.pageRects[1].left > st.pageRects[0].right)
+        assertTrue(st.pageRects[2].left > st.pageRects[1].right)
+        val h = st.document.pages[0].height
+        assertEquals(h + 2 * CanvasState.MARGIN, st.contentH, 1e-9)
+    }
+
+    @Test fun doubleSpreadsFlipAsOneUnit() {
+        val st = state(4, ViewingMode.DOUBLE)
+        // Pages of a spread sit GAP apart; the next spread sits a flip-gap away.
+        assertEquals(st.pageRects[0].right + CanvasState.GAP, st.pageRects[1].left, 1e-9)
+        assertEquals(st.pageRects[1].right + CanvasState.ROW_FLIP_GAP, st.pageRects[2].left, 1e-9)
+    }
+
+    @Test fun clampConfinesScrollToTheCurrentRow() {
+        val st = state(3)
+        st.zoom = 1.0
+        st.currentRow = 0
+        st.scrollX = 1e9
+        st.clampScroll()
+        val rb0 = st.rowBounds(st.rowRanges()[0])
+        assertEquals((rb0.right + st.sideMargin) * st.zoom - st.viewportW, st.scrollX, 1e-6)
+
+        st.currentRow = 1
+        st.scrollX = -1e9
+        st.clampScroll()
+        val rb1 = st.rowBounds(st.rowRanges()[1])
+        assertEquals((rb1.left - st.sideMargin) * st.zoom, st.scrollX, 1e-6)
+    }
+
+    @Test fun goToPageJumpsTheWindowToTheRow() {
+        val st = state(5)
+        st.zoom = 1.0
+        st.goToPage(3)
+        assertEquals(3, st.currentRow)
+        val t = st.rowTargetScroll(3)
+        assertEquals(t.x, st.scrollX, 1e-6)
+        assertEquals(t.y, st.scrollY, 1e-6)
+        assertEquals(3, st.currentPageIndex())
+    }
+
+    @Test fun fitWidthFitsTheCurrentRow() {
+        val st = state(3)
+        st.currentRow = 1
+        val rowW = st.rowBounds(st.rowRanges()[1]).w + 2 * st.sideMargin
+        assertEquals((st.viewportW / rowW).coerceIn(CanvasState.MIN_ZOOM, CanvasState.MAX_ZOOM), st.fitWidthZoom(), 1e-9)
+    }
+
+    @Test fun setViewRestoresTheRowFromScroll() {
+        val st = state(6)
+        val t = st.rowTargetScroll(4)
+        st.setView(1.0, t.x, t.y)
+        assertEquals(4, st.currentRow)
+    }
+
+    @Test fun atRowEdgeDetectsTheBoundaries() {
+        val st = state(3)
+        st.zoom = 1.0
+        st.currentRow = 1
+        st.scrollX = -1e9
+        st.clampScroll()
+        assertTrue(st.atRowEdge(next = false))
+        st.scrollX = 1e9
+        st.clampScroll()
+        assertTrue(st.atRowEdge(next = true))
+    }
+
+    @Test fun flipOffsetShiftsTheOrigin() {
+        val st = state(2)
+        st.zoom = 1.0
+        st.clampScroll()
+        val before = st.origin().x
+        st.flipOffsetX = 120.0
+        assertEquals(before - 120.0, st.origin().x, 1e-9)
+    }
+}

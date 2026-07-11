@@ -225,6 +225,15 @@ class InteractionController(
     private var lastOverscrollMs = 0L
     private val overscrollFrame = Choreographer.FrameCallback { frameTimeNanos -> stepOverscrollSettle(frameTimeNanos) }
 
+    // PAGE FLIP (paginated mode): the ~200ms slide between rows / the edge-pull spring-back.
+    private var flipAnimating = false
+    private var flipStartMs = 0L
+    private var flipFromX = 0.0
+    private var flipFromY = 0.0
+    private var flipToX = 0.0
+    private var flipToY = 0.0
+    private val flipFrame = Choreographer.FrameCallback { frameTimeNanos -> stepFlip(frameTimeNanos) }
+
     // PINCH
     private var pinchInitDist = 1.0
     private var pinchInitZoom = 1.0
@@ -508,6 +517,7 @@ class InteractionController(
         if (hoverActionTool != null) endHoverAction() // a hovering side-button gesture yields to contact
         downStoppedFling = flinging // captured before stopping: a tap that only halts a glide must not dismiss
         stopFling() // a new touch halts any in-progress glide
+        stopFlip() // a paginated slide lands where it is; the grab takes over
         stopOverscrollSettle() // ...and lets a re-grab take over the elastic mid-spring
         panMayCommitText = false // a fresh gesture; the editing branch below re-arms it if it applies
         val toolType = e.getToolType(0)
@@ -711,6 +721,7 @@ class InteractionController(
                     when {
                         tap -> commitTextEdit(restoreTool = true)
                         state.overscrollY > 0.0 -> releaseOverscroll()
+                        !state.verticalScroll -> endPanPaginated()
                         else -> startFling(panVel)
                     }
                 } else {
@@ -721,6 +732,7 @@ class InteractionController(
                         linkHandled -> Unit
                         state.overscrollY > 0.0 -> releaseOverscroll()
                         tap && hasSelection && selectionBoundsContent()?.contains(content) != true -> clearSelection()
+                        !state.verticalScroll -> endPanPaginated()
                         else -> startFling(panVel)
                     }
                 }
@@ -2113,6 +2125,13 @@ class InteractionController(
         trackVelocity(vx, vy)
         val dx = -(vx - lastPan.x)
         var dy = -(vy - lastPan.y)
+        if (!state.verticalScroll) {
+            extendPanPaginated(dx, dy)
+            lastPan = Pt(vx, vy)
+            onViewChanged()
+            requestRender()
+            return
+        }
         // While the bottom elastic is stretched, finger motion works the elastic first (rubber-band)
         // rather than the scroll, so pulling back relaxes the stretch before the document scrolls.
         if (state.overscrollY > 0.0) {
@@ -2146,6 +2165,103 @@ class InteractionController(
         val past = state.overscrollY >= OVERSCROLL_TRIGGER
         if (past && !overscrollArmed) onHaptic()
         overscrollArmed = past
+    }
+
+    // --- paginated page flip ---
+
+    /**
+     * Paginated pan: pan freely inside the current row (the clamp pins the window to it);
+     * whatever the clamp rejects horizontally works the edge-pull elastic instead, sliding
+     * the neighbouring row into view. Relaxing motion unwinds the pull before the scroll
+     * moves again, exactly like the bottom overscroll. No add-page elastic in this mode.
+     */
+    private fun extendPanPaginated(dx0: Double, dy: Double) {
+        var dx = dx0
+        val pull = state.flipOffsetX
+        if (pull > 0.0 && dx < 0.0 || pull < 0.0 && dx > 0.0) {
+            val relaxed = pull + dx * FLIP_RESIST
+            if (relaxed * pull <= 0.0) { // crossed zero: the leftover motion scrolls
+                state.flipOffsetX = 0.0
+                dx += pull / FLIP_RESIST
+            } else {
+                state.flipOffsetX = relaxed
+                dx = 0.0
+            }
+        }
+        val beforeX = state.scrollX
+        state.scrollBy(dx, dy)
+        val leftoverX = dx - (state.scrollX - beforeX)
+        if (leftoverX != 0.0) {
+            val cap = FLIP_MAX_FRACTION * state.viewportW
+            val armedBefore = abs(state.flipOffsetX) >= FLIP_TRIGGER
+            state.flipOffsetX = (state.flipOffsetX + leftoverX * FLIP_RESIST).coerceIn(-cap, cap)
+            if (!armedBefore && abs(state.flipOffsetX) >= FLIP_TRIGGER) onHaptic()
+        }
+    }
+
+    /** Decide what a lifted paginated pan does: flip, spring the pull back, or glide in-row. */
+    private fun endPanPaginated() {
+        val rows = state.rowRanges().size
+        val pull = state.flipOffsetX
+        when {
+            pull >= FLIP_TRIGGER && state.currentRow < rows - 1 -> animateFlipTo(state.currentRow + 1)
+            pull <= -FLIP_TRIGGER && state.currentRow > 0 -> animateFlipTo(state.currentRow - 1)
+            panVel.x <= -FLIP_FLING_VEL && state.atRowEdge(next = true) && state.currentRow < rows - 1 ->
+                animateFlipTo(state.currentRow + 1)
+            panVel.x >= FLIP_FLING_VEL && state.atRowEdge(next = false) && state.currentRow > 0 ->
+                animateFlipTo(state.currentRow - 1)
+            pull != 0.0 -> animateFlipTo(state.currentRow) // not far enough: spring back in place
+            else -> startFling(panVel)
+        }
+    }
+
+    /**
+     * Slide to [rowIndex] (or spring back to the current row): fold the visual edge-pull into
+     * the scroll, retarget the scroll window, and ease scroll toward the row's landing spot
+     * ([CanvasState.rowTargetScroll] — zoom kept, top-aligned) over [FLIP_MS].
+     */
+    private fun animateFlipTo(rowIndex: Int) {
+        stopFling()
+        val springBack = rowIndex == state.currentRow
+        state.scrollX += state.flipOffsetX // keep the on-screen position; the offset becomes scroll
+        state.flipOffsetX = 0.0
+        state.currentRow = rowIndex.coerceIn(0, (state.rowRanges().size - 1).coerceAtLeast(0))
+        flipFromX = state.scrollX
+        flipFromY = state.scrollY
+        // A real flip lands at the new row's top (zoom kept); a spring-back just returns to
+        // the nearest valid position inside the current row's window.
+        val target = if (springBack) {
+            state.rowClampedScroll(state.currentRow, state.scrollX, state.scrollY)
+        } else {
+            state.rowTargetScroll(state.currentRow)
+        }
+        flipToX = target.x
+        flipToY = target.y
+        flipAnimating = true
+        flipStartMs = System.nanoTime() / 1_000_000L
+        choreographer.postFrameCallback(flipFrame)
+    }
+
+    private fun stopFlip() {
+        if (!flipAnimating) return
+        flipAnimating = false
+        state.clampScroll()
+    }
+
+    private fun stepFlip(frameTimeNanos: Long) {
+        if (!flipAnimating) return
+        val t = ((frameTimeNanos / 1_000_000L - flipStartMs).toDouble() / FLIP_MS).coerceIn(0.0, 1.0)
+        val e = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t) // ease-out cubic
+        state.scrollX = flipFromX + (flipToX - flipFromX) * e
+        state.scrollY = flipFromY + (flipToY - flipFromY) * e
+        onViewChanged()
+        requestRender()
+        if (t >= 1.0) {
+            flipAnimating = false
+            state.clampScroll()
+        } else {
+            choreographer.postFrameCallback(flipFrame)
+        }
     }
 
     // --- inertial fling ---
@@ -2273,6 +2389,16 @@ class InteractionController(
         state.overscrollY = 0.0
     }
 
+    /** Fold any paginated edge-pull back into the (clamped) scroll, with no animation. */
+    private fun clearFlipPull() {
+        stopFlip()
+        if (state.flipOffsetX != 0.0) {
+            state.scrollX += state.flipOffsetX
+            state.flipOffsetX = 0.0
+            state.clampScroll()
+        }
+    }
+
     /**
      * Drop any in-flight scroll/zoom physics and partial gesture so the previous document's fling,
      * elastic stretch or half-finished pan can't bleed into a freshly opened one. The editor calls
@@ -2281,6 +2407,8 @@ class InteractionController(
      */
     fun resetGestureState() {
         stopFling()
+        stopFlip()
+        state.flipOffsetX = 0.0
         clearOverscroll()
         cancelDwell()
         clearFading()
@@ -2317,6 +2445,7 @@ class InteractionController(
         lassoPoints.clear()
         if (mode == PointerMode.SHOT) clearScreenshot() // a second finger turns the drag into a zoom
         clearOverscroll() // a second finger ends any bottom-pull; the elastic snaps away
+        clearFlipPull() // ...and any paginated edge-pull folds back into the scroll
         mode = PointerMode.PINCH
         val a = Pt(e.getX(0).toDouble(), e.getY(0).toDouble())
         val b = Pt(e.getX(1).toDouble(), e.getY(1).toDouble())
@@ -2375,6 +2504,7 @@ class InteractionController(
         strokeDismissedSelection = false
         panMayCommitText = false
         stopFling()
+        clearFlipPull()
         clearOverscroll()
         liveStroke = null
         strokePageIndex = null
@@ -2812,5 +2942,12 @@ class InteractionController(
         const val OVERSCROLL_MAX = 320.0 // hard cap on the visible stretch (viewport px)
         const val OVERSCROLL_TRIGGER = 250.0 // stretch at which releasing appends a page
         const val OVERSCROLL_SPRING = 14.0 // spring-back rate toward rest (1/s; higher = snappier)
+
+        // Paginated page-flip tuning.
+        const val FLIP_RESIST = 0.55 // fraction of past-edge finger travel that becomes pull
+        const val FLIP_TRIGGER = 90.0 // pull (viewport px) at which releasing flips the page
+        const val FLIP_FLING_VEL = 900.0 // finger velocity (viewport px/s) that flips from the edge
+        const val FLIP_MAX_FRACTION = 0.6 // pull cap, as a fraction of the viewport width
+        const val FLIP_MS = 220.0 // slide animation duration
     }
 }
