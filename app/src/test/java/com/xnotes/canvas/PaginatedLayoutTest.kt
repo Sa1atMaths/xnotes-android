@@ -118,29 +118,44 @@ class PaginatedLayoutTest {
         assertEquals(2..3, st.drawablePageRange())
     }
 
-    @Test fun slideShowsOnlyTheTransitionPair() {
+    @Test fun edgePullNeverRevealsTheNeighbour() {
         val st = state(5)
         st.zoom = 0.5
         st.goToPage(2)
-        // Pulling toward the next row shows exactly the pair, never the row beyond it.
-        st.flipOffsetX = 40.0
-        st.flipPartnerRow = 3
-        assertEquals(2..3, st.drawablePageRange())
-        // Pulling back the other way shows the previous pair only.
-        st.flipOffsetX = -40.0
-        st.flipPartnerRow = 1
-        assertEquals(1..2, st.drawablePageRange())
-        // Settled again: just the current row.
-        st.flipOffsetX = 0.0
-        st.flipPartnerRow = -1
+        // The pull slides the current page against empty background; no neighbour joins.
+        st.flipOffsetX = 60.0
+        assertEquals(2..2, st.drawablePageRange())
+        st.flipOffsetX = -60.0
         assertEquals(2..2, st.drawablePageRange())
     }
 
-    @Test fun goToPageDropsAStalePartnerRow() {
+    @Test fun slideShowsOnlyTheOutgoingRow() {
         val st = state(5)
-        st.flipPartnerRow = 1
+        st.zoom = 0.5
+        st.goToPage(2)
+        // Mid-flip the controller retargets currentRow and marks the outgoing row solo:
+        // only the outgoing page draws until the slide settles.
+        st.currentRow = 3
+        st.flipSoloRow = 2
+        assertEquals(2..2, st.drawablePageRange())
+        // Settled: the incoming row appears.
+        st.flipSoloRow = -1
+        assertEquals(3..3, st.drawablePageRange())
+    }
+
+    @Test fun soloShowsTheWholeOutgoingSpreadInDoubleMode() {
+        val st = state(6, ViewingMode.DOUBLE)
+        st.goToPage(2) // spread 2-3 is row 1
+        st.currentRow = 2
+        st.flipSoloRow = 1
+        assertEquals(2..3, st.drawablePageRange())
+    }
+
+    @Test fun goToPageDropsAStaleSoloRow() {
+        val st = state(5)
+        st.flipSoloRow = 1
         st.goToPage(3)
-        assertEquals(-1, st.flipPartnerRow)
+        assertEquals(-1, st.flipSoloRow)
         assertEquals(3..3, st.drawablePageRange())
     }
 

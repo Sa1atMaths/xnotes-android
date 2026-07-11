@@ -2201,12 +2201,7 @@ class InteractionController(
             state.flipOffsetX = (state.flipOffsetX + leftoverX * FLIP_RESIST).coerceIn(-cap, cap)
             if (!armedBefore && abs(state.flipOffsetX) >= FLIP_TRIGGER) onHaptic()
         }
-        // Only the row the pull is revealing may join the current one on screen.
-        state.flipPartnerRow = when {
-            state.flipOffsetX > 0.0 -> state.currentRow + 1
-            state.flipOffsetX < 0.0 -> state.currentRow - 1
-            else -> -1
-        }
+        // The pull reveals only empty background; the neighbouring row never joins the screen.
     }
 
     /** Decide what a lifted paginated pan does: flip, spring the pull back, or glide in-row. */
@@ -2233,6 +2228,7 @@ class InteractionController(
     private fun animateFlipTo(rowIndex: Int) {
         stopFling()
         val springBack = rowIndex == state.currentRow
+        val outgoing = state.currentRow
         state.scrollX += state.flipOffsetX // keep the on-screen position; the offset becomes scroll
         state.flipOffsetX = 0.0
         state.currentRow = rowIndex.coerceIn(0, (state.rowRanges().size - 1).coerceAtLeast(0))
@@ -2247,13 +2243,9 @@ class InteractionController(
         }
         flipToX = target.x
         flipToY = target.y
-        // For the slide's lifetime only the row the view is leaving (or, springing back, the
-        // one that was peeking) may share the screen with the current row.
-        state.flipPartnerRow = when {
-            flipToX > flipFromX -> state.currentRow - 1
-            flipToX < flipFromX -> state.currentRow + 1
-            else -> -1
-        }
+        // While a real flip slides, only the outgoing row stays on screen; the incoming one
+        // appears when the slide settles. A spring-back never left its row.
+        state.flipSoloRow = if (springBack) -1 else outgoing
         flipAnimating = true
         flipStartMs = System.nanoTime() / 1_000_000L
         choreographer.postFrameCallback(flipFrame)
@@ -2262,7 +2254,7 @@ class InteractionController(
     private fun stopFlip() {
         if (!flipAnimating) return
         flipAnimating = false
-        state.flipPartnerRow = -1
+        state.flipSoloRow = -1
         state.clampScroll()
     }
 
@@ -2274,7 +2266,7 @@ class InteractionController(
         state.scrollY = flipFromY + (flipToY - flipFromY) * e
         if (t >= 1.0) {
             flipAnimating = false
-            state.flipPartnerRow = -1
+            state.flipSoloRow = -1
             state.clampScroll()
         } else {
             choreographer.postFrameCallback(flipFrame)
@@ -2416,7 +2408,7 @@ class InteractionController(
             state.flipOffsetX = 0.0
             state.clampScroll()
         }
-        state.flipPartnerRow = -1
+        state.flipSoloRow = -1
     }
 
     /**
@@ -2429,7 +2421,7 @@ class InteractionController(
         stopFling()
         stopFlip()
         state.flipOffsetX = 0.0
-        state.flipPartnerRow = -1
+        state.flipSoloRow = -1
         clearOverscroll()
         cancelDwell()
         clearFading()

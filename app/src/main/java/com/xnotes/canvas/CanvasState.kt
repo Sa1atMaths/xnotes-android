@@ -128,12 +128,12 @@ class CanvasState(
     var flipOffsetX: Double = 0.0
 
     /**
-     * The only other row allowed on screen while the paginated view slides between rows:
-     * the row peeking in under an edge pull, then the outgoing row during the flip
-     * animation. -1 when settled (only [currentRow] shows). Owned by the interaction
-     * layer, which sets it for exactly the transition's lifetime.
+     * While a paginated flip slides, the single row still allowed on screen: the OUTGOING
+     * one. The incoming row ([currentRow], already retargeted when the slide starts) stays
+     * hidden until the animation settles and this returns to -1. Owned by the interaction
+     * layer, which sets it for exactly the slide's lifetime.
      */
-    var flipPartnerRow: Int = -1
+    var flipSoloRow: Int = -1
 
     /**
      * Whole-file clockwise page rotation (0/90/180/270), applied by the view: pages lay
@@ -606,20 +606,19 @@ class CanvasState(
 
     /**
      * The pages the view may draw (and touch). Vertical mode shows everything the viewport
-     * reaches. The paginated view shows only [currentRow] once settled — zooming out must
-     * not creep the neighbouring rows into view — widened to exactly one partner row
-     * ([flipPartnerRow]) for the lifetime of a slide, so a flip shows the outgoing and
-     * incoming rows and never a third page beyond them.
+     * reaches. The paginated view shows exactly one row at any moment: [currentRow] when
+     * settled (zooming out must not creep the neighbouring rows into view), or the outgoing
+     * [flipSoloRow] while a flip slides — the incoming row only appears once the slide has
+     * settled. An edge pull just reveals empty background, never the neighbour.
      */
     fun drawablePageRange(): IntRange {
         val last = document.pages.lastIndex
         if (verticalScroll) return 0..last
         val rows = rowRanges()
         if (rows.isEmpty()) return 0..last
-        val cur = currentRow.coerceIn(0, rows.lastIndex)
-        val partner = flipPartnerRow
-        if (partner !in rows.indices || partner == cur) return rows[cur]
-        return min(rows[cur].first, rows[partner].first)..max(rows[cur].last, rows[partner].last)
+        val solo = flipSoloRow
+        if (solo in rows.indices) return rows[solo]
+        return rows[currentRow.coerceIn(0, rows.lastIndex)]
     }
 
     /** Index of the page whose rect contains a content-space point, or null. Hidden paginated
@@ -675,7 +674,7 @@ class CanvasState(
             // Paginated: jump the scroll window to the page's row and land at its top.
             currentRow = rowIndexOf(i)
             flipOffsetX = 0.0
-            flipPartnerRow = -1
+            flipSoloRow = -1
             val t = rowTargetScroll(currentRow)
             scrollX = t.x
             scrollY = t.y
