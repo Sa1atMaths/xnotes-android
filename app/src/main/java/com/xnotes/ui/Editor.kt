@@ -762,7 +762,7 @@ class Editor(context: Context) {
         }
         pdfSource?.onImagesProgress = { done, total ->
             view.post {
-                if (pdfSource != null && settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors) {
+                if (pdfSource != null && pdfKeepsImageColors()) {
                     refiningTotal = total
                     refiningDone = done
                     isRefiningPdf = done < total
@@ -833,8 +833,7 @@ class Editor(context: Context) {
                 val ry = (region.top * res).toInt()
                 val rw = kotlin.math.ceil(region.w * res).toInt()
                 val rh = kotlin.math.ceil(region.h * res).toInt()
-                val invert = settings.prefs.pdfDarkMode
-                src.renderRegion(pi, fullW, fullH, rx, ry, rw, rh, invert, keepImages = invert && settings.prefs.pdfKeepImageColors)?.let { bg ->
+                src.renderRegion(pi, fullW, fullH, rx, ry, rw, rh, pdfPageFilter())?.let { bg ->
                     renderer.drawRaster(
                         bg,
                         com.xnotes.core.geometry.Rect(region.left, region.top, region.w, region.h),
@@ -1014,7 +1013,7 @@ class Editor(context: Context) {
      */
     private fun startPdfRefine() {
         val src = pdfSource
-        if (src == null || !(settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors)) {
+        if (src == null || !pdfKeepsImageColors()) {
             isRefiningPdf = false
             refiningDone = 0
             refiningTotal = 0
@@ -1224,12 +1223,19 @@ class Editor(context: Context) {
     /** Apply edited preferences live and persist (used by the Preferences dialog). */
     fun applyPreferences(p: Preferences) {
         val marginChanged = p.sideMargin != settings.prefs.sideMargin
+        val pdfRenderChanged = p.pdfDarkMode != settings.prefs.pdfDarkMode ||
+            p.pdfKeepImageColors != settings.prefs.pdfKeepImageColors
         settings = settings.copy(prefs = p)
         fullscreen = p.startFullscreen ?: !deviceHasDisplayCutout // keep in sync (e.g. Reset to defaults)
         applyPagePrefsToState(p)
         republishFlow(invalidate = true) // re-bake flow colours (default text, code) for the new appearance
         state.invalidateAllCaches()
         startPdfRefine() // re-sweep / clear the hint if the dark-mode or keep-images preference toggled
+        if (pdfRenderChanged) {
+            // The effective PDF filter moved (it defaults from these prefs): stale thumbs must go.
+            if (evictPdfPageThumbnails()) pdfThumbTick++
+            currentUri?.let { invalidateThumb(it) }
+        }
         if (marginChanged) {
             state.fitWidth() // re-fit so the new side margin takes effect immediately
             refreshView()
@@ -1484,11 +1490,9 @@ class Editor(context: Context) {
         val pi = page.pdfPage
         if (src != null && pi != null) {
             // Pure consumer: never parses. Stamps real image colours only if the linear sweep has
-            // already found this page's locations, otherwise draws it inverted; the row re-renders
-            // un-inverted once the sweep reaches the page (see onImagesReady → pdfThumbTick).
-            val invert = settings.prefs.pdfDarkMode
-            val keep = invert && settings.prefs.pdfKeepImageColors
-            src.renderPage(pi, w, h, invert, keepImages = keep)?.let { bg ->
+            // already found this page's locations, otherwise draws it filtered; the row re-renders
+            // with real colours once the sweep reaches the page (see onImagesReady → pdfThumbTick).
+            src.renderPage(pi, w, h, pdfPageFilter())?.let { bg ->
                 r.drawRaster(bg, com.xnotes.core.geometry.Rect(0.0, 0.0, page.width, page.height))
                 bg.recycle()
             }
@@ -1672,8 +1676,9 @@ class Editor(context: Context) {
 
     /** The first page of a loaded document rendered to a [sidePx]×[sidePx] tile, cropped to the page
      *  top (the square surface clips the overflow). Uses [itemsSnapshot] because the close-hook renders
-     *  the live document off-thread, which a main-thread edit can mutate underneath it. */
-    private fun renderDocThumbnailSquare(doc: Document, sidePx: Int): android.graphics.Bitmap? {
+     *  the live document off-thread, which a main-thread edit can mutate underneath it. [filter] is the
+     *  note's own PDF colour filter (its per-note View settings resolved against the global defaults). */
+    private fun renderDocThumbnailSquare(doc: Document, sidePx: Int, filter: com.xnotes.canvas.PdfPageFilter): android.graphics.Bitmap? {
         val page = doc.pages.firstOrNull() ?: return null
         val side = sidePx.coerceAtLeast(1)
         val scale = side.toDouble() / page.width
@@ -1686,9 +1691,8 @@ class Editor(context: Context) {
             runCatching {
                 com.xnotes.platform.PdfSource.create(appContext, file)?.let { src ->
                     page.pdfPage?.let { pi ->
-                        val keep = settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors
-                        if (keep) src.ensureImageRects(pi)
-                        src.renderPage(pi, side, side, settings.prefs.pdfDarkMode, keepImages = keep)?.let { bg ->
+                        if (filter.stampImages) src.ensureImageRects(pi)
+                        src.renderPage(pi, side, side, filter)?.let { bg ->
                             r.drawRaster(bg, Rect(0.0, 0.0, page.width, page.height))
                             bg.recycle()
                         }
@@ -1731,7 +1735,7 @@ class Editor(context: Context) {
                     appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use { codec.read(it, pdfDir, imageDir) }
                 }.getOrNull() ?: return@withContext null
                 try {
-                    renderDocThumbnailSquare(doc, tilePx)?.also { thumbCache.store(uri, it) } ?: return@withContext null
+                    renderDocThumbnailSquare(doc, tilePx, pdfPageFilterFor(viewSettingsFor(uri)))?.also { thumbCache.store(uri, it) } ?: return@withContext null
                 } finally {
                     doc.pdfFile?.delete() // transient doc loaded just for a thumbnail; drop its extracts
                     deleteImageTemps(doc)
@@ -1765,9 +1769,10 @@ class Editor(context: Context) {
      */
     private suspend fun regenerateClosedNoteThumb(uri: String) {
         val doc = state.document
+        val filter = pdfPageFilter() // the closing note's own filter, captured before any swap
         withContext(thumbDispatcher) {
             if (state.document !== doc) return@withContext // a new note was opened; don't cache stale pixels
-            val bmp = runCatching { renderDocThumbnailSquare(doc, tilePx) }.getOrNull() ?: return@withContext
+            val bmp = runCatching { renderDocThumbnailSquare(doc, tilePx, filter) }.getOrNull() ?: return@withContext
             thumbCache.store(uri, bmp)
             val img = bmp.asImageBitmap()
             synchronized(noteThumbs) { noteThumbs.put(uri, img) }
@@ -2315,7 +2320,45 @@ class Editor(context: Context) {
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
+        val filterChanged = prev.contrast != new.contrast || prev.invert != new.invert ||
+            prev.brightness != new.brightness || prev.sepia != new.sepia
+        if (filterChanged) {
+            state.invalidateAllBackgrounds()
+            if (evictPdfPageThumbnails()) pdfThumbTick++
+            currentUri?.let { invalidateThumb(it) } // the recents tile re-renders with the new filter
+            startPdfRefine() // an invert override can newly require the image-box sweep
+        }
         view.requestRender()
+    }
+
+    /** The open note's PDF colour filter (View-menu values resolved against the global defaults). */
+    private fun pdfPageFilter(): com.xnotes.canvas.PdfPageFilter = pdfPageFilterFor(viewSettings)
+
+    private fun pdfPageFilterFor(vs: com.xnotes.canvas.ViewSettings): com.xnotes.canvas.PdfPageFilter =
+        com.xnotes.canvas.PdfPageFilter.of(
+            vs.contrast,
+            vs.effectiveInvert(settings.prefs.pdfDarkMode),
+            vs.brightness,
+            vs.sepia,
+            keepImages = settings.prefs.pdfKeepImageColors,
+        )
+
+    /** A note's View-menu settings by URI: the open note's live value, a folder note's
+     *  remembered one, else the defaults. */
+    private fun viewSettingsFor(uri: String?): com.xnotes.canvas.ViewSettings = when {
+        uri != null && uri == currentUri -> viewSettings
+        else -> viewKey(uri)?.let { viewStates.get(it)?.settings } ?: com.xnotes.canvas.ViewSettings()
+    }
+
+    /** True when the open note's PDF render stamps image colours (so image boxes are needed). */
+    private fun pdfKeepsImageColors(): Boolean =
+        settings.prefs.pdfKeepImageColors && viewSettings.effectiveInvert(settings.prefs.pdfDarkMode) > 0
+
+    /** Drop every cached side-panel thumbnail backed by a PDF page (the filter changed). */
+    private fun evictPdfPageThumbnails(): Boolean = synchronized(pageThumbs) {
+        var evicted = false
+        state.document.pages.forEach { if (it.pdfPage != null && pageThumbs.remove(it) != null) evicted = true }
+        evicted
     }
 
     /**
@@ -2916,7 +2959,7 @@ class Editor(context: Context) {
         val page = pageAt(index) ?: return null
         // One-shot export: find this page's image locations now so the PNG is correct regardless of how
         // far the background sweep has reached (renderThumbnail itself is a pure consumer).
-        if (settings.prefs.pdfDarkMode && settings.prefs.pdfKeepImageColors) {
+        if (pdfKeepsImageColors()) {
             page.pdfPage?.let { pi -> pdfSource?.ensureImageRects(pi) }
         }
         val bmp = renderThumbnail(page, page.width.toInt().coerceAtLeast(1)) ?: return null

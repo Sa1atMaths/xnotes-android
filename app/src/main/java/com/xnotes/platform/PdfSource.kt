@@ -26,6 +26,7 @@ import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImage
+import com.xnotes.canvas.PdfPageFilter
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -43,14 +44,16 @@ data class PdfLink(val frac: RectF, val url: String?, val destPage: Int?)
 /**
  * Reads and rasterizes a PDF via the framework [PdfRenderer] (PAL §14). Pages
  * are reported in PostScript points and rendered on demand into ARGB surfaces;
- * dark mode inverts the rendered pixels.
+ * a [PdfPageFilter] applies the note's colour filters (invert/contrast/…) to
+ * the rendered pixels.
  *
- * When dark mode is on, [renderPage]/[renderRegion] can optionally keep embedded
- * images in their original colours (`keepImages`): the whole page is inverted as
- * usual, then the original (un-inverted) pixels are re-stamped over each image's
- * bounding box. Image boxes come from parsing the PDF content stream with
- * PdfBox-Android — used *only* to read placements, never to rasterize. PdfBox is
- * loaded lazily on first use, so when the feature is off it is never touched.
+ * When the filter inverts, [renderPage]/[renderRegion] can keep embedded images
+ * in their original colours ([PdfPageFilter.stampImages]): the whole page is
+ * filtered as usual, then the original pixels — through the filter chain minus
+ * its invert stage — are re-stamped over each image's bounding box. Image boxes
+ * come from parsing the PDF content stream with PdfBox-Android — used *only* to
+ * read placements, never to rasterize. PdfBox is loaded lazily on first use, so
+ * when the feature is off it is never touched.
  */
 class PdfSource private constructor(
     private val appContext: Context,
@@ -143,7 +146,7 @@ class PdfSource private constructor(
     }
 
     @Synchronized
-    fun renderPage(index: Int, widthPx: Int, heightPx: Int, invert: Boolean, keepImages: Boolean = false): AndroidRasterSurface? {
+    fun renderPage(index: Int, widthPx: Int, heightPx: Int, filter: PdfPageFilter = PdfPageFilter.NONE): AndroidRasterSurface? {
         if (index !in 0 until renderer.pageCount) return null
         val w = widthPx.coerceIn(1, MAX_DIM)
         val h = heightPx.coerceIn(1, MAX_DIM)
@@ -152,13 +155,15 @@ class PdfSource private constructor(
         val page = renderer.openPage(index)
         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         page.close()
-        if (!invert) return AndroidRasterSurface(bmp)
+        val m = filter.pageMatrix ?: return AndroidRasterSurface(bmp)
 
-        val inverted = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        Canvas(inverted).drawBitmap(bmp, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(INVERT) })
-        if (keepImages) keepImageColors(index, inverted, bmp, fullWpx = w, fullHpx = h, offsetXpx = 0, offsetYpx = 0)
+        val filtered = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        Canvas(filtered).drawBitmap(bmp, 0f, 0f, matrixPaint(m))
+        if (filter.stampImages) {
+            keepImageColors(index, filtered, bmp, filter.imageMatrix, fullWpx = w, fullHpx = h, offsetXpx = 0, offsetYpx = 0)
+        }
         bmp.recycle()
-        return AndroidRasterSurface(inverted)
+        return AndroidRasterSurface(filtered)
     }
 
     /**
@@ -177,8 +182,7 @@ class PdfSource private constructor(
         regionTopPx: Int,
         regionWpx: Int,
         regionHpx: Int,
-        invert: Boolean,
-        keepImages: Boolean = false,
+        filter: PdfPageFilter = PdfPageFilter.NONE,
     ): AndroidRasterSurface? {
         if (index !in 0 until renderer.pageCount) return null
         val w = regionWpx.coerceIn(1, MAX_DIM)
@@ -192,49 +196,57 @@ class PdfSource private constructor(
         }
         page.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         page.close()
-        if (!invert) return AndroidRasterSurface(bmp)
+        val pm = filter.pageMatrix ?: return AndroidRasterSurface(bmp)
 
-        val inverted = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        Canvas(inverted).drawBitmap(bmp, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(INVERT) })
-        if (keepImages) {
-            keepImageColors(index, inverted, bmp, fullWpx, fullHpx, offsetXpx = regionLeftPx, offsetYpx = regionTopPx)
+        val filtered = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        Canvas(filtered).drawBitmap(bmp, 0f, 0f, matrixPaint(pm))
+        if (filter.stampImages) {
+            keepImageColors(index, filtered, bmp, filter.imageMatrix, fullWpx, fullHpx, offsetXpx = regionLeftPx, offsetYpx = regionTopPx)
         }
         bmp.recycle()
-        return AndroidRasterSurface(inverted)
+        return AndroidRasterSurface(filtered)
+    }
+
+    /** A bitmap paint applying colour matrix [m], or a plain paint when [m] is null. */
+    private fun matrixPaint(m: FloatArray?): Paint = Paint().apply {
+        if (m != null) colorFilter = ColorMatrixColorFilter(ColorMatrix(m))
     }
 
     /**
-     * Keep embedded images in their real colours over the inverted page: a pure consumer of the
+     * Keep embedded images in their real colours over the filtered page: a pure consumer of the
      * parsed-locations cache. Stamps when [index]'s image rects are already parsed; otherwise leaves
-     * the images inverted for this frame and parses nothing — only the linear [prepAllImages] sweep
+     * the images filtered for this frame and parses nothing — only the linear [prepAllImages] sweep
      * finds locations. The page snaps to colour on the re-render once the sweep reaches it and
      * [onImagesReady] fires. One-shot callers that must be correct now (PNG export, recents preview)
      * call [ensureImageRects] first, so the rects are already cached here and this stamps in one pass.
      */
     private fun keepImageColors(
         index: Int,
-        inverted: Bitmap,
+        filtered: Bitmap,
         original: Bitmap,
+        imageMatrix: FloatArray?,
         fullWpx: Int,
         fullHpx: Int,
         offsetXpx: Int,
         offsetYpx: Int,
     ) {
         if (imageRects.containsKey(index)) {
-            stampOriginalImages(inverted, original, index, fullWpx, fullHpx, offsetXpx, offsetYpx)
+            stampOriginalImages(filtered, original, imageMatrix, index, fullWpx, fullHpx, offsetXpx, offsetYpx)
         }
-        // Not parsed yet: leave the images inverted; the sweep will fill it in and trigger a re-render.
+        // Not parsed yet: leave the images filtered; the sweep will fill it in and trigger a re-render.
     }
 
     /**
-     * Copy the un-inverted [original] pixels back over each image box of [index] so embedded
-     * images keep their real colours. Boxes are page fractions; they map onto the full page at
-     * [fullWpx] × [fullHpx], then are shifted by ([offsetXpx], [offsetYpx]) into this bitmap's
-     * space and clipped to it (so it works for both whole-page and region renders).
+     * Copy the [original] pixels — through [imageMatrix], the filter chain minus its invert
+     * stage (null = raw) — back over each image box of [index] so embedded images keep their
+     * real colours. Boxes are page fractions; they map onto the full page at [fullWpx] ×
+     * [fullHpx], then are shifted by ([offsetXpx], [offsetYpx]) into this bitmap's space and
+     * clipped to it (so it works for both whole-page and region renders).
      */
     private fun stampOriginalImages(
-        inverted: Bitmap,
+        filtered: Bitmap,
         original: Bitmap,
+        imageMatrix: FloatArray?,
         index: Int,
         fullWpx: Int,
         fullHpx: Int,
@@ -243,17 +255,18 @@ class PdfSource private constructor(
     ) {
         val rects = imageRects[index] ?: return // not parsed yet — caller schedules prep; skip stamping
         if (rects.isEmpty()) return
-        val w = inverted.width
-        val h = inverted.height
-        val canvas = Canvas(inverted)
+        val w = filtered.width
+        val h = filtered.height
+        val canvas = Canvas(filtered)
+        val paint = matrixPaint(imageMatrix)
         for (f in rects) {
             val left = (Math.round(f.left * fullWpx) - offsetXpx).coerceIn(0, w)
             val top = (Math.round(f.top * fullHpx) - offsetYpx).coerceIn(0, h)
             val right = (Math.round(f.right * fullWpx) - offsetXpx).coerceIn(0, w)
             val bottom = (Math.round(f.bottom * fullHpx) - offsetYpx).coerceIn(0, h)
             if (right > left && bottom > top) {
-                val rect = Rect(left, top, right, bottom) // src == dst: copy 1:1 over the inverted pixels
-                canvas.drawBitmap(original, rect, rect, null)
+                val rect = Rect(left, top, right, bottom) // src == dst: stamp 1:1 over the filtered pixels
+                canvas.drawBitmap(original, rect, rect, paint)
             }
         }
     }
@@ -591,15 +604,6 @@ class PdfSource private constructor(
 
         /** Cap on PdfBox's in-RAM scratch while parsing image boxes; overflow spills to temp files. */
         private const val SCRATCH_MAIN_MEM_BYTES = 32L * 1024 * 1024
-
-        private val INVERT = ColorMatrix(
-            floatArrayOf(
-                -1f, 0f, 0f, 0f, 255f,
-                0f, -1f, 0f, 0f, 255f,
-                0f, 0f, -1f, 0f, 255f,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        )
 
         /**
          * Opens [file] as a PDF (memory-mapped, never read whole into RAM), or null if it cannot be

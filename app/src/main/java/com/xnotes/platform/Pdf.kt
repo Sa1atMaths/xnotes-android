@@ -276,7 +276,7 @@ object PdfExporter {
         canvas.drawColor(paperColor(page).toArgb())
         val srcIdx = page.pdfPage
         if (srcIdx != null && source != null) {
-            val bg = source.renderPage(srcIdx, wPx, hPx, invert = false)
+            val bg = source.renderPage(srcIdx, wPx, hPx)
             if (bg != null) {
                 canvas.drawBitmap(bg.bitmap, null, RectF(0f, 0f, wPx.toFloat(), hPx.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
                 bg.recycle()
@@ -407,7 +407,7 @@ object PdfExporter {
 
                 val src = page.pdfPage
                 if (src != null && source != null) {
-                    val bg = source.renderPage(src, page.width.toInt(), page.height.toInt(), invert = false)
+                    val bg = source.renderPage(src, page.width.toInt(), page.height.toInt())
                     if (bg != null) {
                         canvas.drawBitmap(bg.bitmap, null, RectF(0f, 0f, page.width.toFloat(), page.height.toFloat()), bitmapPaint)
                         bg.recycle()
