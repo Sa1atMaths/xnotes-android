@@ -46,4 +46,6 @@ endforeach()
 
 # No build-id note: it hashes the pre-strip output (build paths included), so it
 # varies across build hosts and breaks F-Droid's reproducible-build verification.
-target_link_options(xnotests PRIVATE -Wl,--gc-sections -Wl,--build-id=none)
+# max-page-size=16384 keeps the lib loadable on 16 KB page-size devices.
+target_link_options(xnotests PRIVATE -Wl,--gc-sections -Wl,--build-id=none
+    -Wl,-z,max-page-size=16384)
