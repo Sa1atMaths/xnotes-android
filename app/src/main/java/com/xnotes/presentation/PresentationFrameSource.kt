@@ -84,9 +84,11 @@ class PresentationFrameSource(
         val h = ceil(vh * s).toInt().coerceAtLeast(1)
         val origin = state.origin()
         val visible = state.visibleContentRect()
+        val drawable = state.drawablePageRange() // mirror the canvas: hidden paginated neighbours stay out
         val draws = ArrayList<PageDraw>()
         val presented = HashSet<Page>()
         for (i in state.document.pages.indices) {
+            if (i !in drawable) continue
             val pr = state.pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             val page = state.document.pages[i]

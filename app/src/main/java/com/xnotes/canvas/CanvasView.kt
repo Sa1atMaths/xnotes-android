@@ -438,8 +438,11 @@ class CanvasView @JvmOverloads constructor(
         val visible = st.visibleContentRect()
         val border = Pen(st.palette.paperBorder, 1.0, cosmetic = true)
         val cachedPages = HashSet<Page>()
+        // Paginated mode shows only the current row when settled (neighbours join mid-flip).
+        val drawable = st.drawablePageRange()
 
         for (i in st.document.pages.indices) {
+            if (i !in drawable) continue
             val pr = st.pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             val page = st.document.pages[i]
@@ -502,6 +505,7 @@ class CanvasView @JvmOverloads constructor(
                         r.translate(origin.x, origin.y)
                         r.scale(st.zoom, st.zoom)
                         for (i in st.document.pages.indices) {
+                            if (i !in drawable) continue
                             val pr = st.pageRects.getOrNull(i) ?: continue
                             if (!pr.intersects(visible)) continue
                             val page = st.document.pages[i]
@@ -536,6 +540,7 @@ class CanvasView @JvmOverloads constructor(
             r.translate(origin.x, origin.y)
             r.scale(st.zoom, st.zoom)
             for (i in st.document.pages.indices) {
+                if (i !in drawable) continue
                 val pr = st.pageRects.getOrNull(i) ?: continue
                 if (!pr.intersects(visible)) continue
                 val page = st.document.pages[i]

@@ -1011,7 +1011,9 @@ class InteractionController(
         val eraserBox = Rect(content.x - radius, content.y - radius, radius * 2, radius * 2)
         val area = areaErase()
         var changed = false
+        val drawable = state.drawablePageRange()
         for (pi in state.document.pages.indices) {
+            if (pi !in drawable) continue // a hidden paginated neighbour can't be erased
             val pr = state.pageRects.getOrNull(pi) ?: continue
             if (!pr.intersects(eraserBox)) continue // skip pages the eraser isn't over
             val page = state.document.pages[pi]
@@ -1229,10 +1231,11 @@ class InteractionController(
 
     private fun endBand() {
         bandRect?.let { band ->
+            val drawable = state.drawablePageRange()
             setSelection(
                 SelectionMath.bandMembers(state.document.pages, state.pageRects, band) { i, r ->
                     state.fromPageSpaceRect(i, r)
-                },
+                }.filter { it.pageIndex in drawable }, // hidden paginated neighbours don't select
             )
         }
         bandRect = null
@@ -1264,9 +1267,10 @@ class InteractionController(
 
     private fun endLasso() {
         if (lassoPoints.size >= 3) {
+            val drawable = state.drawablePageRange()
             val members = SelectionMath.lassoMembers(state.document.pages, state.pageRects, lassoPoints) { i, p ->
                 state.fromPageSpace(i, p)
-            }
+            }.filter { it.pageIndex in drawable } // hidden paginated neighbours don't select
             if (members.isEmpty()) {
                 clearSelection()
             } else {

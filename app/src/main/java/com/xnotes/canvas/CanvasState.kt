@@ -596,9 +596,28 @@ class CanvasState(
 
     fun paperColor(page: Page): Rgba = effectivePageColor(page) ?: palette.paper
 
-    /** Index of the page whose rect contains a content-space point, or null. */
+    /**
+     * The pages the view may draw (and touch). Vertical mode shows everything the viewport
+     * reaches. The paginated view shows only [currentRow] once settled — zooming out must
+     * not creep the neighbouring rows into view — and widens to the adjacent rows only
+     * while the view is actually sliding between rows (edge pull / flip animation).
+     */
+    fun drawablePageRange(): IntRange {
+        val last = document.pages.lastIndex
+        if (verticalScroll) return 0..last
+        val rows = rowRanges()
+        if (rows.isEmpty()) return 0..last
+        val cur = currentRow.coerceIn(0, rows.lastIndex)
+        val settled = flipOffsetX == 0.0 && abs(scrollX - rowClampedScroll(cur, scrollX, scrollY).x) < 0.5
+        if (settled) return rows[cur]
+        return rows[(cur - 1).coerceAtLeast(0)].first..rows[(cur + 1).coerceAtMost(rows.lastIndex)].last
+    }
+
+    /** Index of the page whose rect contains a content-space point, or null. Hidden paginated
+     *  neighbours never hit, so ink/erases/taps can't land on a page that isn't shown. */
     fun pageIndexAtContent(p: Pt): Int? {
-        for (i in pageRects.indices) if (pageRects[i].contains(p)) return i
+        val drawable = drawablePageRange()
+        for (i in pageRects.indices) if (i in drawable && pageRects[i].contains(p)) return i
         return null
     }
 
@@ -1194,9 +1213,11 @@ class CanvasState(
      */
     fun visiblePageRange(): IntRange? {
         val visible = visibleContentRect()
+        val drawable = drawablePageRange()
         var first = -1
         var last = -1
         for (i in pageRects.indices) {
+            if (i !in drawable) continue
             val pr = pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             if (first < 0) first = i
@@ -1270,8 +1291,10 @@ class CanvasState(
         val visible = visibleFor(sx, sy, z)
         val bg = palette.bg
         // Snapshot the visible pages and their items on the UI thread.
+        val drawable = drawablePageRange()
         val draws = ArrayList<SharpPageSnap>()
         for (i in document.pages.indices) {
+            if (i !in drawable) continue
             val pr = pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             val page = document.pages[i]

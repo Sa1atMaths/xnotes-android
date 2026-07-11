@@ -97,4 +97,39 @@ class PaginatedLayoutTest {
         st.flipOffsetX = 120.0
         assertEquals(before - 120.0, st.origin().x, 1e-9)
     }
+
+    @Test fun settledViewShowsOnlyTheCurrentRow() {
+        val st = state(5)
+        // Zoom far out so every neighbour's rect would reach into the viewport.
+        st.zoom = 0.15
+        st.goToPage(2)
+        assertEquals(2..2, st.drawablePageRange())
+        assertEquals(2..2, st.visiblePageRange())
+        // A point inside a hidden neighbour's rect neither draws nor hit-tests.
+        val neighbour = st.pageRects[3].center
+        assertEquals(null, st.pageIndexAtContent(neighbour))
+        assertEquals(3, st.rowIndexOf(3)) // the rect itself is still laid out, just not shown
+    }
+
+    @Test fun settledDoubleShowsTheWholeSpread() {
+        val st = state(6, ViewingMode.DOUBLE)
+        st.zoom = 0.15
+        st.goToPage(2)
+        assertEquals(2..3, st.drawablePageRange())
+    }
+
+    @Test fun edgePullWidensToTheNeighbours() {
+        val st = state(5)
+        st.zoom = 0.5
+        st.goToPage(2)
+        st.flipOffsetX = 40.0
+        assertEquals(1..3, st.drawablePageRange())
+        st.flipOffsetX = 0.0
+        assertEquals(2..2, st.drawablePageRange())
+    }
+
+    @Test fun verticalModeDrawsEverything() {
+        val st = state(4).apply { verticalScroll = true; relayout() }
+        assertEquals(0..3, st.drawablePageRange())
+    }
 }

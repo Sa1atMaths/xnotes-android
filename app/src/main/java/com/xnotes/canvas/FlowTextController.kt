@@ -599,8 +599,10 @@ class FlowTextController(
     private fun pagePointAt(content: Pt): Pair<Int, Pt>? {
         var pi = state.pageIndexAtContent(content)
         if (pi == null) {
+            val drawable = state.drawablePageRange()
             var bestD = Double.MAX_VALUE
             for (i in state.pageRects.indices) {
+                if (i !in drawable) continue // never target a hidden paginated neighbour
                 val d = state.pageRects[i].distanceTo(content)
                 if (d < bestD) {
                     bestD = d
