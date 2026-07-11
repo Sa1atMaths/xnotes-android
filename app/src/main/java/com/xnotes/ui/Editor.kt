@@ -2348,10 +2348,14 @@ class Editor(context: Context) {
             state.rotationDeg = new.rotation
             state.verticalScroll = new.verticalScroll
             state.flipOffsetX = 0.0
+            if (new.verticalScroll) state.fitHeightActive = false // a paginated-only magnet
             state.relayout()
             if (state.didInitialFit) {
-                state.currentRow = state.rowIndexOf(cur) // paginated fit-width reads the row
-                if (state.fitWidthActive) state.zoom = state.fitWidthZoom()
+                state.currentRow = state.rowIndexOf(cur) // paginated fits read the row
+                when {
+                    state.fitWidthActive -> state.zoom = state.fitWidthZoom()
+                    state.fitHeightActive -> state.fitHeightZoom().takeIf { it > 0.0 }?.let { state.zoom = it }
+                }
                 state.invalidateCachesForZoom()
                 state.goToPage(cur)
                 refreshView()

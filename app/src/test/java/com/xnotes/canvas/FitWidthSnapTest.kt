@@ -24,7 +24,7 @@ class FitWidthSnapTest {
         val fit = st.fitWidthZoom()
         assertFalse(st.fitWidthActive)
 
-        val z = st.snapZoomToFitWidth(fit * 1.03) // inside the ±5% band
+        val z = st.snapZoomToFit(fit * 1.03) // inside the ±5% band
         assertEquals(fit, z, 1e-9) // stuck exactly to fit-width
         assertTrue(st.fitWidthActive)
     }
@@ -34,9 +34,65 @@ class FitWidthSnapTest {
         val fit = st.fitWidthZoom()
         st.fitWidthActive = true // pretend we were stuck; leaving the band must release
 
-        val z = st.snapZoomToFitWidth(fit * 1.3)
+        val z = st.snapZoomToFit(fit * 1.3)
         assertEquals(fit * 1.3, z, 1e-9) // raw zoom passes through untouched
         assertFalse(st.fitWidthActive)
+    }
+
+    @Test fun noHeightMagnetInVerticalMode() {
+        val st = state()
+        assertEquals(0.0, st.fitHeightZoom(), 1e-9)
+        val fitW = st.fitWidthZoom()
+        st.snapZoomToFit(fitW)
+        assertTrue(st.fitWidthActive)
+        assertFalse(st.fitHeightActive)
+    }
+
+    @Test fun paginatedPinchSticksToFitHeight() {
+        val st = state()
+        st.verticalScroll = false
+        st.relayout()
+        val fit = st.fitHeightZoom()
+        assertTrue(fit > 0.0)
+
+        val z = st.snapZoomToFit(fit * 1.03) // inside the same ±5% band as fit-width
+        assertEquals(fit, z, 1e-9)
+        assertTrue(st.fitHeightActive)
+        assertFalse(st.fitWidthActive)
+
+        // Pinching past the band releases the magnet like fit-width does.
+        val out = st.snapZoomToFit(fit * 1.3)
+        assertEquals(fit * 1.3, out, 1e-9)
+        assertFalse(st.fitHeightActive)
+    }
+
+    @Test fun nearerMagnetWinsWhenBothGrab() {
+        val st = state()
+        st.verticalScroll = false
+        st.relayout()
+        val fitW = st.fitWidthZoom()
+        val fitH = st.fitHeightZoom()
+        // A4 portrait in a 1000x1400 viewport: the two targets are distinct but close
+        // (fitH sits ~1% above fitW), so approach each from its far side.
+        assertTrue(fitW < fitH)
+        st.snapZoomToFit(fitH * 1.01)
+        assertTrue(st.fitHeightActive)
+        st.snapZoomToFit(fitW * 0.99)
+        assertTrue(st.fitWidthActive)
+        assertFalse(st.fitHeightActive)
+    }
+
+    @Test fun resizeRefitsHeightWhileHeightFitActive() {
+        val st = state()
+        st.verticalScroll = false
+        st.relayout()
+        st.snapZoomToFit(st.fitHeightZoom())
+        assertTrue(st.fitHeightActive)
+
+        st.viewportH = 1000
+        st.relayout()
+        st.reflowFitWidthForResize()
+        assertEquals(st.fitHeightZoom(), st.zoom, 1e-9)
     }
 
     @Test fun resizeRefitsWidthWhileFitActive() {

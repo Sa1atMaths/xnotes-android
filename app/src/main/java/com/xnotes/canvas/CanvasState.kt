@@ -254,6 +254,9 @@ class CanvasState(
      */
     var fitWidthActive: Boolean = false
 
+    /** Like [fitWidthActive] but for the paginated fit-to-height magnet ([fitHeightZoom]). */
+    var fitHeightActive: Boolean = false
+
     /** Items excluded from the cache (lifted for selection/editing); set by the interaction layer. */
     var isLiftedItem: (CanvasItem) -> Boolean = { false }
 
@@ -698,7 +701,8 @@ class CanvasState(
         if (zoomLocked) return
         val z = newZoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
         if (abs(z - zoom) < 1e-9) return
-        fitWidthActive = false // an explicit zoom step leaves fit-to-width
+        fitWidthActive = false // an explicit zoom step leaves the fit magnets
+        fitHeightActive = false
         val anchor = viewportToContent(focusViewport)
         zoom = z
         scrollX = anchor.x * z - focusViewport.x
@@ -717,6 +721,7 @@ class CanvasState(
         val cur = currentPageIndex()
         zoom = fitWidthZoom()
         fitWidthActive = true
+        fitHeightActive = false
         invalidateCachesForZoom()
         goToPage(cur)
     }
@@ -727,6 +732,7 @@ class CanvasState(
         val cur = currentPageIndex()
         zoom = ((viewportH - 60.0) / displayH(pages[cur])).coerceIn(MIN_ZOOM, MAX_ZOOM)
         fitWidthActive = false
+        fitHeightActive = false
         invalidateCachesForZoom()
         goToPage(cur)
     }
@@ -738,6 +744,7 @@ class CanvasState(
         val page = pages[cur]
         zoom = min((viewportW - 60.0) / displayW(page), (viewportH - 60.0) / displayH(page)).coerceIn(MIN_ZOOM, MAX_ZOOM)
         fitWidthActive = false
+        fitHeightActive = false
         invalidateCachesForZoom()
         goToPage(cur)
     }
@@ -758,30 +765,55 @@ class CanvasState(
         return (viewportW / contentW).coerceIn(MIN_ZOOM, MAX_ZOOM)
     }
 
+    /** The zoom at which the current paginated row (plus the vertical margins) exactly fills
+     *  the viewport height. 0 in vertical mode — the height magnet only exists paginated. */
+    fun fitHeightZoom(): Double {
+        if (verticalScroll || viewportH == 0) return 0.0
+        val rows = rowRanges()
+        if (rows.isEmpty()) return 0.0
+        val h = rowBounds(rows[currentRow.coerceIn(0, rows.lastIndex)]).h + 2 * MARGIN
+        return if (h <= 0.0) 0.0 else (viewportH / h).coerceIn(MIN_ZOOM, MAX_ZOOM)
+    }
+
     /**
-     * Live magnetic fit-to-width for a pinch: if [raw] (the gesture's unconstrained zoom) is within
-     * [SNAP_TO_FIT_WIDTH] of fit-to-width, it sticks to exactly fit-width and sets [fitWidthActive];
-     * otherwise it returns [raw] and clears [fitWidthActive]. Returns the zoom the caller applies.
-     * The false→true transition of [fitWidthActive] is when the caller surfaces the lock hint.
+     * Live magnetic fit for a pinch: within [SNAP_TO_FIT_WIDTH] of fit-to-width the zoom sticks
+     * to exactly fit-width and sets [fitWidthActive]; in paginated mode fit-to-height is a second
+     * magnet with the same band and feel ([fitHeightZoom] / [fitHeightActive]), the nearer target
+     * winning when both grab. Otherwise [raw] passes through and both flags clear. Returns the
+     * zoom the caller applies; the false→true transition of either flag surfaces the lock hint.
      */
-    fun snapZoomToFitWidth(raw: Double): Double {
-        val fit = fitWidthZoom()
-        return if (fit > 0.0 && abs(raw - fit) <= fit * SNAP_TO_FIT_WIDTH) {
-            fitWidthActive = true
-            fit
-        } else {
-            fitWidthActive = false
-            raw
+    fun snapZoomToFit(raw: Double): Double {
+        val fitW = fitWidthZoom()
+        val fitH = fitHeightZoom()
+        val nearW = fitW > 0.0 && abs(raw - fitW) <= fitW * SNAP_TO_FIT_WIDTH
+        val nearH = fitH > 0.0 && abs(raw - fitH) <= fitH * SNAP_TO_FIT_WIDTH
+        val pickH = nearH && (!nearW || abs(raw - fitH) < abs(raw - fitW))
+        fitHeightActive = pickH
+        fitWidthActive = nearW && !pickH
+        return when {
+            pickH -> fitH
+            fitWidthActive -> fitW
+            else -> raw
         }
     }
 
     /**
-     * Re-fit to the available width after a viewport resize (e.g. the sidebar opened/closed), but
-     * only while [fitWidthActive]. Deliberately ignores [zoomLocked]: when the usable width changes,
-     * staying fit to the visible width matters more than holding the exact zoom number.
+     * Re-fit to the available space after a viewport resize (e.g. the sidebar opened/closed), but
+     * only while [fitWidthActive] (or, paginated, [fitHeightActive]). Deliberately ignores
+     * [zoomLocked]: when the usable space changes, staying fit matters more than holding the
+     * exact zoom number.
      */
     fun reflowFitWidthForResize() {
-        if (!fitWidthActive || contentW <= 0.0 || viewportW == 0) return
+        if (contentW <= 0.0 || viewportW == 0) return
+        if (fitHeightActive && !verticalScroll) {
+            val fit = fitHeightZoom()
+            if (fit <= 0.0) return
+            zoom = fit
+            invalidateCachesForZoom()
+            clampScroll() // the row window recentres/pins for the new zoom
+            return
+        }
+        if (!fitWidthActive) return
         // Keep the content under the viewport's vertical centre put (don't jump to the page top) and
         // re-centre horizontally; only the width-driven zoom changes.
         val centerContentY = viewportToContent(Pt(viewportW / 2.0, viewportH / 2.0)).y
@@ -804,9 +836,11 @@ class CanvasState(
         scrollX = sx
         scrollY = sy
         syncCurrentRowToScroll() // paginated: land on the restored row before the clamp
-        // A restored view that lands at fit-width should still auto-refit on resize.
-        val target = fitWidthZoom()
-        fitWidthActive = target > 0.0 && abs(zoom - target) <= target * SNAP_TO_FIT_WIDTH
+        // A restored view that lands at a fit target should still auto-refit on resize.
+        val targetW = fitWidthZoom()
+        val targetH = fitHeightZoom()
+        fitHeightActive = targetH > 0.0 && abs(zoom - targetH) <= targetH * SNAP_TO_FIT_WIDTH
+        fitWidthActive = !fitHeightActive && targetW > 0.0 && abs(zoom - targetW) <= targetW * SNAP_TO_FIT_WIDTH
         invalidateCachesForZoom()
         clampScroll()
     }
@@ -817,6 +851,7 @@ class CanvasState(
         currentRow = 0 // paginated fit-width targets the first row
         zoom = fitWidthZoom()
         fitWidthActive = true
+        fitHeightActive = false
         invalidateCachesForZoom()
         goToPage(0)
     }
