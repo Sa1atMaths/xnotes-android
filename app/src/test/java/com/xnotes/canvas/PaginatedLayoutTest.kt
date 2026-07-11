@@ -31,9 +31,9 @@ class PaginatedLayoutTest {
 
     @Test fun doubleSpreadsFlipAsOneUnit() {
         val st = state(4, ViewingMode.DOUBLE)
-        // Pages of a spread sit GAP apart; the next spread sits a flip-gap away.
-        assertEquals(st.pageRects[0].right + CanvasState.GAP, st.pageRects[1].left, 1e-9)
-        assertEquals(st.pageRects[1].right + CanvasState.ROW_FLIP_GAP, st.pageRects[2].left, 1e-9)
+        // Within a spread and between spreads alike, pages sit one page-gap apart.
+        assertEquals(st.pageRects[0].right + st.pageGap, st.pageRects[1].left, 1e-9)
+        assertEquals(st.pageRects[1].right + st.pageGap, st.pageRects[2].left, 1e-9)
     }
 
     @Test fun clampConfinesScrollToTheCurrentRow() {

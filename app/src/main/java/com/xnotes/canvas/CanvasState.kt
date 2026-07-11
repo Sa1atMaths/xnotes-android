@@ -107,6 +107,10 @@ class CanvasState(
     /** Horizontal margin on each side of the page column (0 ⇒ fit-width fills the viewport). */
     var sideMargin: Double = MARGIN
 
+    /** Gap (content px) between pages — inside a spread, between rows, and between paginated
+     *  rows alike — equal to [sideMargin] so spacing always matches the margin preference. */
+    val pageGap: Double get() = sideMargin
+
     /** How pages group into layout rows (Single / Double / Cover); see [rowRanges]. */
     var viewingMode: ViewingMode = ViewingMode.SINGLE
 
@@ -440,7 +444,7 @@ class CanvasState(
         // Rects hold the pages' display footprints — rotation swaps their width/height. A row's
         // pages sit side by side, vertically centred within their row so facing pages align.
         val rows = rowRanges()
-        val rowWidths = rows.map { r -> r.sumOf { displayW(pages[it]) } + (r.last - r.first) * GAP }
+        val rowWidths = rows.map { r -> r.sumOf { displayW(pages[it]) } + (r.last - r.first) * pageGap }
         val rowHeights = rows.map { r -> r.maxOf { displayH(pages[it]) } }
         val rects = arrayOfNulls<Rect>(pages.size)
         if (verticalScroll) {
@@ -451,12 +455,12 @@ class CanvasState(
                 var x = sideMargin + (maxW - rowWidths[ri]) / 2.0
                 for (i in row) {
                     rects[i] = Rect(x, y + (rowHeights[ri] - displayH(pages[i])) / 2.0, displayW(pages[i]), displayH(pages[i]))
-                    x += displayW(pages[i]) + GAP
+                    x += displayW(pages[i]) + pageGap
                 }
-                y += rowHeights[ri] + GAP
+                y += rowHeights[ri] + pageGap
             }
             contentW = maxW + 2 * sideMargin
-            contentH = (y - GAP) + MARGIN
+            contentH = (y - pageGap) + MARGIN
         } else {
             // Paginated: rows run left-to-right in one strip, each top-aligned below the margin.
             val maxH = rowHeights.max()
@@ -465,11 +469,11 @@ class CanvasState(
                 var rx = x
                 for (i in row) {
                     rects[i] = Rect(rx, MARGIN + (rowHeights[ri] - displayH(pages[i])) / 2.0, displayW(pages[i]), displayH(pages[i]))
-                    rx += displayW(pages[i]) + GAP
+                    rx += displayW(pages[i]) + pageGap
                 }
-                x += rowWidths[ri] + ROW_FLIP_GAP
+                x += rowWidths[ri] + pageGap
             }
-            contentW = (x - ROW_FLIP_GAP) + sideMargin
+            contentW = (x - pageGap) + sideMargin
             contentH = maxH + 2 * MARGIN
         }
         pageRects = rects.map { it!! }
@@ -640,12 +644,12 @@ class CanvasState(
             val rows = rowRanges()
             val row = rows[currentRow.coerceIn(0, rows.lastIndex)]
             val cx = viewportToContent(Pt(viewportW / 2.0, viewportH / 2.0)).x
-            for (i in row) if (pageRects[i].right + GAP / 2.0 > cx) return i
+            for (i in row) if (pageRects[i].right + pageGap / 2.0 > cx) return i
             return row.last
         }
         val centerY = viewportToContent(Pt(viewportW / 2.0, viewportH / 2.0)).y
         for (i in pageRects.indices) {
-            if (pageRects[i].bottom + GAP / 2.0 > centerY) return i
+            if (pageRects[i].bottom + pageGap / 2.0 > centerY) return i
         }
         return pageRects.size - 1
     }
@@ -1519,10 +1523,6 @@ class CanvasState(
 
     companion object {
         const val MARGIN = 48.0
-        const val GAP = 38.0
-
-        /** Gap (content px) between paginated rows, so a neighbour barely peeks mid-flip. */
-        const val ROW_FLIP_GAP = 96.0
         const val MIN_ZOOM = 0.12
         const val MAX_ZOOM = 16.0
         const val ZOOM_STEP = 1.25

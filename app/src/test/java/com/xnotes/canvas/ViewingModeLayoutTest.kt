@@ -23,7 +23,7 @@ class ViewingModeLayoutTest {
         val st = state(3, ViewingMode.SINGLE)
         val h = st.document.pages[0].height
         for (i in 0..2) {
-            assertEquals(CanvasState.MARGIN + i * (h + CanvasState.GAP), st.pageRects[i].top, 1e-6)
+            assertEquals(CanvasState.MARGIN + i * (h + st.pageGap), st.pageRects[i].top, 1e-6)
         }
         assertEquals(st.document.pages[0].width + 2 * st.sideMargin, st.contentW, 1e-6)
     }
@@ -32,17 +32,17 @@ class ViewingModeLayoutTest {
         val st = state(4, ViewingMode.DOUBLE)
         assertEquals(listOf(0..1, 2..3), st.rowRanges())
         assertEquals(st.pageRects[0].top, st.pageRects[1].top, 1e-6)
-        assertEquals(st.pageRects[0].right + CanvasState.GAP, st.pageRects[1].left, 1e-6)
+        assertEquals(st.pageRects[0].right + st.pageGap, st.pageRects[1].left, 1e-6)
         assertTrue(st.pageRects[2].top > st.pageRects[0].bottom)
         val w = st.document.pages[0].width
-        assertEquals(2 * w + CanvasState.GAP + 2 * st.sideMargin, st.contentW, 1e-6)
+        assertEquals(2 * w + st.pageGap + 2 * st.sideMargin, st.contentW, 1e-6)
     }
 
     @Test fun doubleWithOddCountLeavesLastPageAlone() {
         val st = state(5, ViewingMode.DOUBLE)
         assertEquals(listOf(0..1, 2..3, 4..4), st.rowRanges())
         // The lone last page is centred against the spread width.
-        val spread = 2 * st.document.pages[0].width + CanvasState.GAP
+        val spread = 2 * st.document.pages[0].width + st.pageGap
         val expectedLeft = st.sideMargin + (spread - st.document.pages[4].width) / 2.0
         assertEquals(expectedLeft, st.pageRects[4].left, 1e-6)
     }
