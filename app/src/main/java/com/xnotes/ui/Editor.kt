@@ -2350,10 +2350,21 @@ class Editor(context: Context) {
         applyResolvedViewSettings()
     }
 
+    /** True while the View menu's Global tab is open: the canvas previews the global defaults
+     *  directly (this note's overrides suspended) so edits there show live on the document. */
+    private var previewGlobalView = false
+
+    /** Driven by the View menu as its tabs switch/close; leaving re-applies the note's overrides. */
+    fun setGlobalViewPreview(active: Boolean) {
+        if (previewGlobalView == active) return
+        previewGlobalView = active
+        applyResolvedViewSettings()
+    }
+
     /** Re-resolve the effective settings and react to whatever actually changed. */
     private fun applyResolvedViewSettings() {
         val prev = viewSettings
-        val resolved = viewOverrides.resolve(viewDefaults)
+        val resolved = if (previewGlobalView) viewDefaults else viewOverrides.resolve(viewDefaults)
         if (prev == resolved) return
         viewSettings = resolved
         onViewSettingsChanged(prev, resolved)

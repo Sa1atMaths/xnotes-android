@@ -21,6 +21,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -294,6 +296,11 @@ fun ViewMenuPopup(editor: Editor, onDismiss: () -> Unit) {
     val defaults = editor.viewDefaults
     val overrides = editor.viewOverrides
     val vs = if (global) defaults else editor.viewSettings
+
+    // While the Global tab is open the canvas previews the pure defaults on this document;
+    // switching back (or closing the menu however it closes) re-applies the note's own view.
+    LaunchedEffect(global) { editor.setGlobalViewPreview(global) }
+    DisposableEffect(Unit) { onDispose { editor.setGlobalViewPreview(false) } }
 
     fun setMode(v: ViewingMode) =
         if (global) editor.updateViewDefaults(defaults.copy(mode = v)) else editor.updateViewOverrides(overrides.copy(mode = v))
