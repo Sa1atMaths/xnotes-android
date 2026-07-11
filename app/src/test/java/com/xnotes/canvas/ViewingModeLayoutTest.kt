@@ -82,7 +82,7 @@ class ViewingModeLayoutTest {
         st.goToPage(2)
         val rowCenter = (st.pageRects[2].left + st.pageRects[3].right) / 2.0
         assertEquals((rowCenter - st.viewportW / 2.0).coerceIn(0.0, st.maxScrollX()), st.scrollX, 1e-6)
-        val expectedY = (st.pageRects[2].top - CanvasState.PAGE_LABEL_OFFSET) - CanvasState.TOP_GAP
+        val expectedY = st.pageRects[2].top - CanvasState.TOP_GAP
         assertEquals(expectedY.coerceIn(0.0, st.maxScrollY()), st.scrollY, 1e-6)
     }
 

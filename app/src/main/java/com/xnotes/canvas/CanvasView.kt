@@ -16,15 +16,14 @@ import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.Stroke
 import com.xnotes.core.pal.BlendMode
-import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
 import com.xnotes.platform.AndroidRenderer
 
 /**
  * The on-screen canvas. Draws the document in immediate mode each frame
  * (spec 05 §6): window background, then visible pages (paper + hairline border +
- * cached background layer + cached ink + page label). Selection overlay, the live
- * stroke and the eraser cursor are layered on top by later interaction code.
+ * cached background layer + cached ink). Selection overlay, the live stroke and
+ * the eraser cursor are layered on top by later interaction code.
  */
 class CanvasView @JvmOverloads constructor(
     context: Context,
@@ -463,7 +462,6 @@ class CanvasView @JvmOverloads constructor(
                 }
             }
             st.cacheForOrSchedule(page)?.let { blitPageSurface(r, st, page, pr, it.surface) }
-            drawPageLabel(r, st, i, pr)
         }
         r.restore()
 
@@ -643,11 +641,6 @@ class CanvasView @JvmOverloads constructor(
         overscrollStroke.strokeWidth = w
         canvas.drawLine(cx - half, cy, cx + half, cy, overscrollStroke)
         canvas.drawLine(cx, cy - half, cx, cy + half, overscrollStroke)
-    }
-
-    private fun drawPageLabel(r: AndroidRenderer, st: CanvasState, index: Int, pr: Rect) {
-        val label = "%02d".format(index + 1)
-        r.drawText(label, Rect(pr.left, pr.top - 26.0, 140.0, 24.0), FontSpec(9.0), st.palette.textDim)
     }
 
     /** Request a vsync-aligned repaint (rides the display refresh while drawing). */

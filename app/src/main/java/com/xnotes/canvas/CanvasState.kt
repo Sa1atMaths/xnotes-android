@@ -13,7 +13,6 @@ import com.xnotes.core.model.resolvedPageColor
 import com.xnotes.core.model.resolvedPattern
 import com.xnotes.core.model.resolvedPatternColor
 import com.xnotes.core.model.resolvedSpacing
-import com.xnotes.core.pal.FontSpec
 import com.xnotes.core.pal.Pen
 import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
@@ -502,7 +501,7 @@ class CanvasState(
         val minX = (rb.left - sideMargin) * zoom
         val maxX = (rb.right + sideMargin) * zoom - viewportW
         val sx = if (maxX < minX) (minX + maxX) / 2.0 else minX
-        val sy = ((rb.top - PAGE_LABEL_OFFSET) * zoom - TOP_GAP).coerceAtLeast(0.0)
+        val sy = (rb.top * zoom - TOP_GAP).coerceAtLeast(0.0)
         return Pt(sx, sy)
     }
 
@@ -692,9 +691,9 @@ class CanvasState(
         val row = rowOf(i)
         val top = row.minOf { pageRects[it].top }
         val centerX = (row.minOf { pageRects[it].left } + row.maxOf { pageRects[it].right }) / 2.0
-        // Scroll so the page label (just above the page top) clears the toolbar with a small gap,
-        // so no part of the page is hidden behind the chrome.
-        scrollY = ((top - PAGE_LABEL_OFFSET) * zoom - TOP_GAP).coerceAtLeast(0.0)
+        // Scroll so the page top clears the toolbar with a small gap, so no part of the
+        // page is hidden behind the chrome.
+        scrollY = (top * zoom - TOP_GAP).coerceAtLeast(0.0)
         scrollX = centerX * zoom - viewportW / 2.0
         clampScroll()
     }
@@ -1402,12 +1401,6 @@ class CanvasState(
                 paintPageBackground?.invoke(d.page, rb, res, d.region)
             }
             rb.restore()
-            rb.drawText(
-                "%02d".format(d.index + 1),
-                Rect(d.pr.left, d.pr.top - PAGE_LABEL_OFFSET, 140.0, 24.0),
-                FontSpec(9.0),
-                palette.textDim,
-            )
             ri.save()
             ri.clipRect(d.pr)
             ri.translate(d.pr.left, d.pr.top)
@@ -1544,10 +1537,7 @@ class CanvasState(
         /** Padding (content px) around a replayed sharp edit's dirty rect, for AA edges. */
         const val SHARP_EDIT_PAD = 2.0
 
-        /** The page label sits ~26px above the page top (content space). */
-        const val PAGE_LABEL_OFFSET = 26.0
-
-        /** Gap (viewport px) left above the page label so nothing hides behind the toolbar. */
+        /** Gap (viewport px) left above the page top so nothing hides behind the toolbar. */
         const val TOP_GAP = 16.0
         val TRANSPARENT = Rgba(0, 0, 0, 0)
     }
