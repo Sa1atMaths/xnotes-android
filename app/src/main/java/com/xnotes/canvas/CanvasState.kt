@@ -116,7 +116,7 @@ class CanvasState(
     /**
      * True = continuous vertical scrolling (rows stack top-down). False = paginated: rows
      * lay out as a horizontal strip, the scroll window is clamped to [currentRow]'s span,
-     * and the interaction layer flips between rows (edge-swipe with a slide animation).
+     * and the interaction layer flips between rows (edge-swipe; the change is instant).
      */
     var verticalScroll: Boolean = true
 
@@ -125,18 +125,11 @@ class CanvasState(
 
     /**
      * Paginated edge-pull (viewport px, signed; positive pulls toward the next row). Like
-     * [overscrollY] it is purely visual — [origin] shifts by it so the neighbouring row
-     * slides into view under the finger — and the interaction layer springs or flips it.
+     * [overscrollY] it is purely visual — [origin] shifts by it so the current row slides
+     * against empty background under the finger — and on release the interaction layer
+     * flips instantly or drops the pull.
      */
     var flipOffsetX: Double = 0.0
-
-    /**
-     * While a paginated flip slides, the single row still allowed on screen: the OUTGOING
-     * one. The incoming row ([currentRow], already retargeted when the slide starts) stays
-     * hidden until the animation settles and this returns to -1. Owned by the interaction
-     * layer, which sets it for exactly the slide's lifetime.
-     */
-    var flipSoloRow: Int = -1
 
     /**
      * Whole-file clockwise page rotation (0/90/180/270), applied by the view: pages lay
@@ -612,18 +605,15 @@ class CanvasState(
 
     /**
      * The pages the view may draw (and touch). Vertical mode shows everything the viewport
-     * reaches. The paginated view shows exactly one row at any moment: [currentRow] when
-     * settled (zooming out must not creep the neighbouring rows into view), or the outgoing
-     * [flipSoloRow] while a flip slides — the incoming row only appears once the slide has
-     * settled. An edge pull just reveals empty background, never the neighbour.
+     * reaches. The paginated view shows exactly one row at any moment: [currentRow]
+     * (zooming out must not creep the neighbouring rows into view). An edge pull just
+     * reveals empty background, never the neighbour.
      */
     fun drawablePageRange(): IntRange {
         val last = document.pages.lastIndex
         if (verticalScroll) return 0..last
         val rows = rowRanges()
         if (rows.isEmpty()) return 0..last
-        val solo = flipSoloRow
-        if (solo in rows.indices) return rows[solo]
         return rows[currentRow.coerceIn(0, rows.lastIndex)]
     }
 
@@ -680,7 +670,6 @@ class CanvasState(
             // Paginated: jump the scroll window to the page's row and land at its top.
             currentRow = rowIndexOf(i)
             flipOffsetX = 0.0
-            flipSoloRow = -1
             val t = rowTargetScroll(currentRow)
             scrollX = t.x
             scrollY = t.y

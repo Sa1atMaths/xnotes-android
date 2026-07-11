@@ -225,15 +225,6 @@ class InteractionController(
     private var lastOverscrollMs = 0L
     private val overscrollFrame = Choreographer.FrameCallback { frameTimeNanos -> stepOverscrollSettle(frameTimeNanos) }
 
-    // PAGE FLIP (paginated mode): the ~200ms slide between rows / the edge-pull spring-back.
-    private var flipAnimating = false
-    private var flipStartMs = 0L
-    private var flipFromX = 0.0
-    private var flipFromY = 0.0
-    private var flipToX = 0.0
-    private var flipToY = 0.0
-    private val flipFrame = Choreographer.FrameCallback { frameTimeNanos -> stepFlip(frameTimeNanos) }
-
     // PINCH
     private var pinchInitDist = 1.0
     private var pinchInitZoom = 1.0
@@ -517,7 +508,6 @@ class InteractionController(
         if (hoverActionTool != null) endHoverAction() // a hovering side-button gesture yields to contact
         downStoppedFling = flinging // captured before stopping: a tap that only halts a glide must not dismiss
         stopFling() // a new touch halts any in-progress glide
-        stopFlip() // a paginated slide lands where it is; the grab takes over
         stopOverscrollSettle() // ...and lets a re-grab take over the elastic mid-spring
         panMayCommitText = false // a fresh gesture; the editing branch below re-arms it if it applies
         val toolType = e.getToolType(0)
@@ -2175,9 +2165,9 @@ class InteractionController(
 
     /**
      * Paginated pan: pan freely inside the current row (the clamp pins the window to it);
-     * whatever the clamp rejects horizontally works the edge-pull elastic instead, sliding
-     * the neighbouring row into view. Relaxing motion unwinds the pull before the scroll
-     * moves again, exactly like the bottom overscroll. No add-page elastic in this mode.
+     * whatever the clamp rejects horizontally works the edge-pull elastic instead, arming
+     * the flip. Relaxing motion unwinds the pull before the scroll moves again, exactly
+     * like the bottom overscroll. No add-page elastic in this mode.
      */
     private fun extendPanPaginated(dx0: Double, dy: Double) {
         var dx = dx0
@@ -2204,73 +2194,29 @@ class InteractionController(
         // The pull reveals only empty background; the neighbouring row never joins the screen.
     }
 
-    /** Decide what a lifted paginated pan does: flip, spring the pull back, or glide in-row. */
+    /** Decide what a lifted paginated pan does: flip instantly, drop the pull, or glide in-row. */
     private fun endPanPaginated() {
         val rows = state.rowRanges().size
         val pull = state.flipOffsetX
         when {
-            pull >= FLIP_TRIGGER && state.currentRow < rows - 1 -> animateFlipTo(state.currentRow + 1)
-            pull <= -FLIP_TRIGGER && state.currentRow > 0 -> animateFlipTo(state.currentRow - 1)
+            pull >= FLIP_TRIGGER && state.currentRow < rows - 1 -> flipTo(state.currentRow + 1)
+            pull <= -FLIP_TRIGGER && state.currentRow > 0 -> flipTo(state.currentRow - 1)
             panVel.x <= -FLIP_FLING_VEL && state.atRowEdge(next = true) && state.currentRow < rows - 1 ->
-                animateFlipTo(state.currentRow + 1)
+                flipTo(state.currentRow + 1)
             panVel.x >= FLIP_FLING_VEL && state.atRowEdge(next = false) && state.currentRow > 0 ->
-                animateFlipTo(state.currentRow - 1)
-            pull != 0.0 -> animateFlipTo(state.currentRow) // not far enough: spring back in place
+                flipTo(state.currentRow - 1)
+            pull != 0.0 -> { clearFlipPull(); onViewChanged(); requestRender() }
             else -> startFling(panVel)
         }
     }
 
     /**
-     * Slide to [rowIndex] (or spring back to the current row): fold the visual edge-pull into
-     * the scroll, retarget the scroll window, and ease scroll toward the row's landing spot
-     * ([CanvasState.rowTargetScroll] — zoom kept, top-aligned) over [FLIP_MS].
+     * Jump to [rowIndex] with no animation: the new row simply appears at its landing spot
+     * ([CanvasState.rowTargetScroll] — zoom kept, top-aligned).
      */
-    private fun animateFlipTo(rowIndex: Int) {
+    private fun flipTo(rowIndex: Int) {
         stopFling()
-        val springBack = rowIndex == state.currentRow
-        val outgoing = state.currentRow
-        state.scrollX += state.flipOffsetX // keep the on-screen position; the offset becomes scroll
-        state.flipOffsetX = 0.0
-        state.currentRow = rowIndex.coerceIn(0, (state.rowRanges().size - 1).coerceAtLeast(0))
-        flipFromX = state.scrollX
-        flipFromY = state.scrollY
-        // A real flip lands at the new row's top (zoom kept); a spring-back just returns to
-        // the nearest valid position inside the current row's window.
-        val target = if (springBack) {
-            state.rowClampedScroll(state.currentRow, state.scrollX, state.scrollY)
-        } else {
-            state.rowTargetScroll(state.currentRow)
-        }
-        flipToX = target.x
-        flipToY = target.y
-        // While a real flip slides, only the outgoing row stays on screen; the incoming one
-        // appears when the slide settles. A spring-back never left its row.
-        state.flipSoloRow = if (springBack) -1 else outgoing
-        flipAnimating = true
-        flipStartMs = System.nanoTime() / 1_000_000L
-        choreographer.postFrameCallback(flipFrame)
-    }
-
-    private fun stopFlip() {
-        if (!flipAnimating) return
-        flipAnimating = false
-        state.flipSoloRow = -1
-        state.clampScroll()
-    }
-
-    private fun stepFlip(frameTimeNanos: Long) {
-        if (!flipAnimating) return
-        val t = ((frameTimeNanos / 1_000_000L - flipStartMs).toDouble() / FLIP_MS).coerceIn(0.0, 1.0)
-        val e = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t) // ease-out cubic
-        state.scrollX = flipFromX + (flipToX - flipFromX) * e
-        state.scrollY = flipFromY + (flipToY - flipFromY) * e
-        if (t >= 1.0) {
-            flipAnimating = false
-            state.flipSoloRow = -1
-            state.clampScroll()
-        } else {
-            choreographer.postFrameCallback(flipFrame)
-        }
+        state.goToPage(state.rowRanges()[rowIndex].first)
         onViewChanged()
         requestRender()
     }
@@ -2402,13 +2348,11 @@ class InteractionController(
 
     /** Fold any paginated edge-pull back into the (clamped) scroll, with no animation. */
     private fun clearFlipPull() {
-        stopFlip()
         if (state.flipOffsetX != 0.0) {
             state.scrollX += state.flipOffsetX
             state.flipOffsetX = 0.0
             state.clampScroll()
         }
-        state.flipSoloRow = -1
     }
 
     /**
@@ -2419,9 +2363,7 @@ class InteractionController(
      */
     fun resetGestureState() {
         stopFling()
-        stopFlip()
         state.flipOffsetX = 0.0
-        state.flipSoloRow = -1
         clearOverscroll()
         cancelDwell()
         clearFading()
@@ -2963,6 +2905,5 @@ class InteractionController(
         const val FLIP_TRIGGER = 90.0 // pull (viewport px) at which releasing flips the page
         const val FLIP_FLING_VEL = 900.0 // finger velocity (viewport px/s) that flips from the edge
         const val FLIP_MAX_FRACTION = 0.6 // pull cap, as a fraction of the viewport width
-        const val FLIP_MS = 220.0 // slide animation duration
     }
 }

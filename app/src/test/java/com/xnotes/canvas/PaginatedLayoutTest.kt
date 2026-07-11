@@ -129,33 +129,21 @@ class PaginatedLayoutTest {
         assertEquals(2..2, st.drawablePageRange())
     }
 
-    @Test fun slideShowsOnlyTheOutgoingRow() {
+    @Test fun flipIsInstantTheNewRowJustAppears() {
         val st = state(5)
         st.zoom = 0.5
         st.goToPage(2)
-        // Mid-flip the controller retargets currentRow and marks the outgoing row solo:
-        // only the outgoing page draws until the slide settles.
-        st.currentRow = 3
-        st.flipSoloRow = 2
-        assertEquals(2..2, st.drawablePageRange())
-        // Settled: the incoming row appears.
-        st.flipSoloRow = -1
-        assertEquals(3..3, st.drawablePageRange())
-    }
-
-    @Test fun soloShowsTheWholeOutgoingSpreadInDoubleMode() {
-        val st = state(6, ViewingMode.DOUBLE)
-        st.goToPage(2) // spread 2-3 is row 1
-        st.currentRow = 2
-        st.flipSoloRow = 1
-        assertEquals(2..3, st.drawablePageRange())
-    }
-
-    @Test fun goToPageDropsAStaleSoloRow() {
-        val st = state(5)
-        st.flipSoloRow = 1
+        // A flip retargets the window in one step; the new row is drawable immediately.
         st.goToPage(3)
-        assertEquals(-1, st.flipSoloRow)
+        assertEquals(3..3, st.drawablePageRange())
+        assertEquals(3, st.currentRow)
+    }
+
+    @Test fun goToPageDropsAStalePull() {
+        val st = state(5)
+        st.flipOffsetX = 50.0
+        st.goToPage(3)
+        assertEquals(0.0, st.flipOffsetX, 1e-9)
         assertEquals(3..3, st.drawablePageRange())
     }
 
