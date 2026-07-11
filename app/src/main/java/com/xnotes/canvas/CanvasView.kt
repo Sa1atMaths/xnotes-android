@@ -410,7 +410,7 @@ class CanvasView @JvmOverloads constructor(
 
             r.fillRect(pr, st.paperColor(page))
             r.strokeRect(pr, border)
-            st.backgroundForOrSchedule(page)?.let { r.drawRaster(it.surface, pr) }
+            st.backgroundForOrSchedule(page)?.let { blitPageSurface(r, st, page, pr, it.surface) }
             // A live caret session lifts the flow out of the ink cache; paint it
             // immediate-mode here (under the ink, over the background) so every
             // keystroke shows without waiting for a cache rebuild.
@@ -418,10 +418,11 @@ class CanvasView @JvmOverloads constructor(
                 r.withSave {
                     r.clipRect(pr)
                     r.translate(pr.left, pr.top)
-                    st.paintFlow?.invoke(page, r, visible.translate(-pr.left, -pr.top))
+                    st.applyPageRotation(r, page)
+                    st.paintFlow?.invoke(page, r, st.displayRectToPage(page, visible.translate(-pr.left, -pr.top)))
                 }
             }
-            st.cacheForOrSchedule(page)?.let { r.drawRaster(it.surface, pr) }
+            st.cacheForOrSchedule(page)?.let { blitPageSurface(r, st, page, pr, it.surface) }
             drawPageLabel(r, st, i, pr)
         }
         r.restore()
@@ -466,10 +467,12 @@ class CanvasView @JvmOverloads constructor(
                         for (i in st.document.pages.indices) {
                             val pr = st.pageRects.getOrNull(i) ?: continue
                             if (!pr.intersects(visible)) continue
+                            val page = st.document.pages[i]
                             r.withSave {
                                 r.clipRect(pr)
                                 r.translate(pr.left, pr.top)
-                                st.paintFlow?.invoke(st.document.pages[i], r, visible.translate(-pr.left, -pr.top))
+                                st.applyPageRotation(r, page)
+                                st.paintFlow?.invoke(page, r, st.displayRectToPage(page, visible.translate(-pr.left, -pr.top)))
                             }
                         }
                     }
@@ -499,11 +502,12 @@ class CanvasView @JvmOverloads constructor(
                 val pr = st.pageRects.getOrNull(i) ?: continue
                 if (!pr.intersects(visible)) continue
                 val page = st.document.pages[i]
-                // Page-local visible rect, so off-band highlighters on a tall page skip the composite.
-                val visLocal = visible.translate(-pr.left, -pr.top)
+                // Page-space visible rect, so off-band highlighters on a tall page skip the composite.
+                val visLocal = st.displayRectToPage(page, visible.translate(-pr.left, -pr.top))
                 r.withSave {
                     r.clipRect(pr)
                     r.translate(pr.left, pr.top)
+                    st.applyPageRotation(r, page)
                     for (item in page.items) {
                         if (item is Stroke && item.isHighlighterInk() && !st.isLiftedItem(item) &&
                             item.bounds().intersects(visLocal)
@@ -534,6 +538,19 @@ class CanvasView @JvmOverloads constructor(
 
     /** Fires once the view has been still for [SHARP_SETTLE_MS], rendering the sharp viewport. */
     private val sharpDebounce = Runnable { state?.requestSharpViewport() }
+
+    /** Blit a page-space cache surface into the page's display rect, rotated per the view. */
+    private fun blitPageSurface(r: AndroidRenderer, st: CanvasState, page: Page, pr: Rect, surface: com.xnotes.core.pal.RasterSurface) {
+        if (st.rotationDeg == 0) {
+            r.drawRaster(surface, pr)
+            return
+        }
+        r.withSave {
+            r.translate(pr.left, pr.top)
+            st.applyPageRotation(r, page)
+            r.drawRaster(surface, Rect(0.0, 0.0, page.width, page.height))
+        }
+    }
 
     /**
      * Draw the elastic add-page badge in the gap the pull opens below the last page: an accent

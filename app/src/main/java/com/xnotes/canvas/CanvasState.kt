@@ -109,6 +109,82 @@ class CanvasState(
     /** How pages group into layout rows (Single / Double / Cover); see [rowRanges]. */
     var viewingMode: ViewingMode = ViewingMode.SINGLE
 
+    /**
+     * Whole-file clockwise page rotation (0/90/180/270), applied by the view: pages lay
+     * out with their rotated footprints ([displayW]/[displayH]) and their page-space
+     * content is painted through [applyPageRotation]. Model/page space never rotates —
+     * caches, items and hit geometry stay in page space and map through
+     * [toPageSpace]/[fromPageSpace] at the display boundary.
+     */
+    var rotationDeg: Int = 0
+
+    /** On-screen (display) width of [page] under the current rotation. */
+    fun displayW(page: Page): Double = if (rotationDeg == 90 || rotationDeg == 270) page.height else page.width
+
+    /** On-screen (display) height of [page] under the current rotation. */
+    fun displayH(page: Page): Double = if (rotationDeg == 90 || rotationDeg == 270) page.width else page.height
+
+    /** Map a page-local display point (relative to the page rect's top-left) into page space. */
+    fun displayToPage(page: Page, p: Pt): Pt = when (rotationDeg) {
+        90 -> Pt(p.y, page.height - p.x)
+        180 -> Pt(page.width - p.x, page.height - p.y)
+        270 -> Pt(page.width - p.y, p.x)
+        else -> p
+    }
+
+    /** Map a page-space point into page-local display coordinates. */
+    fun pageToDisplay(page: Page, p: Pt): Pt = when (rotationDeg) {
+        90 -> Pt(page.height - p.y, p.x)
+        180 -> Pt(page.width - p.x, page.height - p.y)
+        270 -> Pt(p.y, page.width - p.x)
+        else -> p
+    }
+
+    /** Map a page-local display rect into page space (axis-aligned; corners re-normalize). */
+    fun displayRectToPage(page: Page, r: Rect): Rect =
+        Rect.fromPoints(displayToPage(page, Pt(r.left, r.top)), displayToPage(page, Pt(r.right, r.bottom)))
+
+    /** A content-space point mapped into page [i]'s page space. */
+    fun toPageSpace(i: Int, content: Pt): Pt {
+        val pr = pageRects[i]
+        return displayToPage(document.pages[i], Pt(content.x - pr.left, content.y - pr.top))
+    }
+
+    /** A page-space point of page [i] mapped into content space. */
+    fun fromPageSpace(i: Int, p: Pt): Pt {
+        val pr = pageRects[i]
+        val d = pageToDisplay(document.pages[i], p)
+        return Pt(pr.left + d.x, pr.top + d.y)
+    }
+
+    /** An axis-aligned content rect mapped into page [i]'s page space (re-normalized). */
+    fun toPageSpaceRect(i: Int, r: Rect): Rect =
+        Rect.fromPoints(toPageSpace(i, Pt(r.left, r.top)), toPageSpace(i, Pt(r.right, r.bottom)))
+
+    /** An axis-aligned page-space rect of page [i] mapped into content space (re-normalized). */
+    fun fromPageSpaceRect(i: Int, r: Rect): Rect =
+        Rect.fromPoints(fromPageSpace(i, Pt(r.left, r.top)), fromPageSpace(i, Pt(r.right, r.bottom)))
+
+    /** Rotate a content-space vector (an offset/delta) into page space. */
+    fun vectorToPageSpace(v: Pt): Pt = when (rotationDeg) {
+        90 -> Pt(v.y, -v.x)
+        180 -> Pt(-v.x, -v.y)
+        270 -> Pt(-v.y, v.x)
+        else -> v
+    }
+
+    /**
+     * Rotate [r] — already translated to a page rect's top-left — so page-space painting
+     * lands rotated in the page's display footprint. The inverse of [displayToPage].
+     */
+    fun applyPageRotation(r: Renderer, page: Page) {
+        when (rotationDeg) {
+            90 -> { r.translate(page.height, 0.0); r.rotate(90.0) }
+            180 -> { r.translate(page.width, page.height); r.rotate(180.0) }
+            270 -> { r.translate(0.0, page.width); r.rotate(270.0) }
+        }
+    }
+
     /** While true (during a pinch/zoom drag) caches are blitted stale-scaled
      *  instead of rebuilt every frame; they rebuild at the final resolution when
      *  the gesture ends. */
@@ -305,18 +381,19 @@ class CanvasState(
             return
         }
         // Rows stack top-down; a row's pages sit side by side (centred against the widest
-        // row, and vertically centred within their row so facing pages align).
+        // row, and vertically centred within their row so facing pages align). Rects hold
+        // the pages' display footprints — rotation swaps their width/height.
         val rows = rowRanges()
-        val rowWidths = rows.map { r -> r.sumOf { pages[it].width } + (r.last - r.first) * GAP }
-        val rowHeights = rows.map { r -> r.maxOf { pages[it].height } }
+        val rowWidths = rows.map { r -> r.sumOf { displayW(pages[it]) } + (r.last - r.first) * GAP }
+        val rowHeights = rows.map { r -> r.maxOf { displayH(pages[it]) } }
         val maxW = rowWidths.max()
         val rects = arrayOfNulls<Rect>(pages.size)
         var y = MARGIN // vertical top margin (keeps the page below the toolbar)
         for ((ri, row) in rows.withIndex()) {
             var x = sideMargin + (maxW - rowWidths[ri]) / 2.0
             for (i in row) {
-                rects[i] = Rect(x, y + (rowHeights[ri] - pages[i].height) / 2.0, pages[i].width, pages[i].height)
-                x += pages[i].width + GAP
+                rects[i] = Rect(x, y + (rowHeights[ri] - displayH(pages[i])) / 2.0, displayW(pages[i]), displayH(pages[i]))
+                x += displayW(pages[i]) + GAP
             }
             y += rowHeights[ri] + GAP
         }
@@ -462,7 +539,7 @@ class CanvasState(
         val pages = document.pages
         if (zoomLocked || pages.isEmpty() || viewportH == 0) return
         val cur = currentPageIndex()
-        zoom = ((viewportH - 60.0) / pages[cur].height).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        zoom = ((viewportH - 60.0) / displayH(pages[cur])).coerceIn(MIN_ZOOM, MAX_ZOOM)
         fitWidthActive = false
         invalidateCachesForZoom()
         goToPage(cur)
@@ -473,7 +550,7 @@ class CanvasState(
         if (zoomLocked || pages.isEmpty() || viewportW == 0 || viewportH == 0) return
         val cur = currentPageIndex()
         val page = pages[cur]
-        zoom = min((viewportW - 60.0) / page.width, (viewportH - 60.0) / page.height).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        zoom = min((viewportW - 60.0) / displayW(page), (viewportH - 60.0) / displayH(page)).coerceIn(MIN_ZOOM, MAX_ZOOM)
         fitWidthActive = false
         invalidateCachesForZoom()
         goToPage(cur)
@@ -1029,11 +1106,12 @@ class CanvasState(
             val pr = pageRects.getOrNull(i) ?: continue
             if (!pr.intersects(visible)) continue
             val page = document.pages[i]
-            val region = Rect.fromPoints(
+            // The visible slice in page-local display coords, mapped to page space for the painters.
+            val displayRegion = Rect.fromPoints(
                 Pt(max(pr.left, visible.left) - pr.left, max(pr.top, visible.top) - pr.top),
                 Pt(min(pr.right, visible.right) - pr.left, min(pr.bottom, visible.bottom) - pr.top),
             )
-            draws.add(SharpPageSnap(page, pr, cacheItems(page), region, i))
+            draws.add(SharpPageSnap(page, pr, cacheItems(page), displayRectToPage(page, displayRegion), i))
         }
         if (draws.isEmpty()) return
         pendingSharp = true
@@ -1079,6 +1157,7 @@ class CanvasState(
             rb.save()
             rb.clipRect(d.pr)
             rb.translate(d.pr.left, d.pr.top)
+            applyPageRotation(rb, d.page)
             if (paintPageBackground != null && d.region.w > 0.0 && d.region.h > 0.0) {
                 paintPageBackground?.invoke(d.page, rb, res, d.region)
             }
@@ -1092,6 +1171,7 @@ class CanvasState(
             ri.save()
             ri.clipRect(d.pr)
             ri.translate(d.pr.left, d.pr.top)
+            applyPageRotation(ri, d.page)
             if (withFlow && d.region.w > 0.0 && d.region.h > 0.0) {
                 paintFlow?.invoke(d.page, ri, d.region)
             }
@@ -1112,6 +1192,7 @@ class CanvasState(
         r.scale(f.z, f.z)
         r.clipRect(pr)
         r.translate(pr.left, pr.top)
+        applyPageRotation(r, page)
         item.paint(r)
         r.restore()
     }
@@ -1126,7 +1207,9 @@ class CanvasState(
         r.save()
         r.translate(o0.x, o0.y)
         r.scale(f.z, f.z)
+        r.clipRect(pr)
         r.translate(pr.left, pr.top)
+        applyPageRotation(r, page)
         r.clipRect(dirtyRect)
         r.clear()
         if (!flowLifted) paintFlow?.invoke(page, r, dirtyRect)

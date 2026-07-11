@@ -40,12 +40,20 @@ data class Pen(
  * calls every frame; the renderer retains no scene. The same interface draws to
  * the screen, to offscreen [RasterSurface]s, and to PDF export.
  *
- * Only translation and uniform/axis scaling are used — never rotation or shear.
+ * Only translation, uniform/axis scaling and quarter-turn [rotate] are used —
+ * never free rotation or shear.
  */
 interface Renderer {
     // --- transform / clip stack ---
     fun save()
     fun restore()
+
+    /**
+     * Rotate the coordinate system clockwise by [degrees] — always a multiple of 90
+     * (the rotated-page view), so implementations stay exact and axis-aligned. The
+     * default no-op is for backends that never draw rotated views (PDF export).
+     */
+    fun rotate(degrees: Double) {}
 
     /**
      * Begin an offscreen layer over [bounds] that is composited at [alpha] when

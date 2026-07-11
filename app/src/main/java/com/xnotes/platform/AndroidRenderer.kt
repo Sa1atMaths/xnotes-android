@@ -93,6 +93,17 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         canvas.translate(dx.toFloat(), dy.toFloat())
     }
 
+    override fun rotate(degrees: Double) {
+        canvas.rotate(degrees.toFloat())
+        // A quarter turn swaps which axis each scale factor acts on (cosmetic pen math).
+        val d = ((degrees % 360.0) + 360.0) % 360.0
+        if (d == 90.0 || d == 270.0) {
+            val t = scaleX
+            scaleX = scaleY
+            scaleY = t
+        }
+    }
+
     override fun scale(sx: Double, sy: Double) {
         canvas.scale(sx.toFloat(), sy.toFloat())
         scaleX *= sx.toFloat()
