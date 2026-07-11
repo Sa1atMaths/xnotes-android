@@ -17,9 +17,9 @@ enum class ViewingMode(val id: String) {
 }
 
 /**
- * Per-note View-menu settings. Scoped to the open file but stored app-side — in
- * [com.xnotes.platform.ViewStateStore] for folder notes and the session sidecar for
- * the open note, exactly like zoom and scroll — never in the .xnote format.
+ * A complete set of View-menu settings. Used in two roles: the app-wide **defaults**
+ * (the menu's Global tab, persisted in [com.xnotes.settings.Settings]) and the
+ * **resolved** effective settings of the open note ([ViewOverrides.resolve]).
  * The colour filters follow CSS filter semantics and are applied to the PDF page
  * raster only, in the fixed order contrast, invert, brightness, sepia.
  */
@@ -28,22 +28,52 @@ data class ViewSettings(
     /** True = continuous vertical scroll; false = paginated horizontal page-flip. */
     val verticalScroll: Boolean = true,
     val contrast: Int = 100, // 0..200, 100 = untouched
-    /** Null = follow the global "open PDFs in dark mode" preference; set = this note's override. */
-    val invert: Int? = null, // 0..100
+    val invert: Int = 0, // 0..100
     val brightness: Int = 100, // 0..200, 100 = untouched
     val sepia: Int = 0, // 0..100
+    /** Embedded PDF images keep their original pixels instead of taking the filters. */
+    val keepImages: Boolean = false,
     /** Whole-file page rotation, clockwise degrees: 0, 90, 180 or 270. */
     val rotation: Int = 0,
     /** Whether the canvas-area scrollbar is shown (off by default). */
     val scrollbar: Boolean = false,
 ) {
-    /** The invert percentage to render with, resolving a null override against the global default. */
-    fun effectiveInvert(globalPdfDarkMode: Boolean): Int = invert ?: if (globalPdfDarkMode) 100 else 0
-
     companion object {
         val ROTATIONS = listOf(0, 90, 180, 270)
 
         /** Snap any degree value onto the supported quarter turns. */
         fun normalizeRotation(deg: Int): Int = (((deg % 360) + 360) % 360) / 90 * 90
     }
+}
+
+/**
+ * Per-note View-menu overrides (the menu's This Doc tab): null fields inherit the
+ * global [ViewSettings] defaults, set fields shadow them for this note. Scoped to the
+ * open file but stored app-side — in [com.xnotes.platform.ViewStateStore] for folder
+ * notes and the session sidecar for the open note, exactly like zoom and scroll —
+ * never in the .xnote format.
+ */
+data class ViewOverrides(
+    val mode: ViewingMode? = null,
+    val verticalScroll: Boolean? = null,
+    val contrast: Int? = null,
+    val invert: Int? = null,
+    val brightness: Int? = null,
+    val sepia: Int? = null,
+    val keepImages: Boolean? = null,
+    val rotation: Int? = null,
+    val scrollbar: Boolean? = null,
+) {
+    /** The note's effective settings: every null falls back to [defaults]. */
+    fun resolve(defaults: ViewSettings): ViewSettings = ViewSettings(
+        mode = mode ?: defaults.mode,
+        verticalScroll = verticalScroll ?: defaults.verticalScroll,
+        contrast = contrast ?: defaults.contrast,
+        invert = invert ?: defaults.invert,
+        brightness = brightness ?: defaults.brightness,
+        sepia = sepia ?: defaults.sepia,
+        keepImages = keepImages ?: defaults.keepImages,
+        rotation = rotation ?: defaults.rotation,
+        scrollbar = scrollbar ?: defaults.scrollbar,
+    )
 }

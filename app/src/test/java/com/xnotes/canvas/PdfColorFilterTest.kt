@@ -71,31 +71,19 @@ class PdfColorFilterTest {
         assertFalse(PdfPageFilter.NONE.stampImages)
     }
 
-    @Test fun imagesStampRawWhenOnlyInverting() {
-        val f = PdfPageFilter.of(100, 100, 100, 0, keepImages = true)
-        assertNotNull(f.pageMatrix)
-        assertTrue(f.stampImages)
-        assertNull(f.imageMatrix) // nothing but invert in the chain: stamp the raw originals
-    }
-
-    @Test fun imagesKeepNonInvertStagesWhenStamping() {
-        val f = PdfPageFilter.of(150, 100, 100, 20, keepImages = true)
-        assertTrue(f.stampImages)
-        assertNotNull(f.imageMatrix)
-        // The image matrix is the chain without invert: contrast 150 + sepia 20 still apply.
-        val (pr, _, _) = apply(f.imageMatrix!!, 255f, 255f, 255f)
-        val (fr, _, _) = apply(PdfColorFilter.matrix(150, 0, 100, 20), 255f, 255f, 255f)
-        assertEquals(fr, pr, 1e-4f)
-    }
-
-    @Test fun noStampingWithoutInvert() {
-        val f = PdfPageFilter.of(150, 0, 100, 0, keepImages = true)
-        assertNotNull(f.pageMatrix)
-        assertFalse(f.stampImages)
+    @Test fun imagesStampRawUnderAnyFilter() {
+        // "Don't filter images" exempts them from the whole chain, not just the invert.
+        val inverted = PdfPageFilter.of(100, 100, 100, 0, keepImages = true)
+        assertNotNull(inverted.pageMatrix)
+        assertTrue(inverted.stampImages)
+        val sepiaOnly = PdfPageFilter.of(100, 0, 100, 30, keepImages = true)
+        assertNotNull(sepiaOnly.pageMatrix)
+        assertTrue(sepiaOnly.stampImages)
     }
 
     @Test fun noStampingWhenImagesFollowTheFilter() {
         val f = PdfPageFilter.of(100, 100, 100, 0, keepImages = false)
+        assertNotNull(f.pageMatrix)
         assertFalse(f.stampImages)
     }
 }

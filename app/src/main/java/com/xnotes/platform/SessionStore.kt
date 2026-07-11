@@ -1,6 +1,6 @@
 package com.xnotes.platform
 
-import com.xnotes.canvas.ViewSettings
+import com.xnotes.canvas.ViewOverrides
 import com.xnotes.core.model.Document
 import com.xnotes.format.DocumentCodec
 import org.json.JSONObject
@@ -31,7 +31,7 @@ class SessionStore(private val dir: File, private val codec: DocumentCodec, priv
         val scrollX: Double,
         val scrollY: Double,
         val zoomLocked: Boolean,
-        val viewSettings: ViewSettings,
+        val viewOverrides: ViewOverrides,
     )
 
     /**
@@ -45,7 +45,7 @@ class SessionStore(private val dir: File, private val codec: DocumentCodec, priv
         scrollX: Double,
         scrollY: Double,
         zoomLocked: Boolean,
-        viewSettings: ViewSettings,
+        viewOverrides: ViewOverrides,
         writeDocument: Boolean,
     ) {
         runCatching {
@@ -66,7 +66,7 @@ class SessionStore(private val dir: File, private val codec: DocumentCodec, priv
                 .put("zoomLocked", zoomLocked)
             document.path?.let { m.put("path", it) }
             document.displayName?.let { m.put("displayName", it) }
-            meta.write(ViewSettingsJson.write(m, viewSettings))
+            meta.write(ViewOverridesJson.write(m, viewOverrides))
         }
     }
 
@@ -93,7 +93,7 @@ class SessionStore(private val dir: File, private val codec: DocumentCodec, priv
             m.optDouble("scrollX", 0.0),
             m.optDouble("scrollY", 0.0),
             m.optBoolean("zoomLocked", false),
-            ViewSettingsJson.read(m),
+            ViewOverridesJson.read(m),
         )
     }
 }

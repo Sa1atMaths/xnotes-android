@@ -1,10 +1,10 @@
 package com.xnotes.platform
 
-import com.xnotes.canvas.ViewSettings
+import com.xnotes.canvas.ViewOverrides
 import org.json.JSONObject
 
 /**
- * Remembers each note's last view — zoom, scroll and the View-menu settings — keyed by
+ * Remembers each note's last view — zoom, scroll and its View-menu overrides — keyed by
  * document identity, so a note in the granted folder reopens exactly where (and how) the
  * user left it. Held in memory and mirrored to a small JSON file ([JsonStore.viewStates]);
  * [clear]ed when the user forgets the folder, since the keys are only meaningful for that
@@ -12,7 +12,7 @@ import org.json.JSONObject
  */
 class ViewStateStore(private val store: JsonStore) {
 
-    class View(val zoom: Double, val scrollX: Double, val scrollY: Double, val settings: ViewSettings)
+    class View(val zoom: Double, val scrollX: Double, val scrollY: Double, val overrides: ViewOverrides)
 
     private val views: MutableMap<String, View> = load()
 
@@ -25,7 +25,7 @@ class ViewStateStore(private val store: JsonStore) {
                 e.optDouble("zoom", 0.0),
                 e.optDouble("scrollX", 0.0),
                 e.optDouble("scrollY", 0.0),
-                ViewSettingsJson.read(e),
+                ViewOverridesJson.read(e),
             )
         }
         return out
@@ -33,8 +33,8 @@ class ViewStateStore(private val store: JsonStore) {
 
     fun get(key: String): View? = views[key]
 
-    fun put(key: String, zoom: Double, scrollX: Double, scrollY: Double, settings: ViewSettings) {
-        views[key] = View(zoom, scrollX, scrollY, settings)
+    fun put(key: String, zoom: Double, scrollX: Double, scrollY: Double, overrides: ViewOverrides) {
+        views[key] = View(zoom, scrollX, scrollY, overrides)
         store.write(toJson())
     }
 
@@ -58,7 +58,7 @@ class ViewStateStore(private val store: JsonStore) {
         val o = JSONObject()
         for ((k, v) in views) {
             val e = JSONObject().put("zoom", v.zoom).put("scrollX", v.scrollX).put("scrollY", v.scrollY)
-            o.put(k, ViewSettingsJson.write(e, v.settings))
+            o.put(k, ViewOverridesJson.write(e, v.overrides))
         }
         return o
     }

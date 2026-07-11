@@ -280,74 +280,90 @@ private fun StyleCaption(text: String) {
 }
 
 /**
- * The toolbar's View menu: the note's viewing mode, scroll direction, PDF colour filters,
- * rotation and canvas scrollbar. All values live in [com.xnotes.canvas.ViewSettings] — scoped
- * to the open file and stored app-side (like zoom/scroll), never in the file itself. The
- * invert spinfield follows the global "open PDFs in dark mode" preference until its value is
- * changed here; AUTO returns it to following the global default.
+ * The toolbar's View menu, in two tabs: GLOBAL edits the app-wide default view settings
+ * (persisted with the app settings), THIS DOC edits the open note's overrides of those
+ * defaults — stored app-side like zoom/scroll, never in the file itself. The This Doc tab
+ * always shows the note's effective (resolved) values; a control changed there shadows
+ * the global default for this note only.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ViewMenuPopup(editor: Editor, onDismiss: () -> Unit) {
-    val vs = editor.viewSettings
-    fun apply(next: com.xnotes.canvas.ViewSettings) = editor.updateViewSettings(next)
+    var tab by remember { mutableStateOf(1) } // open on This Doc — the everyday target
+    val global = tab == 0
+    val defaults = editor.viewDefaults
+    val overrides = editor.viewOverrides
+    val vs = if (global) defaults else editor.viewSettings
+
+    fun setMode(v: ViewingMode) =
+        if (global) editor.updateViewDefaults(defaults.copy(mode = v)) else editor.updateViewOverrides(overrides.copy(mode = v))
+    fun setVerticalScroll(v: Boolean) =
+        if (global) editor.updateViewDefaults(defaults.copy(verticalScroll = v)) else editor.updateViewOverrides(overrides.copy(verticalScroll = v))
+    fun setContrast(v: Int) =
+        if (global) editor.updateViewDefaults(defaults.copy(contrast = v)) else editor.updateViewOverrides(overrides.copy(contrast = v))
+    fun setInvert(v: Int) =
+        if (global) editor.updateViewDefaults(defaults.copy(invert = v)) else editor.updateViewOverrides(overrides.copy(invert = v))
+    fun setBrightness(v: Int) =
+        if (global) editor.updateViewDefaults(defaults.copy(brightness = v)) else editor.updateViewOverrides(overrides.copy(brightness = v))
+    fun setSepia(v: Int) =
+        if (global) editor.updateViewDefaults(defaults.copy(sepia = v)) else editor.updateViewOverrides(overrides.copy(sepia = v))
+    fun setKeepImages(v: Boolean) =
+        if (global) editor.updateViewDefaults(defaults.copy(keepImages = v)) else editor.updateViewOverrides(overrides.copy(keepImages = v))
+    fun setRotation(v: Int) =
+        if (global) editor.updateViewDefaults(defaults.copy(rotation = v)) else editor.updateViewOverrides(overrides.copy(rotation = v))
+    fun setScrollbar(v: Boolean) =
+        if (global) editor.updateViewDefaults(defaults.copy(scrollbar = v)) else editor.updateViewOverrides(overrides.copy(scrollbar = v))
 
     DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
         Column(Modifier.width(300.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
             PopupTitle("VIEW")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("Global", global) { tab = 0 }
+                ModeChip("This Doc", !global) { tab = 1 }
+            }
+            Text(
+                if (global) "Applies on every document" else "Overrides the Global view settings for this document",
+                color = LocalPalette.current.textDim.toComposeColor(),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+
+            Spacer(Modifier.size(10.dp))
             StyleCaption("VIEWING MODE")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ModeChip("Single", vs.mode == ViewingMode.SINGLE) { apply(vs.copy(mode = ViewingMode.SINGLE)) }
-                ModeChip("Double", vs.mode == ViewingMode.DOUBLE) { apply(vs.copy(mode = ViewingMode.DOUBLE)) }
-                ModeChip("Cover", vs.mode == ViewingMode.COVER) { apply(vs.copy(mode = ViewingMode.COVER)) }
+                ModeChip("Single", vs.mode == ViewingMode.SINGLE) { setMode(ViewingMode.SINGLE) }
+                ModeChip("Double", vs.mode == ViewingMode.DOUBLE) { setMode(ViewingMode.DOUBLE) }
+                ModeChip("Cover", vs.mode == ViewingMode.COVER) { setMode(ViewingMode.COVER) }
             }
 
             Spacer(Modifier.size(10.dp))
-            ToggleRow("VERTICAL SCROLLING", vs.verticalScroll) { apply(vs.copy(verticalScroll = it)) }
+            ToggleRow("VERTICAL SCROLLING", vs.verticalScroll) { setVerticalScroll(it) }
 
             Spacer(Modifier.size(10.dp))
             StyleCaption("PDF COLOUR FILTERS")
-            FilterSpinRow("Contrast", vs.contrast, 0, 200) { apply(vs.copy(contrast = it)) }
-            FilterSpinRow("Invert", vs.effectiveInvert(editor.preferences.pdfDarkMode), 0, 100, {
-                Text(
-                    "AUTO",
-                    color = (if (vs.invert == null) LocalPalette.current.accent else LocalPalette.current.textDim).toComposeColor(),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .clickable { apply(vs.copy(invert = null)) }
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                )
-            }) { apply(vs.copy(invert = it)) }
-            FilterSpinRow("Brightness", vs.brightness, 0, 200) { apply(vs.copy(brightness = it)) }
-            FilterSpinRow("Sepia", vs.sepia, 0, 100) { apply(vs.copy(sepia = it)) }
+            FilterSpinRow("Contrast", vs.contrast, 0, 200) { setContrast(it) }
+            FilterSpinRow("Invert", vs.invert, 0, 100) { setInvert(it) }
+            FilterSpinRow("Brightness", vs.brightness, 0, 200) { setBrightness(it) }
+            FilterSpinRow("Sepia", vs.sepia, 0, 100) { setSepia(it) }
+            ToggleRow("DON'T FILTER IMAGES", vs.keepImages) { setKeepImages(it) }
 
             Spacer(Modifier.size(10.dp))
             StyleCaption("ROTATE  ${vs.rotation}°")
             Slider(
                 value = vs.rotation.toFloat(),
-                onValueChange = { apply(vs.copy(rotation = (it / 90f).roundToInt() * 90)) },
+                onValueChange = { setRotation((it / 90f).roundToInt() * 90) },
                 valueRange = 0f..270f,
                 steps = 2,
             )
 
-            ToggleRow("SCROLLBAR", vs.scrollbar) { apply(vs.copy(scrollbar = it)) }
+            ToggleRow("SCROLLBAR", vs.scrollbar) { setScrollbar(it) }
         }
     }
 }
 
 /** A labelled percentage spinfield (minus / value / plus, stepping by 5) for the PDF filters. */
 @Composable
-private fun FilterSpinRow(
-    label: String,
-    value: Int,
-    min: Int,
-    max: Int,
-    trailing: (@Composable () -> Unit)? = null,
-    onChange: (Int) -> Unit,
-) {
+private fun FilterSpinRow(label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
     val palette = LocalPalette.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = palette.textDim.toComposeColor(), fontSize = 13.sp, modifier = Modifier.width(84.dp))
@@ -365,7 +381,6 @@ private fun FilterSpinRow(
         Box(Modifier.size(34.dp).clickable { onChange((value + 5).coerceIn(min, max)) }, contentAlignment = Alignment.Center) {
             Text("+", color = palette.text.toComposeColor(), fontSize = 18.sp)
         }
-        trailing?.invoke()
     }
 }
 

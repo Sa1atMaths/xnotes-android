@@ -54,6 +54,8 @@ enum class ExplorerSortKey(val id: String) {
 
 /** All persistent non-document state (spec 09 §2). */
 data class Settings(
+    /** Global View-menu defaults (its Global tab); per-note [com.xnotes.canvas.ViewOverrides] shadow them. */
+    val viewDefaults: com.xnotes.canvas.ViewSettings = com.xnotes.canvas.ViewSettings(),
     val tools: Map<Tool, ToolConfig> = emptyMap(),
     val shapeConfig: ShapeConfig = ShapeConfig(),
     val toolbarColors: List<Rgba> = InkPalette.presets,
@@ -102,6 +104,7 @@ data class Settings(
             .put("render_scale", renderScale)
             .put("presentation", presentation.toJson())
             .put("prefs", prefs.toJson())
+            .put("view_defaults", com.xnotes.platform.ViewSettingsJson.write(JSONObject(), viewDefaults))
             .put("finger_draw_auto_checked", fingerDrawAutoChecked)
     }
 
@@ -120,6 +123,9 @@ data class Settings(
             while (colors.size < 7) colors.add(InkPalette.presets[colors.size])
 
             return Settings(
+                viewDefaults = o.optJSONObject("view_defaults")
+                    ?.let { com.xnotes.platform.ViewSettingsJson.read(it) }
+                    ?: legacyViewDefaults(o.optJSONObject("prefs")),
                 tools = tools,
                 shapeConfig = shape,
                 toolbarColors = colors.take(7),
@@ -136,6 +142,16 @@ data class Settings(
                 presentation = PresentationSettings.fromJson(o.optJSONObject("presentation")),
                 prefs = Preferences.fromJson(o.optJSONObject("prefs")),
                 fingerDrawAutoChecked = o.optBoolean("finger_draw_auto_checked", false),
+            )
+        }
+
+        /** Settings written before the View menu's Global tab: the old PDF dark-mode
+         *  checkboxes seed the global invert / keep-images defaults. */
+        private fun legacyViewDefaults(prefs: JSONObject?): com.xnotes.canvas.ViewSettings {
+            if (prefs == null) return com.xnotes.canvas.ViewSettings()
+            return com.xnotes.canvas.ViewSettings(
+                invert = if (prefs.optBoolean("pdf_dark_mode", false)) 100 else 0,
+                keepImages = prefs.optBoolean("pdf_keep_image_colors", false),
             )
         }
 

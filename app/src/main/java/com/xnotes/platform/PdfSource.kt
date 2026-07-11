@@ -160,7 +160,7 @@ class PdfSource private constructor(
         val filtered = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(filtered).drawBitmap(bmp, 0f, 0f, matrixPaint(m))
         if (filter.stampImages) {
-            keepImageColors(index, filtered, bmp, filter.imageMatrix, fullWpx = w, fullHpx = h, offsetXpx = 0, offsetYpx = 0)
+            keepImageColors(index, filtered, bmp, fullWpx = w, fullHpx = h, offsetXpx = 0, offsetYpx = 0)
         }
         bmp.recycle()
         return AndroidRasterSurface(filtered)
@@ -201,15 +201,15 @@ class PdfSource private constructor(
         val filtered = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(filtered).drawBitmap(bmp, 0f, 0f, matrixPaint(pm))
         if (filter.stampImages) {
-            keepImageColors(index, filtered, bmp, filter.imageMatrix, fullWpx, fullHpx, offsetXpx = regionLeftPx, offsetYpx = regionTopPx)
+            keepImageColors(index, filtered, bmp, fullWpx, fullHpx, offsetXpx = regionLeftPx, offsetYpx = regionTopPx)
         }
         bmp.recycle()
         return AndroidRasterSurface(filtered)
     }
 
-    /** A bitmap paint applying colour matrix [m], or a plain paint when [m] is null. */
-    private fun matrixPaint(m: FloatArray?): Paint = Paint().apply {
-        if (m != null) colorFilter = ColorMatrixColorFilter(ColorMatrix(m))
+    /** A bitmap paint applying colour matrix [m]. */
+    private fun matrixPaint(m: FloatArray): Paint = Paint().apply {
+        colorFilter = ColorMatrixColorFilter(ColorMatrix(m))
     }
 
     /**
@@ -224,29 +224,26 @@ class PdfSource private constructor(
         index: Int,
         filtered: Bitmap,
         original: Bitmap,
-        imageMatrix: FloatArray?,
         fullWpx: Int,
         fullHpx: Int,
         offsetXpx: Int,
         offsetYpx: Int,
     ) {
         if (imageRects.containsKey(index)) {
-            stampOriginalImages(filtered, original, imageMatrix, index, fullWpx, fullHpx, offsetXpx, offsetYpx)
+            stampOriginalImages(filtered, original, index, fullWpx, fullHpx, offsetXpx, offsetYpx)
         }
         // Not parsed yet: leave the images filtered; the sweep will fill it in and trigger a re-render.
     }
 
     /**
-     * Copy the [original] pixels — through [imageMatrix], the filter chain minus its invert
-     * stage (null = raw) — back over each image box of [index] so embedded images keep their
-     * real colours. Boxes are page fractions; they map onto the full page at [fullWpx] ×
-     * [fullHpx], then are shifted by ([offsetXpx], [offsetYpx]) into this bitmap's space and
-     * clipped to it (so it works for both whole-page and region renders).
+     * Copy the raw [original] pixels back over each image box of [index] so embedded images
+     * keep their real colours under any filter. Boxes are page fractions; they map onto the
+     * full page at [fullWpx] × [fullHpx], then are shifted by ([offsetXpx], [offsetYpx]) into
+     * this bitmap's space and clipped to it (so it works for both whole-page and region renders).
      */
     private fun stampOriginalImages(
         filtered: Bitmap,
         original: Bitmap,
-        imageMatrix: FloatArray?,
         index: Int,
         fullWpx: Int,
         fullHpx: Int,
@@ -258,7 +255,6 @@ class PdfSource private constructor(
         val w = filtered.width
         val h = filtered.height
         val canvas = Canvas(filtered)
-        val paint = matrixPaint(imageMatrix)
         for (f in rects) {
             val left = (Math.round(f.left * fullWpx) - offsetXpx).coerceIn(0, w)
             val top = (Math.round(f.top * fullHpx) - offsetYpx).coerceIn(0, h)
@@ -266,7 +262,7 @@ class PdfSource private constructor(
             val bottom = (Math.round(f.bottom * fullHpx) - offsetYpx).coerceIn(0, h)
             if (right > left && bottom > top) {
                 val rect = Rect(left, top, right, bottom) // src == dst: stamp 1:1 over the filtered pixels
-                canvas.drawBitmap(original, rect, rect, paint)
+                canvas.drawBitmap(original, rect, rect, null)
             }
         }
     }

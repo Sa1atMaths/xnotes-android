@@ -292,8 +292,17 @@ class Editor(context: Context) {
     var zoomLocked by mutableStateOf(false)
         private set
 
-    /** The open note's View-menu settings (per-file, stored app-side like zoom/scroll). */
-    var viewSettings by mutableStateOf(com.xnotes.canvas.ViewSettings())
+    /** Global View-menu defaults (the menu's Global tab; persisted in settings.json). */
+    var viewDefaults by mutableStateOf(settings.viewDefaults)
+        private set
+
+    /** The open note's View-menu overrides (its This Doc tab; stored app-side like zoom/scroll). */
+    var viewOverrides by mutableStateOf(com.xnotes.canvas.ViewOverrides())
+        private set
+
+    /** The open note's effective View settings: [viewOverrides] resolved over [viewDefaults].
+     *  This is what the canvas, caches, thumbnails and presentation all consume. */
+    var viewSettings by mutableStateOf(settings.viewDefaults)
         private set
     var rulerVisible by mutableStateOf(false)
         private set
@@ -355,8 +364,9 @@ class Editor(context: Context) {
     var tocVersion by mutableStateOf(0)
         private set
 
-    /** True while a dark-mode PDF's embedded-image colours are still being parsed off-thread (only
-     *  when [Preferences.pdfDarkMode] + [Preferences.pdfKeepImageColors]); drives the canvas hint. */
+    /** True while a filtered PDF's embedded-image colours are still being parsed off-thread (only
+     *  when the note's resolved View settings filter pages and keep image colours); drives the
+     *  canvas hint. */
     var isRefiningPdf by mutableStateOf(false)
         private set
 
@@ -626,6 +636,9 @@ class Editor(context: Context) {
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         view.afterLayout = { refreshView() }
         view.onScrollbarScrolled = { refreshView() }
+        // The canvas starts at built-in defaults; push any non-default global View settings
+        // (mode/rotation/scroll direction/scrollbar) into it before the first document lands.
+        onViewSettingsChanged(com.xnotes.canvas.ViewSettings(), viewSettings)
         view.onKey = { e -> e.action == android.view.KeyEvent.ACTION_DOWN && handleKeyDown(e) }
         controller.clipboardHasImage = { clipboardImageUri() != null }
         controller.onLinkTap = onLinkTap@{ pageIndex, pageLocal ->
@@ -1224,19 +1237,11 @@ class Editor(context: Context) {
     /** Apply edited preferences live and persist (used by the Preferences dialog). */
     fun applyPreferences(p: Preferences) {
         val marginChanged = p.sideMargin != settings.prefs.sideMargin
-        val pdfRenderChanged = p.pdfDarkMode != settings.prefs.pdfDarkMode ||
-            p.pdfKeepImageColors != settings.prefs.pdfKeepImageColors
         settings = settings.copy(prefs = p)
         fullscreen = p.startFullscreen ?: !deviceHasDisplayCutout // keep in sync (e.g. Reset to defaults)
         applyPagePrefsToState(p)
         republishFlow(invalidate = true) // re-bake flow colours (default text, code) for the new appearance
         state.invalidateAllCaches()
-        startPdfRefine() // re-sweep / clear the hint if the dark-mode or keep-images preference toggled
-        if (pdfRenderChanged) {
-            // The effective PDF filter moved (it defaults from these prefs): stale thumbs must go.
-            if (evictPdfPageThumbnails()) pdfThumbTick++
-            currentUri?.let { invalidateThumb(it) }
-        }
         if (marginChanged) {
             state.fitWidth() // re-fit so the new side margin takes effect immediately
             refreshView()
@@ -1297,10 +1302,10 @@ class Editor(context: Context) {
         val sx = state.scrollX
         val sy = state.scrollY
         val locked = zoomLocked
-        val vs = viewSettings
+        val vo = viewOverrides
         autosaveScope.launch {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                session.save(snapshot, zoom, sx, sy, locked, vs, writeDocument = contentChanged)
+                session.save(snapshot, zoom, sx, sy, locked, vo, writeDocument = contentChanged)
             }
         }
     }
@@ -1320,7 +1325,7 @@ class Editor(context: Context) {
             // Prefer this note's own remembered view (folder notes); fall back to the session's
             // saved view for a non-folder/unsaved note; otherwise fit width.
             val saved = viewKey(snap.document.path)?.let { viewStates.get(it) }
-            installViewSettings(saved?.settings ?: snap.viewSettings)
+            installViewOverrides(saved?.overrides ?: snap.viewOverrides)
             state.pendingInitialView = when {
                 saved != null -> InitialView.Restore(saved.zoom, saved.scrollX, saved.scrollY)
                 snap.zoom > 0.0 -> InitialView.Restore(snap.zoom, snap.scrollX, snap.scrollY)
@@ -2318,23 +2323,40 @@ class Editor(context: Context) {
     private fun saveViewState() {
         if (!state.didInitialFit || state.viewportW <= 0) return // nothing meaningful established yet
         val key = viewKey(currentUri) ?: return
-        viewStates.put(key, state.zoom, state.scrollX, state.scrollY, viewSettings)
+        viewStates.put(key, state.zoom, state.scrollX, state.scrollY, viewOverrides)
     }
 
-    /** Update the open note's View-menu settings, react to what changed and persist them. */
-    fun updateViewSettings(new: com.xnotes.canvas.ViewSettings) {
-        val prev = viewSettings
-        if (prev == new) return
-        viewSettings = new
-        onViewSettingsChanged(prev, new)
+    /** Update the global View-menu defaults (its Global tab), persist them, and re-resolve
+     *  the open note — a note only follows the change where it has no override of its own. */
+    fun updateViewDefaults(new: com.xnotes.canvas.ViewSettings) {
+        if (viewDefaults == new) return
+        viewDefaults = new
+        settings = settings.copy(viewDefaults = new)
+        settingsRepo.save(settings)
+        applyResolvedViewSettings()
+    }
+
+    /** Update the open note's View-menu overrides (its This Doc tab) and persist them. */
+    fun updateViewOverrides(new: com.xnotes.canvas.ViewOverrides) {
+        if (viewOverrides == new) return
+        viewOverrides = new
+        applyResolvedViewSettings()
         saveViewState()
     }
 
-    /** Install a just-opened note's View-menu settings (no persistence — nothing changed yet). */
-    private fun installViewSettings(s: com.xnotes.canvas.ViewSettings) {
+    /** Install a just-opened note's View-menu overrides (no persistence — nothing changed yet). */
+    private fun installViewOverrides(o: com.xnotes.canvas.ViewOverrides) {
+        viewOverrides = o
+        applyResolvedViewSettings()
+    }
+
+    /** Re-resolve the effective settings and react to whatever actually changed. */
+    private fun applyResolvedViewSettings() {
         val prev = viewSettings
-        viewSettings = s
-        if (prev != s) onViewSettingsChanged(prev, s)
+        val resolved = viewOverrides.resolve(viewDefaults)
+        if (prev == resolved) return
+        viewSettings = resolved
+        onViewSettingsChanged(prev, resolved)
     }
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
@@ -2369,39 +2391,37 @@ class Editor(context: Context) {
             presentation.notifyChanged()
         }
         val filterChanged = prev.contrast != new.contrast || prev.invert != new.invert ||
-            prev.brightness != new.brightness || prev.sepia != new.sepia
+            prev.brightness != new.brightness || prev.sepia != new.sepia ||
+            prev.keepImages != new.keepImages
         if (filterChanged) {
             state.invalidateAllBackgrounds()
             if (evictPdfPageThumbnails()) pdfThumbTick++
             currentUri?.let { invalidateThumb(it) } // the recents tile re-renders with the new filter
-            startPdfRefine() // an invert override can newly require the image-box sweep
+            startPdfRefine() // a filter change can newly require the image-box sweep
         }
         view.scrollbarEnabled = new.scrollbar
         view.requestRender()
     }
 
-    /** The open note's PDF colour filter (View-menu values resolved against the global defaults). */
+    /** The open note's PDF colour filter (its resolved View-menu settings). */
     private fun pdfPageFilter(): com.xnotes.canvas.PdfPageFilter = pdfPageFilterFor(viewSettings)
 
     private fun pdfPageFilterFor(vs: com.xnotes.canvas.ViewSettings): com.xnotes.canvas.PdfPageFilter =
-        com.xnotes.canvas.PdfPageFilter.of(
-            vs.contrast,
-            vs.effectiveInvert(settings.prefs.pdfDarkMode),
-            vs.brightness,
-            vs.sepia,
-            keepImages = settings.prefs.pdfKeepImageColors,
-        )
+        com.xnotes.canvas.PdfPageFilter.of(vs.contrast, vs.invert, vs.brightness, vs.sepia, keepImages = vs.keepImages)
 
-    /** A note's View-menu settings by URI: the open note's live value, a folder note's
-     *  remembered one, else the defaults. */
+    /** A note's resolved View-menu settings by URI: the open note's live value, a folder note's
+     *  remembered overrides over the global defaults, else the defaults themselves. */
     private fun viewSettingsFor(uri: String?): com.xnotes.canvas.ViewSettings = when {
         uri != null && uri == currentUri -> viewSettings
-        else -> viewKey(uri)?.let { viewStates.get(it)?.settings } ?: com.xnotes.canvas.ViewSettings()
+        else -> (viewKey(uri)?.let { viewStates.get(it)?.overrides } ?: com.xnotes.canvas.ViewOverrides())
+            .resolve(viewDefaults)
     }
 
     /** True when the open note's PDF render stamps image colours (so image boxes are needed). */
-    private fun pdfKeepsImageColors(): Boolean =
-        settings.prefs.pdfKeepImageColors && viewSettings.effectiveInvert(settings.prefs.pdfDarkMode) > 0
+    private fun pdfKeepsImageColors(): Boolean = viewSettings.keepImages &&
+        !com.xnotes.canvas.PdfColorFilter.isIdentity(
+            viewSettings.contrast, viewSettings.invert, viewSettings.brightness, viewSettings.sepia,
+        )
 
     /** Drop every cached side-panel thumbnail backed by a PDF page (the filter changed). */
     private fun evictPdfPageThumbnails(): Boolean = synchronized(pageThumbs) {
@@ -2418,7 +2438,7 @@ class Editor(context: Context) {
      */
     private fun installInitialView(path: String?) {
         val saved = viewKey(path)?.let { viewStates.get(it) }
-        installViewSettings(saved?.settings ?: com.xnotes.canvas.ViewSettings())
+        installViewOverrides(saved?.overrides ?: com.xnotes.canvas.ViewOverrides())
         state.pendingInitialView =
             if (saved != null) InitialView.Restore(saved.zoom, saved.scrollX, saved.scrollY) else InitialView.FitWidth
         state.didInitialFit = false

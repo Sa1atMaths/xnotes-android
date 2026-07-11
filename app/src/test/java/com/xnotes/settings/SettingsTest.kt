@@ -23,6 +23,35 @@ class SettingsTest {
         assertFalse(s.sidebarVisible)
         assertEquals(PageSize.A4, s.prefs.defaultPageSize)
         assertTrue(s.prefs.isDark)
+        assertEquals(com.xnotes.canvas.ViewSettings(), s.viewDefaults)
+    }
+
+    @Test fun viewDefaultsRoundTrip() {
+        val original = Settings(
+            viewDefaults = com.xnotes.canvas.ViewSettings(
+                mode = com.xnotes.canvas.ViewingMode.DOUBLE,
+                invert = 100,
+                keepImages = true,
+                scrollbar = true,
+            ),
+        )
+        val back = Settings.fromJson(original.toJson())
+        assertEquals(original.viewDefaults, back.viewDefaults)
+    }
+
+    @Test fun legacyPdfDarkModeSeedsTheViewDefaults() {
+        // Settings written before the View menu's Global tab: the old checkboxes migrate.
+        val legacy = JSONObject().put(
+            "prefs",
+            JSONObject().put("pdf_dark_mode", true).put("pdf_keep_image_colors", true),
+        )
+        val s = Settings.fromJson(legacy)
+        assertEquals(100, s.viewDefaults.invert)
+        assertTrue(s.viewDefaults.keepImages)
+        // Once written back, the migrated defaults persist on their own.
+        val back = Settings.fromJson(s.toJson())
+        assertEquals(100, back.viewDefaults.invert)
+        assertTrue(back.viewDefaults.keepImages)
     }
 
     @Test fun roundTripPreservesValues() {

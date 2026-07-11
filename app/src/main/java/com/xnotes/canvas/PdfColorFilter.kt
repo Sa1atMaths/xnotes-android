@@ -87,28 +87,19 @@ object PdfColorFilter {
 
 /**
  * The colour treatment a PDF page is rendered through: an optional page-wide matrix, and
- * whether embedded images are re-stamped over the filtered page (the "don't invert images"
- * preference) — [imageMatrix] is the same chain minus the invert stage, null when the
- * stamped pixels should stay raw originals.
+ * whether embedded images are re-stamped raw over the filtered page (the View menu's
+ * "don't filter images" setting) so they keep their original colours.
  */
 class PdfPageFilter private constructor(
     val pageMatrix: FloatArray?,
     val stampImages: Boolean,
-    val imageMatrix: FloatArray?,
 ) {
     companion object {
-        val NONE = PdfPageFilter(null, false, null)
+        val NONE = PdfPageFilter(null, false)
 
         fun of(contrast: Int, invert: Int, brightness: Int, sepia: Int, keepImages: Boolean): PdfPageFilter {
             if (PdfColorFilter.isIdentity(contrast, invert, brightness, sepia)) return NONE
-            val page = PdfColorFilter.matrix(contrast, invert, brightness, sepia)
-            val stamp = keepImages && invert != 0
-            val image = if (stamp && !PdfColorFilter.isIdentity(contrast, 0, brightness, sepia)) {
-                PdfColorFilter.matrix(contrast, 0, brightness, sepia)
-            } else {
-                null
-            }
-            return PdfPageFilter(page, stamp, image)
+            return PdfPageFilter(PdfColorFilter.matrix(contrast, invert, brightness, sepia), keepImages)
         }
     }
 }
