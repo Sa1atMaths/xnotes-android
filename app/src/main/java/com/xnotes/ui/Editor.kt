@@ -291,6 +291,10 @@ class Editor(context: Context) {
     private val openCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
     var zoomLocked by mutableStateOf(false)
         private set
+
+    /** The open note's View-menu settings (per-file, stored app-side like zoom/scroll). */
+    var viewSettings by mutableStateOf(com.xnotes.canvas.ViewSettings())
+        private set
     var rulerVisible by mutableStateOf(false)
         private set
     var wandEnabled by mutableStateOf(false)
@@ -1286,9 +1290,10 @@ class Editor(context: Context) {
         val sx = state.scrollX
         val sy = state.scrollY
         val locked = zoomLocked
+        val vs = viewSettings
         autosaveScope.launch {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                session.save(snapshot, zoom, sx, sy, locked, writeDocument = contentChanged)
+                session.save(snapshot, zoom, sx, sy, locked, vs, writeDocument = contentChanged)
             }
         }
     }
@@ -1308,6 +1313,7 @@ class Editor(context: Context) {
             // Prefer this note's own remembered view (folder notes); fall back to the session's
             // saved view for a non-folder/unsaved note; otherwise fit width.
             val saved = viewKey(snap.document.path)?.let { viewStates.get(it) }
+            installViewSettings(saved?.settings ?: snap.viewSettings)
             state.pendingInitialView = when {
                 saved != null -> InitialView.Restore(saved.zoom, saved.scrollX, saved.scrollY)
                 snap.zoom > 0.0 -> InitialView.Restore(snap.zoom, snap.scrollX, snap.scrollY)
@@ -2288,16 +2294,39 @@ class Editor(context: Context) {
     private fun saveViewState() {
         if (!state.didInitialFit || state.viewportW <= 0) return // nothing meaningful established yet
         val key = viewKey(currentUri) ?: return
-        viewStates.put(key, state.zoom, state.scrollX, state.scrollY)
+        viewStates.put(key, state.zoom, state.scrollX, state.scrollY, viewSettings)
+    }
+
+    /** Update the open note's View-menu settings, react to what changed and persist them. */
+    fun updateViewSettings(new: com.xnotes.canvas.ViewSettings) {
+        val prev = viewSettings
+        if (prev == new) return
+        viewSettings = new
+        onViewSettingsChanged(prev, new)
+        saveViewState()
+    }
+
+    /** Install a just-opened note's View-menu settings (no persistence — nothing changed yet). */
+    private fun installViewSettings(s: com.xnotes.canvas.ViewSettings) {
+        val prev = viewSettings
+        viewSettings = s
+        if (prev != s) onViewSettingsChanged(prev, s)
+    }
+
+    /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
+    private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
+        view.requestRender()
     }
 
     /**
      * Choose a just-installed document's initial view — its remembered view for a folder note,
      * else fit-width — and apply it now if the viewport is sized, else on the next layout. Setting
-     * it explicitly is what stops the previous document's zoom/scroll from carrying over.
+     * it explicitly is what stops the previous document's zoom/scroll from carrying over. The
+     * note's View-menu settings ride along (folder notes remember them; anything else resets).
      */
     private fun installInitialView(path: String?) {
         val saved = viewKey(path)?.let { viewStates.get(it) }
+        installViewSettings(saved?.settings ?: com.xnotes.canvas.ViewSettings())
         state.pendingInitialView =
             if (saved != null) InitialView.Restore(saved.zoom, saved.scrollX, saved.scrollY) else InitialView.FitWidth
         state.didInitialFit = false

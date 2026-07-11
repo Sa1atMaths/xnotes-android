@@ -1,16 +1,18 @@
 package com.xnotes.platform
 
+import com.xnotes.canvas.ViewSettings
 import org.json.JSONObject
 
 /**
- * Remembers each note's last view — zoom and scroll — keyed by document identity, so a
- * note in the granted folder reopens exactly where the user left it. Held in memory and
- * mirrored to a small JSON file ([JsonStore.viewStates]); [clear]ed when the user forgets
- * the folder, since the keys are only meaningful for that folder's documents.
+ * Remembers each note's last view — zoom, scroll and the View-menu settings — keyed by
+ * document identity, so a note in the granted folder reopens exactly where (and how) the
+ * user left it. Held in memory and mirrored to a small JSON file ([JsonStore.viewStates]);
+ * [clear]ed when the user forgets the folder, since the keys are only meaningful for that
+ * folder's documents.
  */
 class ViewStateStore(private val store: JsonStore) {
 
-    class View(val zoom: Double, val scrollX: Double, val scrollY: Double)
+    class View(val zoom: Double, val scrollX: Double, val scrollY: Double, val settings: ViewSettings)
 
     private val views: MutableMap<String, View> = load()
 
@@ -19,15 +21,20 @@ class ViewStateStore(private val store: JsonStore) {
         val o = store.read()
         for (key in o.keys()) {
             val e = o.optJSONObject(key) ?: continue
-            out[key] = View(e.optDouble("zoom", 0.0), e.optDouble("scrollX", 0.0), e.optDouble("scrollY", 0.0))
+            out[key] = View(
+                e.optDouble("zoom", 0.0),
+                e.optDouble("scrollX", 0.0),
+                e.optDouble("scrollY", 0.0),
+                ViewSettingsJson.read(e),
+            )
         }
         return out
     }
 
     fun get(key: String): View? = views[key]
 
-    fun put(key: String, zoom: Double, scrollX: Double, scrollY: Double) {
-        views[key] = View(zoom, scrollX, scrollY)
+    fun put(key: String, zoom: Double, scrollX: Double, scrollY: Double, settings: ViewSettings) {
+        views[key] = View(zoom, scrollX, scrollY, settings)
         store.write(toJson())
     }
 
@@ -50,7 +57,8 @@ class ViewStateStore(private val store: JsonStore) {
     private fun toJson(): JSONObject {
         val o = JSONObject()
         for ((k, v) in views) {
-            o.put(k, JSONObject().put("zoom", v.zoom).put("scrollX", v.scrollX).put("scrollY", v.scrollY))
+            val e = JSONObject().put("zoom", v.zoom).put("scrollX", v.scrollX).put("scrollY", v.scrollY)
+            o.put(k, ViewSettingsJson.write(e, v.settings))
         }
         return o
     }
