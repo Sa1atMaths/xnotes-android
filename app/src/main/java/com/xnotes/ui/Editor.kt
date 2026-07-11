@@ -625,6 +625,7 @@ class Editor(context: Context) {
         view.genericMotion = { controller.onGenericMotion(it) }
         view.drawOverlay = { renderer, _ -> controller.drawOverlay(renderer) }
         view.afterLayout = { refreshView() }
+        view.onScrollbarScrolled = { refreshView() }
         view.onKey = { e -> e.action == android.view.KeyEvent.ACTION_DOWN && handleKeyDown(e) }
         controller.clipboardHasImage = { clipboardImageUri() != null }
         controller.onLinkTap = onLinkTap@{ pageIndex, pageLocal ->
@@ -2343,6 +2344,7 @@ class Editor(context: Context) {
             currentUri?.let { invalidateThumb(it) } // the recents tile re-renders with the new filter
             startPdfRefine() // an invert override can newly require the image-box sweep
         }
+        view.scrollbarEnabled = new.scrollbar
         view.requestRender()
     }
 

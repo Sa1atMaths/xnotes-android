@@ -95,6 +95,18 @@ class CanvasView @JvmOverloads constructor(
     /** Transparent debug HUD (frame rate / cache / heap), toggled by a four-finger tap. */
     val debugOverlay = DebugOverlay()
 
+    /** Whether the canvas scrollbar is shown (the View menu's per-note toggle). */
+    var scrollbarEnabled = false
+
+    /** Invoked after a scrollbar drag moved the view, so the host can refresh (page indicator). */
+    var onScrollbarScrolled: (() -> Unit)? = null
+
+    // Scrollbar drag state; the thumb is tracked as a fraction so fast drags don't drift.
+    private var scrollbarDragging = false
+    private var scrollbarFrac = 0.0
+    private var scrollbarLastY = 0f
+    private val scrollbarPaint = Paint()
+
     // Reused paints for the elastic "pull to add page" badge, so onDraw allocates nothing.
     private val overscrollStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val overscrollText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
@@ -141,9 +153,76 @@ class CanvasView @JvmOverloads constructor(
 
     @Suppress("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (trackScrollbar(event)) return true
         if (trackFourFingerTap(event)) return true
         if (trackMultiFingerTap(event)) return true
         return input?.invoke(event) ?: super.onTouchEvent(event)
+    }
+
+    // --- canvas scrollbar (View menu toggle; drawn in [onDraw], dragged like the sidebar's) ---
+
+    /** True when the scrollbar has anything to scroll for the current view. */
+    private fun scrollbarActive(st: CanvasState): Boolean = scrollbarEnabled && st.maxScrollY() > 0.0
+
+    /** Thumb length (viewport px): the viewport's share of the content, floored for grabbability. */
+    private fun scrollbarThumb(st: CanvasState): Float {
+        val track = st.viewportH.toFloat()
+        val share = (st.viewportH / (st.contentH * st.zoom)).toFloat().coerceAtMost(1f)
+        return (track * share).coerceAtLeast(SCROLLBAR_MIN_THUMB_DP * resources.displayMetrics.density).coerceAtMost(track)
+    }
+
+    /**
+     * Capture and drive a drag that starts on the scrollbar's band at the right edge. Deltas
+     * accumulate into a locally tracked fraction (seeded from the current scroll) and map back
+     * onto [CanvasState.scrollY], exactly like the side panel's scrollbar; once a drag is live
+     * every event is consumed until the finger lifts so no ink is drawn under the bar.
+     */
+    private fun trackScrollbar(e: MotionEvent): Boolean {
+        val st = state ?: return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (!scrollbarActive(st)) return false
+                val band = SCROLLBAR_TOUCH_DP * resources.displayMetrics.density
+                if (e.x < st.viewportW - band) return false
+                scrollbarDragging = true
+                scrollbarLastY = e.y
+                scrollbarFrac = st.scrollY / st.maxScrollY()
+                requestRender()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> if (scrollbarDragging) {
+                val dy = e.y - scrollbarLastY
+                scrollbarLastY = e.y
+                val travel = st.viewportH - scrollbarThumb(st)
+                if (dy != 0f && travel > 0f) {
+                    scrollbarFrac = (scrollbarFrac + dy / travel).coerceIn(0.0, 1.0)
+                    st.scrollY = scrollbarFrac * st.maxScrollY()
+                    st.clampScroll()
+                    onScrollbarScrolled?.invoke()
+                    requestRender()
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP ->
+                if (scrollbarDragging) return true // extra fingers never reach the canvas mid-drag
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (scrollbarDragging) {
+                scrollbarDragging = false
+                requestRender()
+                return true
+            }
+        }
+        return false
+    }
+
+    /** Draw the scrollbar thumb at the right edge (square, dim; accent while dragged). */
+    private fun drawScrollbar(canvas: Canvas, st: CanvasState) {
+        if (!scrollbarActive(st)) return
+        val d = resources.displayMetrics.density
+        val barW = SCROLLBAR_WIDTH_DP * d
+        val thumb = scrollbarThumb(st)
+        val top = ((st.viewportH - thumb) * (st.scrollY / st.maxScrollY())).toFloat()
+        scrollbarPaint.color = (if (scrollbarDragging) st.palette.accent else st.palette.textDim).toArgb()
+        canvas.drawRect(st.viewportW - barW, top, st.viewportW.toFloat(), top + thumb, scrollbarPaint)
     }
 
     /**
@@ -444,6 +523,8 @@ class CanvasView @JvmOverloads constructor(
         // Elastic "pull past the end to add a page" affordance, on top of everything (viewport space).
         if (st.overscrollY > 1.0) drawOverscrollIndicator(canvas, st)
 
+        drawScrollbar(canvas, st)
+
         st.dropCachesExcept(cachedPages)
 
         // Debug HUD on top, reading the just-pruned cache state (viewport space).
@@ -525,5 +606,14 @@ class CanvasView @JvmOverloads constructor(
 
         /** Idle repaint interval (ms) while the debug HUD is visible, so its FPS falls to 0. */
         private const val DEBUG_TICK_MS = 250L
+
+        /** Drawn scrollbar thumb width (dp), matching the side panel's. */
+        private const val SCROLLBAR_WIDTH_DP = 8f
+
+        /** Touch band width (dp) that grabs the scrollbar — wider than the drawn bar for fingers. */
+        private const val SCROLLBAR_TOUCH_DP = 16f
+
+        /** Minimum thumb length (dp), matching the side panel's. */
+        private const val SCROLLBAR_MIN_THUMB_DP = 28f
     }
 }
