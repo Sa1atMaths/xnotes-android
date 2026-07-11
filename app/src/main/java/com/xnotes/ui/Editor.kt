@@ -2320,6 +2320,21 @@ class Editor(context: Context) {
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
+        if (prev.mode != new.mode) {
+            // Re-group the pages, keep the reader on the same page, and re-fit a fit-width
+            // view to the new row width (a Double spread is about twice as wide).
+            val cur = if (state.didInitialFit) state.currentPageIndex() else 0
+            state.viewingMode = new.mode
+            state.relayout()
+            if (state.didInitialFit) {
+                if (state.fitWidthActive) {
+                    state.zoom = state.fitWidthZoom()
+                    state.invalidateCachesForZoom()
+                }
+                state.goToPage(cur)
+                refreshView()
+            }
+        }
         val filterChanged = prev.contrast != new.contrast || prev.invert != new.invert ||
             prev.brightness != new.brightness || prev.sepia != new.sepia
         if (filterChanged) {
@@ -2731,8 +2746,8 @@ class Editor(context: Context) {
     fun fitWidth() { state.fitWidth(); afterView() }
     fun fitHeight() { state.fitHeight(); afterView() }
     fun fitPage() { state.fitPage(); afterView() }
-    fun prevPage() { state.goToPage(state.currentPageIndex() - 1); afterView() }
-    fun nextPage() { state.goToPage(state.currentPageIndex() + 1); afterView() }
+    fun prevPage() { state.goToPage(state.prevPageIndex(state.currentPageIndex())); afterView() }
+    fun nextPage() { state.goToPage(state.nextPageIndex(state.currentPageIndex())); afterView() }
     fun goToPage(index: Int) { state.goToPage(index); afterView() }
 
     fun toggleZoomLock() {

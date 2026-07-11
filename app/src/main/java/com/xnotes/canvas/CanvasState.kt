@@ -106,6 +106,9 @@ class CanvasState(
     /** Horizontal margin on each side of the page column (0 ⇒ fit-width fills the viewport). */
     var sideMargin: Double = MARGIN
 
+    /** How pages group into layout rows (Single / Double / Cover); see [rowRanges]. */
+    var viewingMode: ViewingMode = ViewingMode.SINGLE
+
     /** While true (during a pinch/zoom drag) caches are blitted stale-scaled
      *  instead of rebuilt every frame; they rebuild at the final resolution when
      *  the gesture ends. */
@@ -258,6 +261,40 @@ class CanvasState(
 
     // --- layout ---
 
+    /**
+     * Pages grouped into layout rows by [viewingMode], as consecutive page-index ranges:
+     * Single = one page per row, Double = pairs (1-2, 3-4, …), Cover = the first page
+     * alone, then pairs (2-3, 4-5, …) so facing pages line up like a book.
+     */
+    fun rowRanges(): List<IntRange> {
+        val n = document.pages.size
+        if (n == 0) return emptyList()
+        return when (viewingMode) {
+            ViewingMode.SINGLE -> (0 until n).map { it..it }
+            ViewingMode.DOUBLE -> (0 until n step 2).map { it..min(it + 1, n - 1) }
+            ViewingMode.COVER -> buildList {
+                add(0..0)
+                var i = 1
+                while (i < n) {
+                    add(i..min(i + 1, n - 1))
+                    i += 2
+                }
+            }
+        }
+    }
+
+    /** The layout row containing [pageIndex]. */
+    fun rowOf(pageIndex: Int): IntRange {
+        val last = document.pages.lastIndex
+        val i = pageIndex.coerceIn(0, last)
+        return when (viewingMode) {
+            ViewingMode.SINGLE -> i..i
+            ViewingMode.DOUBLE -> (i - i % 2).let { it..min(it + 1, last) }
+            ViewingMode.COVER ->
+                if (i == 0) 0..0 else (if (i % 2 == 1) i else i - 1).let { it..min(it + 1, last) }
+        }
+    }
+
     fun relayout() {
         sharpGen++ // page layout / viewport size changed: the sharp viewport must re-render
         val pages = document.pages
@@ -267,15 +304,23 @@ class CanvasState(
             contentH = 2 * MARGIN
             return
         }
-        val maxW = pages.maxOf { it.width }
-        val rects = ArrayList<Rect>(pages.size)
+        // Rows stack top-down; a row's pages sit side by side (centred against the widest
+        // row, and vertically centred within their row so facing pages align).
+        val rows = rowRanges()
+        val rowWidths = rows.map { r -> r.sumOf { pages[it].width } + (r.last - r.first) * GAP }
+        val rowHeights = rows.map { r -> r.maxOf { pages[it].height } }
+        val maxW = rowWidths.max()
+        val rects = arrayOfNulls<Rect>(pages.size)
         var y = MARGIN // vertical top margin (keeps the page below the toolbar)
-        for (p in pages) {
-            val left = sideMargin + (maxW - p.width) / 2.0
-            rects.add(Rect(left, y, p.width, p.height))
-            y += p.height + GAP
+        for ((ri, row) in rows.withIndex()) {
+            var x = sideMargin + (maxW - rowWidths[ri]) / 2.0
+            for (i in row) {
+                rects[i] = Rect(x, y + (rowHeights[ri] - pages[i].height) / 2.0, pages[i].width, pages[i].height)
+                x += pages[i].width + GAP
+            }
+            y += rowHeights[ri] + GAP
         }
-        pageRects = rects
+        pageRects = rects.map { it!! }
         contentW = maxW + 2 * sideMargin
         contentH = (y - GAP) + MARGIN
         clampScroll()
@@ -359,18 +404,28 @@ class CanvasState(
      * [origin]/transform that draws the frame, so it can never disagree with what the user sees.
      */
     fun isDocumentEndVisible(): Boolean {
-        val lastBottom = pageRects.lastOrNull()?.bottom ?: return false
-        return contentToViewport(Pt(0.0, lastBottom)).y <= viewportH + 1.0
+        if (pageRects.isEmpty()) return false
+        // The last row's lowest edge is contentH - MARGIN whatever the viewing mode.
+        return contentToViewport(Pt(0.0, contentH - MARGIN)).y <= viewportH + 1.0
     }
+
+    /** The first page of the row after the one containing [from] (page-nav stepping). */
+    fun nextPageIndex(from: Int): Int = min(rowOf(from).last + 1, document.pages.lastIndex.coerceAtLeast(0))
+
+    /** The first page of the row before the one containing [from] (page-nav stepping). */
+    fun prevPageIndex(from: Int): Int = rowOf(max(rowOf(from).first - 1, 0)).first
 
     fun goToPage(index: Int) {
         if (pageRects.isEmpty()) return
         val i = index.coerceIn(0, pageRects.size - 1)
-        val pr = pageRects[i]
+        // Navigate to the page's whole layout row, so a Double/Cover spread centres as one.
+        val row = rowOf(i)
+        val top = row.minOf { pageRects[it].top }
+        val centerX = (row.minOf { pageRects[it].left } + row.maxOf { pageRects[it].right }) / 2.0
         // Scroll so the page label (just above the page top) clears the toolbar with a small gap,
         // so no part of the page is hidden behind the chrome.
-        scrollY = ((pr.top - PAGE_LABEL_OFFSET) * zoom - TOP_GAP).coerceAtLeast(0.0)
-        scrollX = pr.centerX * zoom - viewportW / 2.0
+        scrollY = ((top - PAGE_LABEL_OFFSET) * zoom - TOP_GAP).coerceAtLeast(0.0)
+        scrollX = centerX * zoom - viewportW / 2.0
         clampScroll()
     }
 
