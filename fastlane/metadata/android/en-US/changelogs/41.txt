@@ -1,0 +1,1 @@
+- Support devices with 16 KB memory page sizes
