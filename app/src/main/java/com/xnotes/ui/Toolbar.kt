@@ -176,6 +176,7 @@ private fun ToolbarItemView(
         }
         ToolbarItem.PAGE_MENU -> PageMenu(editor)
         ToolbarItem.STYLES -> StylesButton(editor)
+        ToolbarItem.VIEW -> ViewButton(editor)
 
         ToolbarItem.ZOOM -> {
             ToolbarIcon(XnotesIcons.zoomOut, "Zoom out", enabled = !editor.zoomLocked) { editor.zoomOut() }
@@ -269,6 +270,16 @@ private fun StylesButton(editor: Editor) {
     Box {
         ToolbarIcon(XnotesIcons.sliders, "Styles") { open = true }
         if (open) StylesPopup(editor) { open = false }
+    }
+}
+
+/** Opens the view menu (viewing mode, scroll direction, PDF filters, rotation, scrollbar). */
+@Composable
+private fun ViewButton(editor: Editor) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ToolbarIcon(XnotesIcons.view, "View") { open = true }
+        if (open) ViewMenuPopup(editor) { open = false }
     }
 }
 

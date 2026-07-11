@@ -32,8 +32,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xnotes.canvas.ViewingMode
 import com.xnotes.core.model.PagePattern
 import com.xnotes.core.model.PageStyle
 import com.xnotes.core.model.Rgba
@@ -275,6 +277,96 @@ private fun StyleCaption(text: String) {
         fontFamily = FontFamily.Monospace,
         fontSize = 11.sp,
     )
+}
+
+/**
+ * The toolbar's View menu: the note's viewing mode, scroll direction, PDF colour filters,
+ * rotation and canvas scrollbar. All values live in [com.xnotes.canvas.ViewSettings] — scoped
+ * to the open file and stored app-side (like zoom/scroll), never in the file itself. The
+ * invert spinfield follows the global "open PDFs in dark mode" preference until its value is
+ * changed here; AUTO returns it to following the global default.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ViewMenuPopup(editor: Editor, onDismiss: () -> Unit) {
+    val vs = editor.viewSettings
+    fun apply(next: com.xnotes.canvas.ViewSettings) = editor.updateViewSettings(next)
+
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        Column(Modifier.width(300.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
+            PopupTitle("VIEW")
+            StyleCaption("VIEWING MODE")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("Single", vs.mode == ViewingMode.SINGLE) { apply(vs.copy(mode = ViewingMode.SINGLE)) }
+                ModeChip("Double", vs.mode == ViewingMode.DOUBLE) { apply(vs.copy(mode = ViewingMode.DOUBLE)) }
+                ModeChip("Cover", vs.mode == ViewingMode.COVER) { apply(vs.copy(mode = ViewingMode.COVER)) }
+            }
+
+            Spacer(Modifier.size(10.dp))
+            ToggleRow("VERTICAL SCROLLING", vs.verticalScroll) { apply(vs.copy(verticalScroll = it)) }
+
+            Spacer(Modifier.size(10.dp))
+            StyleCaption("PDF COLOUR FILTERS")
+            FilterSpinRow("Contrast", vs.contrast, 0, 200) { apply(vs.copy(contrast = it)) }
+            FilterSpinRow("Invert", vs.effectiveInvert(editor.preferences.pdfDarkMode), 0, 100, {
+                Text(
+                    "AUTO",
+                    color = (if (vs.invert == null) LocalPalette.current.accent else LocalPalette.current.textDim).toComposeColor(),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { apply(vs.copy(invert = null)) }
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                )
+            }) { apply(vs.copy(invert = it)) }
+            FilterSpinRow("Brightness", vs.brightness, 0, 200) { apply(vs.copy(brightness = it)) }
+            FilterSpinRow("Sepia", vs.sepia, 0, 100) { apply(vs.copy(sepia = it)) }
+
+            Spacer(Modifier.size(10.dp))
+            StyleCaption("ROTATE  ${vs.rotation}°")
+            Slider(
+                value = vs.rotation.toFloat(),
+                onValueChange = { apply(vs.copy(rotation = (it / 90f).roundToInt() * 90)) },
+                valueRange = 0f..270f,
+                steps = 2,
+            )
+
+            ToggleRow("SCROLLBAR", vs.scrollbar) { apply(vs.copy(scrollbar = it)) }
+        }
+    }
+}
+
+/** A labelled percentage spinfield (minus / value / plus, stepping by 5) for the PDF filters. */
+@Composable
+private fun FilterSpinRow(
+    label: String,
+    value: Int,
+    min: Int,
+    max: Int,
+    trailing: (@Composable () -> Unit)? = null,
+    onChange: (Int) -> Unit,
+) {
+    val palette = LocalPalette.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = palette.textDim.toComposeColor(), fontSize = 13.sp, modifier = Modifier.width(84.dp))
+        Box(Modifier.size(34.dp).clickable { onChange((value - 5).coerceIn(min, max)) }, contentAlignment = Alignment.Center) {
+            Text("−", color = palette.text.toComposeColor(), fontSize = 18.sp)
+        }
+        Text(
+            "$value%",
+            color = palette.text.toComposeColor(),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(46.dp),
+        )
+        Box(Modifier.size(34.dp).clickable { onChange((value + 5).coerceIn(min, max)) }, contentAlignment = Alignment.Center) {
+            Text("+", color = palette.text.toComposeColor(), fontSize = 18.sp)
+        }
+        trailing?.invoke()
+    }
 }
 
 /** Eraser configuration popup: a STROKE/AREA mode picker and a SIZE slider (the eraser radius). */

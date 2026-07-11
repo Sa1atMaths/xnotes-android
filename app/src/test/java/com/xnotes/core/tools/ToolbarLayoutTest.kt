@@ -85,6 +85,16 @@ class ToolbarLayoutTest {
         assertEquals(items.indexOf(ToolbarItem.TEXT) + 1, items.indexOf(ToolbarItem.TEXT_BOX))
     }
 
+    @Test fun missingViewSlotsInAfterStyles() {
+        // A layout stored before the View menu existed: it must appear right after Styles.
+        val raw = ToolbarLayout.DEFAULT.toRaw()
+            .map { s -> s.filterNot { it.first == ToolbarItem.VIEW.id } }
+        val back = ToolbarLayout.fromRaw(raw)
+        val sec = back.sections.first { s -> s.entries.any { it.item == ToolbarItem.STYLES } }
+        val items = sec.entries.map { it.item }
+        assertEquals(items.indexOf(ToolbarItem.STYLES) + 1, items.indexOf(ToolbarItem.VIEW))
+    }
+
     @Test fun missingTextBoxWithoutTextAppendsToLastSection() {
         val raw = ToolbarLayout.DEFAULT.toRaw()
             .map { s -> s.filterNot { it.first == ToolbarItem.TEXT_BOX.id || it.first == ToolbarItem.TEXT.id } }

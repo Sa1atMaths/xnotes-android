@@ -35,6 +35,7 @@ enum class ToolbarItem(val id: String, val label: String) {
     PAGE_NAV("page_nav", "Page nav"),
     PAGE_MENU("page_menu", "Page menu"),
     STYLES("styles", "Styles"),
+    VIEW("view", "View"),
     ZOOM("zoom", "Zoom"),
     FIT("fit", "Fit"),
     ZOOM_LOCK("zoom_lock", "Zoom lock"),
@@ -137,7 +138,10 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
 
     companion object {
         /** Later-added items that belong beside an existing one in stored layouts. */
-        private val INSERT_AFTER = mapOf(ToolbarItem.TEXT_BOX to ToolbarItem.TEXT)
+        private val INSERT_AFTER = mapOf(
+            ToolbarItem.TEXT_BOX to ToolbarItem.TEXT,
+            ToolbarItem.VIEW to ToolbarItem.STYLES,
+        )
 
         /** Mirrors the hardcoded bar exactly (see Toolbar.kt) so existing users see no change. */
         val DEFAULT: ToolbarLayout = of(
@@ -152,7 +156,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
             listOf(ToolbarItem.UNDO, ToolbarItem.REDO),
-            listOf(ToolbarItem.PAGE_NAV, ToolbarItem.PAGE_MENU, ToolbarItem.STYLES),
+            listOf(ToolbarItem.PAGE_NAV, ToolbarItem.PAGE_MENU, ToolbarItem.STYLES, ToolbarItem.VIEW),
             listOf(ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK),
             listOf(ToolbarItem.FULLSCREEN, ToolbarItem.PRESENT),
         )
