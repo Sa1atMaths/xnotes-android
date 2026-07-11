@@ -128,6 +128,14 @@ class CanvasState(
     var flipOffsetX: Double = 0.0
 
     /**
+     * The only other row allowed on screen while the paginated view slides between rows:
+     * the row peeking in under an edge pull, then the outgoing row during the flip
+     * animation. -1 when settled (only [currentRow] shows). Owned by the interaction
+     * layer, which sets it for exactly the transition's lifetime.
+     */
+    var flipPartnerRow: Int = -1
+
+    /**
      * Whole-file clockwise page rotation (0/90/180/270), applied by the view: pages lay
      * out with their rotated footprints ([displayW]/[displayH]) and their page-space
      * content is painted through [applyPageRotation]. Model/page space never rotates —
@@ -599,8 +607,9 @@ class CanvasState(
     /**
      * The pages the view may draw (and touch). Vertical mode shows everything the viewport
      * reaches. The paginated view shows only [currentRow] once settled — zooming out must
-     * not creep the neighbouring rows into view — and widens to the adjacent rows only
-     * while the view is actually sliding between rows (edge pull / flip animation).
+     * not creep the neighbouring rows into view — widened to exactly one partner row
+     * ([flipPartnerRow]) for the lifetime of a slide, so a flip shows the outgoing and
+     * incoming rows and never a third page beyond them.
      */
     fun drawablePageRange(): IntRange {
         val last = document.pages.lastIndex
@@ -608,9 +617,9 @@ class CanvasState(
         val rows = rowRanges()
         if (rows.isEmpty()) return 0..last
         val cur = currentRow.coerceIn(0, rows.lastIndex)
-        val settled = flipOffsetX == 0.0 && abs(scrollX - rowClampedScroll(cur, scrollX, scrollY).x) < 0.5
-        if (settled) return rows[cur]
-        return rows[(cur - 1).coerceAtLeast(0)].first..rows[(cur + 1).coerceAtMost(rows.lastIndex)].last
+        val partner = flipPartnerRow
+        if (partner !in rows.indices || partner == cur) return rows[cur]
+        return min(rows[cur].first, rows[partner].first)..max(rows[cur].last, rows[partner].last)
     }
 
     /** Index of the page whose rect contains a content-space point, or null. Hidden paginated
@@ -666,6 +675,7 @@ class CanvasState(
             // Paginated: jump the scroll window to the page's row and land at its top.
             currentRow = rowIndexOf(i)
             flipOffsetX = 0.0
+            flipPartnerRow = -1
             val t = rowTargetScroll(currentRow)
             scrollX = t.x
             scrollY = t.y

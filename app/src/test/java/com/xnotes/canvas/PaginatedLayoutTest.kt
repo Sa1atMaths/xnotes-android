@@ -118,14 +118,30 @@ class PaginatedLayoutTest {
         assertEquals(2..3, st.drawablePageRange())
     }
 
-    @Test fun edgePullWidensToTheNeighbours() {
+    @Test fun slideShowsOnlyTheTransitionPair() {
         val st = state(5)
         st.zoom = 0.5
         st.goToPage(2)
+        // Pulling toward the next row shows exactly the pair, never the row beyond it.
         st.flipOffsetX = 40.0
-        assertEquals(1..3, st.drawablePageRange())
+        st.flipPartnerRow = 3
+        assertEquals(2..3, st.drawablePageRange())
+        // Pulling back the other way shows the previous pair only.
+        st.flipOffsetX = -40.0
+        st.flipPartnerRow = 1
+        assertEquals(1..2, st.drawablePageRange())
+        // Settled again: just the current row.
         st.flipOffsetX = 0.0
+        st.flipPartnerRow = -1
         assertEquals(2..2, st.drawablePageRange())
+    }
+
+    @Test fun goToPageDropsAStalePartnerRow() {
+        val st = state(5)
+        st.flipPartnerRow = 1
+        st.goToPage(3)
+        assertEquals(-1, st.flipPartnerRow)
+        assertEquals(3..3, st.drawablePageRange())
     }
 
     @Test fun verticalModeDrawsEverything() {
