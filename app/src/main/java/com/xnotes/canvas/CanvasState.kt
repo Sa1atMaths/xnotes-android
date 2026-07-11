@@ -231,6 +231,13 @@ class CanvasState(
     private var sharpFrame: SharpFrame? = null
     private var pendingSharp = false
 
+    /**
+     * Edits landed while a sharp render was in flight (its item snapshot predates them):
+     * page + page-local dirty rect, replayed onto the fresh frame at publish so ink drawn
+     * (or erased) during the build doesn't vanish (or reappear) when the sharp layer settles.
+     */
+    private val pendingSharpEdits = ArrayList<Pair<Page, Rect>>()
+
     /** Bumped on any content/layout change so a stale sharp viewport is discarded. */
     private var sharpGen = 0
 
@@ -724,6 +731,7 @@ class CanvasState(
     fun appendToCache(page: Page, item: CanvasItem) {
         if (item.isHighlighterInk()) return // composited live over the page, never cached
         appendToSharpInk(page, item) // keep the sharp viewport crisp without a full re-render
+        if (pendingSharp) pendingSharpEdits.add(page to item.paintBounds().outset(SHARP_EDIT_PAD))
         appendToPresCache(page, item) // keep the presentation cache crisp too, if it's live
         val res = clampedRes(page)
         val existing = caches[page]
@@ -748,6 +756,7 @@ class CanvasState(
      */
     fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
         repairSharpInk(page, dirtyRect) // erase from the sharp ink layer in place, no re-render
+        if (pendingSharp) pendingSharpEdits.add(page to dirtyRect)
         repairPresRegion(page, dirtyRect) // erase from the presentation ink layer in place too
         val entry = caches[page] ?: return false
         val r = entry.surface.renderer()
@@ -973,6 +982,7 @@ class CanvasState(
         }
         if (draws.isEmpty()) return
         pendingSharp = true
+        pendingSharpEdits.clear()
         val withFlow = !flowLifted // snapshot; a session toggle bumps sharpGen and discards this
         runAsync {
             val base = surfaceFactory.create(vw, vh, 1.0).also { it.fill(bg) }
@@ -982,8 +992,11 @@ class CanvasState(
                 pendingSharp = false
                 if (gen == sharpGen && sx == scrollX && sy == scrollY && z == zoom) {
                     sharpFrame = SharpFrame(base, ink, sx, sy, z, gen)
+                    // Replay edits committed during the build; the item snapshot predates them.
+                    for ((p, rect) in pendingSharpEdits) repairSharpInk(p, rect)
                     onCacheReady?.invoke()
                 }
+                pendingSharpEdits.clear()
             }
         }
     }
@@ -1150,6 +1163,9 @@ class CanvasState(
 
         /** Padding (content px) around a highlighter's bounds in its cached bitmap, for AA edges. */
         const val HL_PAD = 2.0
+
+        /** Padding (content px) around a replayed sharp edit's dirty rect, for AA edges. */
+        const val SHARP_EDIT_PAD = 2.0
 
         /** The page label sits ~26px above the page top (content space). */
         const val PAGE_LABEL_OFFSET = 26.0
